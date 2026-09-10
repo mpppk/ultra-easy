@@ -22,8 +22,7 @@ import type {
 // その間のdelegation chainも同時に保持できることを保証する。
 const aliceId = "user:alice" as UserId;
 const ticketAssistantId = "agent:ticket-assistant" as AgentId;
-const delegationGrantId =
-  "delegation:alice-to-ticket-assistant" as DelegationGrantId;
+const delegationGrantId = "delegation:alice-to-ticket-assistant" as DelegationGrantId;
 const ticketPriorityChange = "ticket.priority.change" as ActionType;
 const ticketType = "ticket" as ResourceType;
 const ticketId = "TICKET-123" as ResourceId;
