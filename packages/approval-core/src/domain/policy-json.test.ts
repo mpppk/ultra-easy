@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ApprovalPolicyDefinition } from "./index.ts";
+import type {
+  ApprovalPolicyDefinition,
+  ApprovalPolicyKey,
+  ApprovalRuleKey,
+  ApprovalStepKey,
+  AuthorizationObjectRef,
+  RelationName,
+} from "./index.ts";
 
 describe("Approval PolicyのJSON契約", () => {
   it("AC-M0-002: Policy ASTはJSONへの保存・復元で構造を失わない", () => {
     const policy = {
       schemaVersion: 1,
-      key: "ticket-critical-approval",
+      key: "ticket-critical-approval" as ApprovalPolicyKey,
       name: "Critical ticket approval",
       rules: [
         {
-          key: "critical",
+          key: "critical" as ApprovalRuleKey,
           when: {
             type: "comparison",
             left: { type: "field", path: "action.input.priority" },
@@ -22,12 +29,12 @@ describe("Approval PolicyのJSON契約", () => {
             children: [
               {
                 type: "approval",
-                key: "manager",
+                key: "manager" as ApprovalStepKey,
                 purpose: "business_approval",
                 approver: {
                   type: "principal_relation",
                   principal: { type: "authority_principal" },
-                  relation: "manager",
+                  relation: "manager" as RelationName,
                 },
                 selfApproval: { mode: "deny" },
               },
@@ -37,22 +44,28 @@ describe("Approval PolicyのJSON契約", () => {
                 children: [
                   {
                     type: "approval",
-                    key: "security",
+                    key: "security" as ApprovalStepKey,
                     purpose: "security_approval",
                     approver: {
                       type: "relation",
-                      object: { type: "literal", object: "organization:acme" },
-                      relation: "security_approver",
+                      object: {
+                        type: "literal",
+                        object: "organization:acme" as AuthorizationObjectRef,
+                      },
+                      relation: "security_approver" as RelationName,
                     },
                   },
                   {
                     type: "approval",
-                    key: "compliance",
+                    key: "compliance" as ApprovalStepKey,
                     purpose: "compliance_approval",
                     approver: {
                       type: "relation",
-                      object: { type: "literal", object: "organization:acme" },
-                      relation: "compliance_approver",
+                      object: {
+                        type: "literal",
+                        object: "organization:acme" as AuthorizationObjectRef,
+                      },
+                      relation: "compliance_approver" as RelationName,
                     },
                   },
                 ],
@@ -61,16 +74,16 @@ describe("Approval PolicyのJSON契約", () => {
           },
         },
         {
-          key: "otherwise",
+          key: "otherwise" as ApprovalRuleKey,
           when: { type: "always" },
           flow: { type: "none" },
         },
       ],
     } satisfies ApprovalPolicyDefinition;
 
-    // Policy ASTはDBへJSONとして保存・復元される前提なので、
-    // functionやclass instance等のruntime-onlyな情報に依存せず、
-    // JSON round-trip後も同じ構造であることをsmoke testする。
+    // brandはTypeScript上だけの情報なのでJSON表現には影響しない。
+    // Policy ASTはDBへJSONとして保存・復元される前提で、functionやclass instance等の
+    // runtime-onlyな情報に依存せず、round-trip後も同じ構造であることを確認する。
     const serialized = JSON.stringify(policy);
     const restored = JSON.parse(serialized) as unknown;
 
