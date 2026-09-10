@@ -83,3 +83,11 @@ _避ける表現_: Approver List
 **Decision（承認判断）**:
 Approval Stepに対して提出されるimmutableな判断結果。approveまたはrejectなどを表す。
 _避ける表現_: Permission
+
+## 識別子の型安全性
+
+ドメイン上で意味が異なる識別子は、実行時には同じ文字列であってもTypeScript上では別のbranded typeとして扱う。たとえば`UserId`、`AgentId`、`ResourceId`、`OrganizationId`、`DelegationGrantId`、`ApprovalPolicyKey`、`ApprovalPolicyBindingId`は相互に代入できない。
+
+これにより、`UserId`を誤って`ResourceId`へ渡す、`ApprovalPolicyKey`を`ApprovalPolicyBindingId`として保存するといった取り違えをcompile-time errorとして検出する。
+
+brandはTypeScript上だけの情報であり、JSONやDB上の表現には追加fieldを持たせない。API、DB、JSON等の外部境界から読み込んだ値は単なる`string`として信頼せず、validationを通過した時点で対応するbranded typeへ変換する。
