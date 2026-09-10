@@ -5,21 +5,34 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
       - uses: voidzero-dev/setup-vp@v1.19.0
         with:
           node-version: "24"
           cache: true
       - name: Install dependencies
         run: vp install
-      - name: Check
+      - name: Format docs on PR branch
+        if: github.event_name == 'pull_request'
         run: |
           vp check --fix
-          git diff -- docs/design-doc.md docs/implementation-plan.md
-          git diff --exit-code -- docs/design-doc.md docs/implementation-plan.md
+          if ! git diff --quiet -- docs/design-doc.md docs/implementation-plan.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/design-doc.md docs/implementation-plan.md
+            git commit -m "docs: format design docs"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
+      - name: Check
+        run: vp check
       - name: Test
         run: vp test
