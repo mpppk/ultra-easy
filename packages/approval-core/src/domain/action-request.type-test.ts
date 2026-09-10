@@ -56,19 +56,13 @@ export const delegatedAgentActionRequest = {
   },
 } satisfies ActionRequest;
 
-// Branded typeによって、見た目が同じstringでも意味の異なるIDを
-// 取り違えた場合はcompile-time errorになることを確認する。
-export const invalidUserPrincipal = {
-  type: "user",
-  // @ts-expect-error AgentIdをuser principalのIDには使えない
-  id: ticketAssistantId,
-} satisfies ActionRequest["actor"];
+// Branded typeによって、実行時には同じstringでも意味の異なる識別子を
+// 相互に代入できないことをcompile-time contractとして固定する。
+// @ts-expect-error AgentIdをUserIdとして扱うことはできない
+export const invalidUserId: UserId = ticketAssistantId;
 
-export const invalidResourceId = {
-  type: ticketType,
-  // @ts-expect-error UserIdをResourceIdには使えない
-  id: aliceId,
-} satisfies ActionRequest["action"]["resource"];
+// @ts-expect-error UserIdをResourceIdとして扱うことはできない
+export const invalidResourceId: ResourceId = aliceId;
 
 const policyKey = "ticket-policy" as ApprovalPolicyKey;
 const bindingId = "binding:ticket-policy" as ApprovalPolicyBindingId;
@@ -82,11 +76,5 @@ export const validPolicyBinding = {
   enabled: true,
 } satisfies ApprovalPolicyBinding;
 
-export const invalidPolicyBinding = {
-  // @ts-expect-error PolicyKeyをPolicyBindingIdには使えない
-  id: policyKey,
-  organizationId,
-  policyKey,
-  selector: { actionTypes: [ticketPriorityChange] },
-  enabled: true,
-} satisfies ApprovalPolicyBinding;
+// @ts-expect-error ApprovalPolicyKeyをApprovalPolicyBindingIdとして扱うことはできない
+export const invalidPolicyBindingId: ApprovalPolicyBindingId = policyKey;
