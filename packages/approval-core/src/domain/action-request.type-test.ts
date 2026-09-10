@@ -59,15 +59,15 @@ export const delegatedAgentActionRequest = {
 
 // Branded typeによって、見た目が同じstringでも意味の異なるIDを
 // 取り違えた場合はcompile-time errorになることを確認する。
-// @ts-expect-error AgentIdをuser principalのIDには使えない
 export const invalidUserPrincipal = {
   type: "user",
+  // @ts-expect-error AgentIdをuser principalのIDには使えない
   id: ticketAssistantId,
 } satisfies ActionRequest["actor"];
 
-// @ts-expect-error UserIdをResourceIdには使えない
 export const invalidResourceId = {
   type: ticketType,
+  // @ts-expect-error UserIdをResourceIdには使えない
   id: aliceId,
 } satisfies ActionRequest["action"]["resource"];
 
@@ -83,8 +83,8 @@ export const validPolicyBinding = {
   enabled: true,
 } satisfies ApprovalPolicyBinding;
 
-// @ts-expect-error PolicyKeyをPolicyBindingIdには使えない
 export const invalidPolicyBinding = {
+  // @ts-expect-error PolicyKeyをPolicyBindingIdには使えない
   id: policyKey,
   organizationId,
   policyKey,
