@@ -105,6 +105,7 @@ it("AC-M1-004 fails closed when a field is missing", ...)
 ## Scope
 
 - `ActionRequest`, `PrincipalRef`, `DelegationHop`, `ResourceRef` のcore types
+- ID、key、type等の意味が異なる識別子をbranded typeで区別する
 - Action / Policy / Flow / Condition AST types
 - Standard Schema依存境界のinterfaceのみ
 - package dependency rules
@@ -119,13 +120,13 @@ it("AC-M1-004 fails closed when a field is missing", ...)
 
 **Given** AI Agentがuserの限定委任で操作する  
 **When** ActionRequest fixtureを生成する  
-**Then** `actor=agent`、`authority.principal=user`、delegation chainを独立して表現できる。
+**Then** `actor=agent`、`authority.principal=user`、delegation chainを独立して表現できる。また、`UserId`、`AgentId`、`ResourceId`等の意味が異なる識別子は相互に代入できず、取り違えをcompile-time errorとして検出できる。
 
 ### AC-M0-002 — Core ASTはJSONとしてround-tripできる
 
 **Given** serial + parallel + approvalを含むPolicy AST  
 **When** `JSON.stringify` → `JSON.parse`する  
-**Then** domain上同一のASTとして扱える。function/class instance/runtime handleを含まない。
+**Then** domain上同一のASTとして扱える。function/class instance/runtime handleを含まない。branded typeはTypeScript上だけの情報とし、JSON表現へ余計なbrand fieldを追加しない。
 
 ### AC-M0-003 — Core packageはAdapterへ依存しない
 
@@ -152,6 +153,7 @@ tests/fixtures/fixture-contract.test.ts
 
 - AC-M0-001〜003がgreen
 - empty implementationでもない最小domain typesが公開される
+- 意味が異なる主要な識別子がbranded typeとして公開され、代表的な取り違えがtype testで拒否される
 - `pnpm test`等の単一commandでunit testが実行できる
 - CIでCoreの禁止dependencyを検知できる
 - 次のMilestoneが外部serviceなしで開始できる
