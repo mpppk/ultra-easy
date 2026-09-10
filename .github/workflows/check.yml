@@ -14,7 +14,7 @@ jobs:
         with:
           bun-version: latest
       - name: Install Vite+
-        run: bun install -g vite-plus
+        run: bun install -g vite-plus@0.2.8
       - name: Install dependencies
         run: vp install
       - name: Check
