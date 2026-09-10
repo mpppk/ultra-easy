@@ -1,10 +1,4 @@
-import type {
-  ActionType,
-  AgentRunId,
-  ClientId,
-  ResourceId,
-  ResourceType,
-} from "./brand.ts";
+import type { ActionType, AgentRunId, ClientId, ResourceId, ResourceType } from "./brand.ts";
 import type { Delegation, PrincipalRef } from "./principal.ts";
 
 export type ResourceRef = {
