@@ -1,29 +1,37 @@
-# ultra-easy-new
+# ultra-easy
 
-A minimal TanStack Start app with one route and plain CSS.
+TanStack StartとCloudflare Workersを使ったアプリケーションです。
+
+## 開発
+
+依存関係をインストールします。
 
 ```bash
 bun install
+```
+
+開発サーバーを起動します。
+
+```bash
 bun --bun run dev
 ```
 
-Edit `src/routes/index.tsx` to get started. Add route files under
-`src/routes`; TanStack Router updates `src/routeTree.gen.ts` for you.
+画面を追加する場合は`src/routes`配下へroute fileを作成します。TanStack Routerにより`src/routeTree.gen.ts`が更新されます。
 
-Build the production app with:
+本番用buildは次のcommandで実行します。
 
 ```bash
 bun --bun run build
 ```
 
-## Deploy to Cloudflare Workers
+## Cloudflare Workersへのデプロイ
 
-This project uses the Cloudflare Vite plugin (configured in `vite.config.ts`) and `wrangler.jsonc`:
+このプロジェクトではCloudflare Vite pluginと`wrangler.jsonc`を利用します。
 
-1. Install Wrangler: `npm install -g wrangler`
-2. Authenticate: `wrangler login`
-3. Deploy: `npx wrangler deploy`
+1. Wranglerをインストールする: `npm install -g wrangler`
+2. 認証する: `wrangler login`
+3. デプロイする: `npx wrangler deploy`
 
-For production env vars, run `wrangler secret put MY_VAR` for each secret listed in `.env.example`. Public (non-secret) vars go in `wrangler.jsonc` under `vars`.
+本番用secretは、`.env.example`に記載された各項目について`wrangler secret put MY_VAR`を実行して設定します。secretではない公開設定値は`wrangler.jsonc`の`vars`へ設定します。
 
-KV, D1, R2, and Durable Object bindings are configured in `wrangler.jsonc` — see https://developers.cloudflare.com/workers/wrangler/configuration/.
+KV、D1、R2、Durable Object等のbindingも`wrangler.jsonc`で管理します。詳細はCloudflare WorkersのWrangler設定ドキュメントを参照してください。
