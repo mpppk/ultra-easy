@@ -1,4 +1,5 @@
 export type * from "./action.ts";
+export type * from "./brand.ts";
 export type * from "./condition.ts";
 export type * from "./flow.ts";
 export type * from "./json.ts";
