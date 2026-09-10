@@ -1,0 +1,27 @@
+/v1/organizations/{organizationId}/delegations/{delegationId}/revoke:
+  post:
+    tags:
+    - Delegations
+    operationId: revokeDelegation
+    summary: Delegation 失効を ActionRequest として要求する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/DelegationId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-06.yaml#/DelegationRevoke
+    responses:
+      '201':
+        description: Delegation 失効操作用 ActionRequest。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequest
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict

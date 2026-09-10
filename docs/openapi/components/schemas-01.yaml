@@ -1,0 +1,202 @@
+JsonValue: {}
+PrincipalRef:
+  type: object
+  required:
+  - type
+  - id
+  properties:
+    type:
+      type: string
+      enum:
+      - user
+      - agent
+      - service
+    id:
+      type: string
+  additionalProperties: false
+ResourceRef:
+  type: object
+  required:
+  - type
+  - id
+  properties:
+    type:
+      type: string
+    id:
+      type: string
+  additionalProperties: false
+Action:
+  type: object
+  required:
+  - type
+  - resource
+  - input
+  properties:
+    type:
+      type: string
+      description: Action Definition の actionType。
+    resource:
+      $ref: ./schemas-01.yaml#/ResourceRef
+    input:
+      type: object
+      additionalProperties: true
+  additionalProperties: false
+ActionRequestCreate:
+  type: object
+  required:
+  - action
+  properties:
+    action:
+      $ref: ./schemas-01.yaml#/Action
+    delegationGrantId:
+      type: string
+      description: 'サーバー側で検証する既存 Delegation Grant の参照。
+
+        authority principal を直接指定するフィールドではない。
+
+        '
+    clientReference:
+      type: string
+      maxLength: 255
+      description: 呼び出し元が監査相関に利用できる任意の参照値。
+  additionalProperties: false
+ActionRequestStatus:
+  type: string
+  enum:
+  - evaluating
+  - pending_approval
+  - approved
+  - executing
+  - executed
+  - rejected
+  - cancelled
+  - expired
+  - authorization_revoked
+  - authorization_check_failed
+  - execution_failed
+ActionResult:
+  type: object
+  required:
+  - status
+  properties:
+    status:
+      type: string
+      enum:
+      - executed
+      - rejected
+      - cancelled
+      - expired
+      - authorization_revoked
+      - authorization_check_failed
+      - execution_failed
+    output:
+      $ref: ./schemas-01.yaml#/JsonValue
+    code:
+      type: string
+    message:
+      type: string
+  additionalProperties: false
+ApprovalSummary:
+  type: object
+  required:
+  - required
+  properties:
+    required:
+      type: boolean
+    activeTaskCount:
+      type: integer
+      minimum: 0
+    completedTaskCount:
+      type: integer
+      minimum: 0
+  additionalProperties: false
+ActionRequest:
+  type: object
+  required:
+  - id
+  - organizationId
+  - actor
+  - authorityPrincipal
+  - action
+  - origin
+  - status
+  - approval
+  - createdAt
+  - updatedAt
+  properties:
+    id:
+      type: string
+    organizationId:
+      type: string
+    actor:
+      $ref: ./schemas-01.yaml#/PrincipalRef
+    authorityPrincipal:
+      $ref: ./schemas-01.yaml#/PrincipalRef
+    caller:
+      oneOf:
+      - $ref: ./schemas-01.yaml#/PrincipalRef
+      - type: 'null'
+    action:
+      $ref: ./schemas-01.yaml#/Action
+    origin:
+      type: string
+      enum:
+      - ui
+      - api
+      - mcp
+      - system
+    status:
+      $ref: ./schemas-01.yaml#/ActionRequestStatus
+    approval:
+      $ref: ./schemas-01.yaml#/ApprovalSummary
+    result:
+      oneOf:
+      - $ref: ./schemas-01.yaml#/ActionResult
+      - type: 'null'
+    checksums:
+      type: object
+      properties:
+        actionFingerprint:
+          type: string
+        evaluationSnapshotChecksum:
+          type: string
+        approvalPlanChecksum:
+          type: string
+      additionalProperties: false
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+    completedAt:
+      type:
+      - string
+      - 'null'
+      format: date-time
+  additionalProperties: false
+PageInfo:
+  type: object
+  required:
+  - hasMore
+  properties:
+    nextCursor:
+      type:
+      - string
+      - 'null'
+    hasMore:
+      type: boolean
+  additionalProperties: false
+ActionRequestPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-01.yaml#/ActionRequest
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false

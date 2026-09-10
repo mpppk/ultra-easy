@@ -1,0 +1,190 @@
+ApprovalStepDefinition:
+  type: object
+  required:
+  - type
+  - key
+  - approver
+  properties:
+    type:
+      const: approval
+    key:
+      type: string
+    name:
+      type: string
+    purpose:
+      $ref: ./schemas-02.yaml#/ApprovalTaskPurpose
+    approver:
+      $ref: ./schemas-05.yaml#/ApproverExpression
+    resolution:
+      type: string
+      enum:
+      - dynamic
+      - snapshot
+      default: dynamic
+    candidateCompletion:
+      $ref: ./schemas-02.yaml#/CandidateCompletion
+    onUnresolved:
+      $ref: ./schemas-05.yaml#/OnUnresolved
+    expiresAfter:
+      $ref: ./schemas-05.yaml#/Duration
+    requireCommentOn:
+      type: array
+      uniqueItems: true
+      items:
+        type: string
+        enum:
+        - approve
+        - reject
+    selfApproval:
+      $ref: ./schemas-05.yaml#/SelfApproval
+  additionalProperties: false
+Duration:
+  type: object
+  required:
+  - seconds
+  properties:
+    seconds:
+      type: integer
+      minimum: 1
+  additionalProperties: false
+SelfApproval:
+  type: object
+  required:
+  - mode
+  properties:
+    mode:
+      type: string
+      enum:
+      - allow
+      - deny
+    subject:
+      $ref: ./schemas-05.yaml#/PrincipalExpression
+  additionalProperties: false
+OnUnresolved:
+  oneOf:
+  - type: object
+    required:
+    - type
+    properties:
+      type:
+        const: deny
+    additionalProperties: false
+  - type: object
+    required:
+    - type
+    - approver
+    properties:
+      type:
+        const: fallback
+      approver:
+        $ref: ./schemas-05.yaml#/ApproverExpression
+    additionalProperties: false
+PrincipalExpression:
+  oneOf:
+  - type: object
+    required:
+    - type
+    properties:
+      type:
+        const: actor
+    additionalProperties: false
+  - type: object
+    required:
+    - type
+    properties:
+      type:
+        const: caller
+    additionalProperties: false
+  - type: object
+    required:
+    - type
+    properties:
+      type:
+        const: authority_principal
+    additionalProperties: false
+  - type: object
+    required:
+    - type
+    properties:
+      type:
+        const: delegator
+      depth:
+        oneOf:
+        - type: integer
+          minimum: 0
+        - const: root
+    additionalProperties: false
+ApproverExpression:
+  oneOf:
+  - $ref: ./schemas-05.yaml#/PrincipalApprover
+  - $ref: ./schemas-05.yaml#/RelationApprover
+  - $ref: ./schemas-05.yaml#/PrincipalRelationApprover
+  - $ref: ./schemas-05.yaml#/UserApprover
+PrincipalApprover:
+  type: object
+  required:
+  - type
+  - principal
+  properties:
+    type:
+      const: principal
+    principal:
+      $ref: ./schemas-05.yaml#/PrincipalExpression
+  additionalProperties: false
+RelationApprover:
+  type: object
+  required:
+  - type
+  - object
+  - relation
+  properties:
+    type:
+      const: relation
+    object:
+      $ref: ./schemas-05.yaml#/ObjectExpression
+    relation:
+      type: string
+  additionalProperties: false
+PrincipalRelationApprover:
+  type: object
+  required:
+  - type
+  - principal
+  - relation
+  properties:
+    type:
+      const: principal_relation
+    principal:
+      $ref: ./schemas-05.yaml#/PrincipalExpression
+    relation:
+      type: string
+  additionalProperties: false
+UserApprover:
+  type: object
+  required:
+  - type
+  - userId
+  properties:
+    type:
+      const: user
+    userId:
+      $ref: ./schemas-04.yaml#/ValueExpression
+  additionalProperties: false
+ObjectExpression:
+  oneOf:
+  - $ref: ./schemas-05.yaml#/ObjectReferenceExpression
+  - $ref: ./schemas-06.yaml#/ObjectLiteralExpression
+ObjectReferenceExpression:
+  type: object
+  required:
+  - type
+  - objectType
+  - id
+  properties:
+    type:
+      const: reference
+    objectType:
+      type: string
+    id:
+      $ref: ./schemas-04.yaml#/ValueExpression
+  additionalProperties: false

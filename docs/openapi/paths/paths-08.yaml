@@ -1,0 +1,97 @@
+/v1/organizations/{organizationId}/approval-policy-bindings/{bindingId}:
+  get:
+    tags:
+    - ApprovalPolicyBindings
+    operationId: getApprovalPolicyBinding
+    summary: ApprovalPolicyBinding を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/BindingId
+    responses:
+      '200':
+        description: Binding。
+        headers:
+          ETag:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-06.yaml#/ApprovalPolicyBinding
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+  patch:
+    tags:
+    - ApprovalPolicyBindings
+    operationId: updateApprovalPolicyBinding
+    summary: Binding 更新または無効化を ActionRequest として要求する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/BindingId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    - $ref: ../components/common.yaml#/parameters/IfMatch
+    requestBody:
+      required: true
+      content:
+        application/merge-patch+json:
+          schema:
+            $ref: ../components/schemas-06.yaml#/ApprovalPolicyBindingPatch
+    responses:
+      '201':
+        description: Binding 更新操作用 ActionRequest。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequest
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '412':
+        $ref: ../components/common.yaml#/responses/PreconditionFailed
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity
+/v1/organizations/{organizationId}/delegations:
+  get:
+    tags:
+    - Delegations
+    operationId: listDelegations
+    summary: Delegation Grant を一覧する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    - name: active
+      in: query
+      schema:
+        type: boolean
+    responses:
+      '200':
+        description: Delegation Grant 一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-07.yaml#/DelegationPage
+  post:
+    tags:
+    - Delegations
+    operationId: createDelegation
+    summary: Delegation 作成を ActionRequest として要求する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-06.yaml#/DelegationCreate
+    responses:
+      '201':
+        description: Delegation 作成操作用 ActionRequest。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequest
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity

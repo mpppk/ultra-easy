@@ -1,0 +1,88 @@
+/v1/organizations/{organizationId}/approval-tasks/{taskId}:
+  get:
+    tags:
+    - ApprovalTasks
+    operationId: getApprovalTask
+    summary: Approval task の詳細を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/TaskId
+    responses:
+      '200':
+        description: Approval task。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-02.yaml#/ApprovalTask
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+/v1/organizations/{organizationId}/approval-tasks/{taskId}/decisions:
+  post:
+    tags:
+    - ApprovalTasks
+    operationId: createApprovalDecisionCommand
+    summary: approve / reject の Decision command を送信する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/TaskId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-02.yaml#/ApprovalDecisionInput
+          examples:
+            approve:
+              value:
+                decision: approve
+                comment: 承認します
+            reject:
+              value:
+                decision: reject
+                comment: セキュリティ要件を満たしていません
+    responses:
+      '202':
+        description: Decision command を受理した。最終適用結果は ApprovalCommand で確認する。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-02.yaml#/ApprovalCommand
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity
+/v1/organizations/{organizationId}/approval-commands/{commandId}:
+  get:
+    tags:
+    - ApprovalCommands
+    operationId: getApprovalCommand
+    summary: 非同期 Decision / Cancel command の適用結果を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/CommandId
+    responses:
+      '200':
+        description: ApprovalCommand。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-02.yaml#/ApprovalCommand
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound

@@ -1,0 +1,81 @@
+openapi: 3.1.0
+info:
+  title: Approval Workflow Platform API
+  version: 1.0.0
+  description: 'ActionRequest を統一入口とする承認ワークフロー基盤の HTTP API。
+
+    actor / caller / authority principal は認証およびサーバー側の Input Adapter で解決し、
+
+    ActionRequest 作成 body から任意指定させない。
+
+    詳細な Policy / Flow semantics は「承認ワークフロー基盤 仕様書 v1.0」を参照する。
+
+    '
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+security:
+- bearerAuth: []
+tags:
+- name: ActionRequests
+- name: ApprovalTasks
+- name: ApprovalCommands
+- name: ActionDefinitions
+- name: ApprovalPolicies
+- name: ApprovalPolicyBindings
+- name: Delegations
+paths:
+  /v1/organizations/{organizationId}/action-requests:
+    $ref: ./paths/paths-01.yaml#/~1v1~1organizations~1{organizationId}~1action-requests
+  /v1/organizations/{organizationId}/action-requests/simulate:
+    $ref: ./paths/paths-01.yaml#/~1v1~1organizations~1{organizationId}~1action-requests~1simulate
+  /v1/organizations/{organizationId}/action-requests/{actionRequestId}:
+    $ref: ./paths/paths-02.yaml#/~1v1~1organizations~1{organizationId}~1action-requests~1{actionRequestId}
+  /v1/organizations/{organizationId}/action-requests/{actionRequestId}/cancel:
+    $ref: ./paths/paths-02.yaml#/~1v1~1organizations~1{organizationId}~1action-requests~1{actionRequestId}~1cancel
+  /v1/organizations/{organizationId}/action-requests/{actionRequestId}/tasks:
+    $ref: ./paths/paths-02.yaml#/~1v1~1organizations~1{organizationId}~1action-requests~1{actionRequestId}~1tasks
+  /v1/organizations/{organizationId}/me/approval-tasks:
+    $ref: ./paths/paths-02.yaml#/~1v1~1organizations~1{organizationId}~1me~1approval-tasks
+  /v1/organizations/{organizationId}/approval-tasks/{taskId}:
+    $ref: ./paths/paths-03.yaml#/~1v1~1organizations~1{organizationId}~1approval-tasks~1{taskId}
+  /v1/organizations/{organizationId}/approval-tasks/{taskId}/decisions:
+    $ref: ./paths/paths-03.yaml#/~1v1~1organizations~1{organizationId}~1approval-tasks~1{taskId}~1decisions
+  /v1/organizations/{organizationId}/approval-commands/{commandId}:
+    $ref: ./paths/paths-03.yaml#/~1v1~1organizations~1{organizationId}~1approval-commands~1{commandId}
+  /v1/organizations/{organizationId}/action-definitions:
+    $ref: ./paths/paths-04.yaml#/~1v1~1organizations~1{organizationId}~1action-definitions
+  /v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}:
+    $ref: ./paths/paths-04.yaml#/~1v1~1organizations~1{organizationId}~1action-definitions~1{actionDefinitionKey}
+  /v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/draft:
+    $ref: ./paths/paths-04.yaml#/~1v1~1organizations~1{organizationId}~1action-definitions~1{actionDefinitionKey}~1draft
+  /v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/publish:
+    $ref: ./paths/paths-05.yaml#/~1v1~1organizations~1{organizationId}~1action-definitions~1{actionDefinitionKey}~1publish
+  /v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/versions:
+    $ref: ./paths/paths-05.yaml#/~1v1~1organizations~1{organizationId}~1action-definitions~1{actionDefinitionKey}~1versions
+  /v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/versions/{version}:
+    $ref: ./paths/paths-05.yaml#/~1v1~1organizations~1{organizationId}~1action-definitions~1{actionDefinitionKey}~1versions~1{version}
+  /v1/organizations/{organizationId}/approval-policies:
+    $ref: ./paths/paths-05.yaml#/~1v1~1organizations~1{organizationId}~1approval-policies
+  /v1/organizations/{organizationId}/approval-policies/{policyKey}:
+    $ref: ./paths/paths-06.yaml#/~1v1~1organizations~1{organizationId}~1approval-policies~1{policyKey}
+  /v1/organizations/{organizationId}/approval-policies/{policyKey}/draft:
+    $ref: ./paths/paths-06.yaml#/~1v1~1organizations~1{organizationId}~1approval-policies~1{policyKey}~1draft
+  /v1/organizations/{organizationId}/approval-policies/{policyKey}/publish:
+    $ref: ./paths/paths-06.yaml#/~1v1~1organizations~1{organizationId}~1approval-policies~1{policyKey}~1publish
+  /v1/organizations/{organizationId}/approval-policies/{policyKey}/versions:
+    $ref: ./paths/paths-06.yaml#/~1v1~1organizations~1{organizationId}~1approval-policies~1{policyKey}~1versions
+  /v1/organizations/{organizationId}/approval-policies/{policyKey}/versions/{version}:
+    $ref: ./paths/paths-07.yaml#/~1v1~1organizations~1{organizationId}~1approval-policies~1{policyKey}~1versions~1{version}
+  /v1/organizations/{organizationId}/approval-policy-bindings:
+    $ref: ./paths/paths-07.yaml#/~1v1~1organizations~1{organizationId}~1approval-policy-bindings
+  /v1/organizations/{organizationId}/approval-policy-bindings/{bindingId}:
+    $ref: ./paths/paths-08.yaml#/~1v1~1organizations~1{organizationId}~1approval-policy-bindings~1{bindingId}
+  /v1/organizations/{organizationId}/delegations:
+    $ref: ./paths/paths-08.yaml#/~1v1~1organizations~1{organizationId}~1delegations
+  /v1/organizations/{organizationId}/delegations/{delegationId}/revoke:
+    $ref: ./paths/paths-09.yaml#/~1v1~1organizations~1{organizationId}~1delegations~1{delegationId}~1revoke
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

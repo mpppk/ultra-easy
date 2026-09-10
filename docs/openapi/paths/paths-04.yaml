@@ -1,0 +1,118 @@
+/v1/organizations/{organizationId}/action-definitions:
+  get:
+    tags:
+    - ActionDefinitions
+    operationId: listActionDefinitions
+    summary: Action Definition を一覧する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    responses:
+      '200':
+        description: Action Definition 一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionDefinitionPage
+  post:
+    tags:
+    - ActionDefinitions
+    operationId: createActionDefinition
+    summary: Action Definition identity と初期 Draft を作成する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-03.yaml#/ActionDefinitionDraft
+    responses:
+      '201':
+        description: Action Definition が作成された。
+        headers:
+          ETag:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionDefinitionResource
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity
+/v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}:
+  get:
+    tags:
+    - ActionDefinitions
+    operationId: getActionDefinition
+    summary: Action Definition identity と current version を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionDefinitionKey
+    responses:
+      '200':
+        description: Action Definition。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionDefinitionResource
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+/v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/draft:
+  get:
+    tags:
+    - ActionDefinitions
+    operationId: getActionDefinitionDraft
+    summary: Action Definition Draft を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionDefinitionKey
+    responses:
+      '200':
+        description: Draft。
+        headers:
+          ETag:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionDefinitionDraft
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+  put:
+    tags:
+    - ActionDefinitions
+    operationId: replaceActionDefinitionDraft
+    summary: Action Definition Draft を置換する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionDefinitionKey
+    - $ref: ../components/common.yaml#/parameters/IfMatch
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-03.yaml#/ActionDefinitionDraft
+    responses:
+      '200':
+        description: 更新済み Draft。
+        headers:
+          ETag:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionDefinitionDraft
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '412':
+        $ref: ../components/common.yaml#/responses/PreconditionFailed
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity

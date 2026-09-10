@@ -1,0 +1,138 @@
+parameters:
+  OrganizationId:
+    name: organizationId
+    in: path
+    required: true
+    schema:
+      type: string
+  ActionRequestId:
+    name: actionRequestId
+    in: path
+    required: true
+    schema:
+      type: string
+  TaskId:
+    name: taskId
+    in: path
+    required: true
+    schema:
+      type: string
+  CommandId:
+    name: commandId
+    in: path
+    required: true
+    schema:
+      type: string
+  ActionDefinitionKey:
+    name: actionDefinitionKey
+    in: path
+    required: true
+    schema:
+      type: string
+  PolicyKey:
+    name: policyKey
+    in: path
+    required: true
+    schema:
+      type: string
+  BindingId:
+    name: bindingId
+    in: path
+    required: true
+    schema:
+      type: string
+  DelegationId:
+    name: delegationId
+    in: path
+    required: true
+    schema:
+      type: string
+  Version:
+    name: version
+    in: path
+    required: true
+    schema:
+      type: integer
+      minimum: 1
+  Cursor:
+    name: cursor
+    in: query
+    schema:
+      type: string
+  Limit:
+    name: limit
+    in: query
+    schema:
+      type: integer
+      minimum: 1
+      maximum: 200
+      default: 50
+  IdempotencyKey:
+    name: Idempotency-Key
+    in: header
+    required: true
+    description: 'operation と payload に対する安定した冪等キー。
+
+      同一 key を異なる payload へ再利用した場合は 409。
+
+      '
+    schema:
+      type: string
+      minLength: 1
+      maxLength: 255
+  IfMatch:
+    name: If-Match
+    in: header
+    required: true
+    description: Draft / mutable management resource の楽観的並行制御用 ETag。
+    schema:
+      type: string
+responses:
+  BadRequest:
+    description: Request syntax または形式が不正。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
+  Unauthorized:
+    description: Authentication が必要、または認証情報が無効。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
+  Forbidden:
+    description: 認証済みだが、このAPI操作自体を行う権限がない。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
+  NotFound:
+    description: 対象resourceが存在しない、またはtenant boundary上公開しない。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
+  Conflict:
+    description: 状態競合、Idempotency-Key競合、または重複。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
+  PreconditionFailed:
+    description: If-Match と現在のETagが一致しない。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
+  UnprocessableEntity:
+    description: Schema / semantic validation error。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
+  ServiceUnavailable:
+    description: Authorization provider、Workflow runtime等の依存先が一時的に利用不能。
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem

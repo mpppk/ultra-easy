@@ -1,0 +1,193 @@
+ObjectLiteralExpression:
+  type: object
+  required:
+  - type
+  - object
+  properties:
+    type:
+      const: literal
+    object:
+      type: string
+      pattern: ^[^:]+:.+$
+  additionalProperties: false
+ApprovalPolicyResource:
+  type: object
+  required:
+  - key
+  - name
+  - hasDraft
+  - createdAt
+  - updatedAt
+  properties:
+    key:
+      type: string
+    name:
+      type: string
+    currentVersion:
+      type:
+      - integer
+      - 'null'
+    hasDraft:
+      type: boolean
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+  additionalProperties: false
+ApprovalPolicyVersion:
+  type: object
+  required:
+  - version
+  - checksum
+  - definition
+  - createdAt
+  properties:
+    version:
+      type: integer
+      minimum: 1
+    checksum:
+      type: string
+    definition:
+      $ref: ./schemas-03.yaml#/ApprovalPolicyDefinition
+    createdBy:
+      type: string
+    createdAt:
+      type: string
+      format: date-time
+  additionalProperties: false
+ApprovalPolicyPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-06.yaml#/ApprovalPolicyResource
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false
+ApprovalPolicyVersionPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-06.yaml#/ApprovalPolicyVersion
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false
+ApprovalPolicySelector:
+  type: object
+  required:
+  - actionTypes
+  properties:
+    actionTypes:
+      type: array
+      minItems: 1
+      items:
+        type: string
+    resourceTypes:
+      type: array
+      items:
+        type: string
+    when:
+      $ref: ./schemas-04.yaml#/Condition
+  additionalProperties: false
+ApprovalPolicyBindingMutation:
+  type: object
+  required:
+  - policyKey
+  - selector
+  properties:
+    policyKey:
+      type: string
+    selector:
+      $ref: ./schemas-06.yaml#/ApprovalPolicySelector
+    compositionOrder:
+      type: integer
+      default: 1000
+    enabled:
+      type: boolean
+      default: true
+  additionalProperties: false
+ApprovalPolicyBindingPatch:
+  type: object
+  properties:
+    selector:
+      $ref: ./schemas-06.yaml#/ApprovalPolicySelector
+    compositionOrder:
+      type: integer
+    enabled:
+      type: boolean
+  additionalProperties: false
+  minProperties: 1
+ApprovalPolicyBinding:
+  allOf:
+  - $ref: ./schemas-06.yaml#/ApprovalPolicyBindingMutation
+  - type: object
+    required:
+    - id
+    - organizationId
+    - createdAt
+    - updatedAt
+    properties:
+      id:
+        type: string
+      organizationId:
+        type: string
+      createdAt:
+        type: string
+        format: date-time
+      updatedAt:
+        type: string
+        format: date-time
+ApprovalPolicyBindingPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-06.yaml#/ApprovalPolicyBinding
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false
+DelegationCreate:
+  type: object
+  required:
+  - delegatee
+  - scope
+  properties:
+    delegatee:
+      $ref: ./schemas-01.yaml#/PrincipalRef
+    scope:
+      type: object
+      description: 'Delegation Grant のscope。Action type、resource、condition等の詳細schemaは
+
+        基盤仕様書で未確定のためv1.0では拡張可能objectとする。
+
+        '
+      additionalProperties: true
+    validFrom:
+      type: string
+      format: date-time
+    validUntil:
+      type: string
+      format: date-time
+  additionalProperties: false
+DelegationRevoke:
+  type: object
+  properties:
+    reason:
+      type: string
+      maxLength: 10000
+  additionalProperties: false
