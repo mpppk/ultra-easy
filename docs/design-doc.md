@@ -364,12 +364,12 @@ Application / AI Agent / MCP
 
 周辺では次を利用する。
 
-| Component | Responsibility |
-|---|---|
-| OpenFGA | authorization / relationship resolution |
-| D1 | policy, audit, read model |
-| Cloudflare Workflows | durable approval execution |
-| Queues | notification / asynchronous integration |
+| Component            | Responsibility                          |
+| -------------------- | --------------------------------------- |
+| OpenFGA              | authorization / relationship resolution |
+| D1                   | policy, audit, read model               |
+| Cloudflare Workflows | durable approval execution              |
+| Queues               | notification / asynchronous integration |
 
 Domain Coreはこれらの具体製品には依存しない。
 
@@ -444,17 +444,17 @@ Runtimeは単純になる一方、Policy変更にdeployが必要になり、tena
 
 ## 11. Key Design Decisions
 
-| Decision | Rationale |
-|---|---|
-| ActionRequestを共通入口にする | Approvalの有無をcallerが意識しなくてよい |
-| AuthorizationとApprovalを分離 | Approvalによる権限昇格を防止 |
-| PolicyをJSON AST化 | Versioning、GUI、監査再現性 |
-| OpenFGAをrelation resolverに利用 | 組織・resource relationshipとFlowを分離 |
-| Generic Workflowを1つだけ持つ | Policyごとのcode/deployを避ける |
-| 実行直前にRe-Authorization | 長時間待機中の権限変更へ対応 |
-| Published Policyをimmutable化 | 過去判断を再現可能にする |
-| fail closedを原則とする | approver解決不能等で承認を迂回させない |
-| CoreをCloudflare/FGA非依存にする | テスト容易性と将来的な移植性 |
+| Decision                         | Rationale                                |
+| -------------------------------- | ---------------------------------------- |
+| ActionRequestを共通入口にする    | Approvalの有無をcallerが意識しなくてよい |
+| AuthorizationとApprovalを分離    | Approvalによる権限昇格を防止             |
+| PolicyをJSON AST化               | Versioning、GUI、監査再現性              |
+| OpenFGAをrelation resolverに利用 | 組織・resource relationshipとFlowを分離  |
+| Generic Workflowを1つだけ持つ    | Policyごとのcode/deployを避ける          |
+| 実行直前にRe-Authorization       | 長時間待機中の権限変更へ対応             |
+| Published Policyをimmutable化    | 過去判断を再現可能にする                 |
+| fail closedを原則とする          | approver解決不能等で承認を迂回させない   |
+| CoreをCloudflare/FGA非依存にする | テスト容易性と将来的な移植性             |
 
 ---
 

@@ -46,13 +46,13 @@ Implementation
 
 ### 2.2 Test pyramid
 
-| Level | 主な対象 | 方針 |
-|---|---|---|
-| Unit | Condition / Policy / Compiler / Materializer / Interpreter semantics | 最多。外部サービスなし、決定的、高速 |
-| Type test | AST Builder / public TS API | compile-time contractを検証 |
-| Contract | SchemaResolver / DurableRuntime / ActionAuthorizer / ApproverResolver / ActionExecutor | Adapter実装が満たすPort contractを固定 |
-| Integration | D1 / OpenFGA / Cloudflare Workflows | 実サービスまたは互換test environmentで検証 |
-| E2E | HTTP/MCP → Approval → Re-Authorization → Execute | critical pathのみ。v1 acceptance suiteとして維持 |
+| Level       | 主な対象                                                                               | 方針                                             |
+| ----------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Unit        | Condition / Policy / Compiler / Materializer / Interpreter semantics                   | 最多。外部サービスなし、決定的、高速             |
+| Type test   | AST Builder / public TS API                                                            | compile-time contractを検証                      |
+| Contract    | SchemaResolver / DurableRuntime / ActionAuthorizer / ApproverResolver / ActionExecutor | Adapter実装が満たすPort contractを固定           |
+| Integration | D1 / OpenFGA / Cloudflare Workflows                                                    | 実サービスまたは互換test environmentで検証       |
+| E2E         | HTTP/MCP → Approval → Re-Authorization → Execute                                       | critical pathのみ。v1 acceptance suiteとして維持 |
 
 ### 2.3 Test naming
 
@@ -81,16 +81,16 @@ it("AC-M1-004 fails closed when a field is missing", ...)
 
 ## 3. Milestone overview
 
-| Milestone | Capability / 完了するとできること |
-|---|---|
-| M0 Foundation | domain model、test harness、canonical fixturesが揃い、以降をTDDで進められる |
-| M1 Policy Core | Action + Evaluation Context + Policy群から、承認Flowをpureかつ決定的に算出できる |
-| M2 Materialization | 実行時に必要なcontextを固定し、監査・再現可能なMaterialized Approval Planを生成できる |
-| M3 Authorization & Approver Resolution | Action実行資格と承認候補をOpenFGA等のPort経由で安全に判定できる |
-| M4 Durable Approval Runtime | Human approval待ちを跨いでserial/parallel/quorum Flowをdurableに完走できる |
-| M5 Safe Action Execution | 承認後に再認可し、冪等性を保って最終Actionを実行できる |
-| M6 Public API & MCP | Application/AIがActionRequestだけを入口として一連の処理を利用できる |
-| M7 Production Readiness | multi-tenant、audit、notification、force cancel、observabilityを含め本番運用できる |
+| Milestone                              | Capability / 完了するとできること                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------- |
+| M0 Foundation                          | domain model、test harness、canonical fixturesが揃い、以降をTDDで進められる           |
+| M1 Policy Core                         | Action + Evaluation Context + Policy群から、承認Flowをpureかつ決定的に算出できる      |
+| M2 Materialization                     | 実行時に必要なcontextを固定し、監査・再現可能なMaterialized Approval Planを生成できる |
+| M3 Authorization & Approver Resolution | Action実行資格と承認候補をOpenFGA等のPort経由で安全に判定できる                       |
+| M4 Durable Approval Runtime            | Human approval待ちを跨いでserial/parallel/quorum Flowをdurableに完走できる            |
+| M5 Safe Action Execution               | 承認後に再認可し、冪等性を保って最終Actionを実行できる                                |
+| M6 Public API & MCP                    | Application/AIがActionRequestだけを入口として一連の処理を利用できる                   |
+| M7 Production Readiness                | multi-tenant、audit、notification、force cancel、observabilityを含め本番運用できる    |
 
 各Milestoneは前段のAcceptance Suiteを壊さないことを完了条件に含む。
 
