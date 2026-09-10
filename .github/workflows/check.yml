@@ -16,7 +16,7 @@ jobs:
           cache: true
       - name: Install dependencies
         run: vp install
-      - name: Check
-        run: vp check
-      - name: Test
-        run: vp test
+      - name: Check formatting result
+        run: |
+          vp check --fix
+          git diff --exit-code
