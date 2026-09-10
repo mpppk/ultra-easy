@@ -2,12 +2,12 @@
 
 > Google Docs から GitHub へ移行した仕様書。HTTP API の機械可読な契約は [`openapi/openapi.yaml`](openapi/openapi.yaml) を参照。
 
-## Overview
+## 概要
 
-- [Design Doc — project background, motivation, core ideas, trade-offs, rollout](design-doc.md)
-- [Implementation Plan & Acceptance Specification — milestones, TDD scenarios, Definition of Done](implementation-plan.md)
+- [Design Doc — プロジェクトの背景、必要性、コアアイデア、トレードオフ、導入方針](design-doc.md)
+- [実装計画・受け入れ仕様 — マイルストーン、TDDシナリオ、完了条件](implementation-plan.md)
 
-## Sections
+## セクション
 
 - [0. エグゼクティブサマリー / 1. 目的・スコープ](approval-workflow-spec/part-01.md)
 - [2. 用語と責務境界 / 3. システムアーキテクチャ](approval-workflow-spec/part-02.md)
@@ -39,12 +39,12 @@
 
 ## OpenAPI
 
-- [OpenAPI 3.1 root](openapi/openapi.yaml)
-- [OpenAPI modularization notes](openapi/README.md)
+- [OpenAPI 3.1 ルート](openapi/openapi.yaml)
+- [OpenAPI分割構成の説明](openapi/README.md)
 
-## Source
+## 移行元
 
-- Migrated from Google Docs: `承認ワークフロー基盤 仕様書 v1.0`
-- HTTP contract: [`openapi/openapi.yaml`](openapi/openapi.yaml)
+- Google Docs: `承認ワークフロー基盤 仕様書 v1.0`
+- HTTP契約: [`openapi/openapi.yaml`](openapi/openapi.yaml)
 
-The repository copy is the maintainable source after this migration.
+GitHub上のファイルを、移行後の保守対象となる正本とする。
