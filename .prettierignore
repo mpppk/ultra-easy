@@ -1,0 +1,3 @@
+# Preserve migrated specification formatting and generated OpenAPI layout.
+docs/approval-workflow-spec/**
+docs/openapi/**

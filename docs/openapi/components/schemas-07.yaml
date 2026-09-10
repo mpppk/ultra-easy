@@ -1,0 +1,109 @@
+Delegation:
+  type: object
+  required:
+  - id
+  - organizationId
+  - delegator
+  - delegatee
+  - scope
+  - status
+  - createdAt
+  properties:
+    id:
+      type: string
+    organizationId:
+      type: string
+    delegator:
+      $ref: ./schemas-01.yaml#/PrincipalRef
+    delegatee:
+      $ref: ./schemas-01.yaml#/PrincipalRef
+    scope:
+      type: object
+      additionalProperties: true
+    status:
+      type: string
+      enum:
+      - active
+      - scheduled
+      - expired
+      - revoked
+    validFrom:
+      type:
+      - string
+      - 'null'
+      format: date-time
+    validUntil:
+      type:
+      - string
+      - 'null'
+      format: date-time
+    createdAt:
+      type: string
+      format: date-time
+    revokedAt:
+      type:
+      - string
+      - 'null'
+      format: date-time
+  additionalProperties: false
+DelegationPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-07.yaml#/Delegation
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false
+ValidationIssue:
+  type: object
+  required:
+  - code
+  - message
+  properties:
+    code:
+      type: string
+    path:
+      type: string
+    message:
+      type: string
+  additionalProperties: false
+Problem:
+  type: object
+  required:
+  - type
+  - title
+  - status
+  - code
+  properties:
+    type:
+      type: string
+      format: uri-reference
+    title:
+      type: string
+    status:
+      type: integer
+      minimum: 400
+      maximum: 599
+    code:
+      type: string
+    detail:
+      type: string
+    instance:
+      type: string
+      format: uri-reference
+    traceId:
+      type: string
+    actionRequestId:
+      type: string
+    commandId:
+      type: string
+    errors:
+      type: array
+      items:
+        $ref: ./schemas-07.yaml#/ValidationIssue
+  additionalProperties: true

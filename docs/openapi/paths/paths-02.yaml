@@ -1,0 +1,110 @@
+/v1/organizations/{organizationId}/action-requests/{actionRequestId}:
+  get:
+    tags:
+    - ActionRequests
+    operationId: getActionRequest
+    summary: ActionRequest の状態・結果を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionRequestId
+    responses:
+      '200':
+        description: ActionRequest。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+/v1/organizations/{organizationId}/action-requests/{actionRequestId}/cancel:
+  post:
+    tags:
+    - ActionRequests
+    operationId: cancelActionRequest
+    summary: pending の ActionRequest の取消を要求する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionRequestId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-02.yaml#/CancelActionRequestInput
+    responses:
+      '202':
+        description: Cancel command を受理した。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-02.yaml#/ApprovalCommand
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+/v1/organizations/{organizationId}/action-requests/{actionRequestId}/tasks:
+  get:
+    tags:
+    - ApprovalTasks
+    operationId: listActionRequestTasks
+    summary: ActionRequest に属する approval task を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionRequestId
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    responses:
+      '200':
+        description: Approval task 一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-02.yaml#/ApprovalTaskPage
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+/v1/organizations/{organizationId}/me/approval-tasks:
+  get:
+    tags:
+    - ApprovalTasks
+    operationId: listMyApprovalTasks
+    summary: 認証中の user が承認候補となる task の Inbox を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    - name: status
+      in: query
+      schema:
+        $ref: ../components/schemas-02.yaml#/ApprovalTaskStatus
+    - name: actionType
+      in: query
+      schema:
+        type: string
+    - name: resourceType
+      in: query
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Inbox。projection は結果整合であり、canApprove は取得時点の補助情報。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-02.yaml#/ApprovalTaskPage
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden

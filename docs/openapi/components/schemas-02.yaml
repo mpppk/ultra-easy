@@ -1,0 +1,222 @@
+ApprovalTaskStatus:
+  type: string
+  enum:
+  - pending
+  - approved
+  - rejected
+  - cancelled
+  - expired
+ApprovalTaskPurpose:
+  type: string
+  enum:
+  - execution_consent
+  - business_approval
+  - security_approval
+  - compliance_approval
+CandidateCompletion:
+  oneOf:
+  - type: string
+    enum:
+    - any
+    - all
+  - type: object
+    required:
+    - type
+    - count
+    properties:
+      type:
+        const: quorum
+      count:
+        type: integer
+        minimum: 1
+    additionalProperties: false
+ApprovalTask:
+  type: object
+  required:
+  - id
+  - actionRequestId
+  - materializedStepId
+  - stepKey
+  - status
+  - resolution
+  - candidateCompletion
+  - canApprove
+  - activatedAt
+  properties:
+    id:
+      type: string
+    actionRequestId:
+      type: string
+    materializedStepId:
+      type: string
+    stepKey:
+      type: string
+    name:
+      type: string
+    purpose:
+      $ref: ./schemas-02.yaml#/ApprovalTaskPurpose
+    status:
+      $ref: ./schemas-02.yaml#/ApprovalTaskStatus
+    resolution:
+      type: string
+      enum:
+      - dynamic
+      - snapshot
+    candidateCompletion:
+      $ref: ./schemas-02.yaml#/CandidateCompletion
+    canApprove:
+      type: boolean
+      description: 表示用の補助情報。Decision 受理時に再Checkする。
+    approverTarget:
+      $ref: ./schemas-02.yaml#/ApproverTargetView
+    expiresAt:
+      type:
+      - string
+      - 'null'
+      format: date-time
+    activatedAt:
+      type: string
+      format: date-time
+    closedAt:
+      type:
+      - string
+      - 'null'
+      format: date-time
+  additionalProperties: false
+ApproverTargetView:
+  type: object
+  properties:
+    kind:
+      type: string
+      enum:
+      - relation
+      - user
+    object:
+      type: string
+    relation:
+      type: string
+    userId:
+      type: string
+  additionalProperties: false
+ApprovalTaskPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-02.yaml#/ApprovalTask
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false
+ApprovalDecisionInput:
+  type: object
+  required:
+  - decision
+  properties:
+    decision:
+      type: string
+      enum:
+      - approve
+      - reject
+    comment:
+      type: string
+      maxLength: 10000
+  additionalProperties: false
+CancelActionRequestInput:
+  type: object
+  properties:
+    reason:
+      type: string
+      maxLength: 10000
+  additionalProperties: false
+ApprovalCommandStatus:
+  type: string
+  enum:
+  - pending
+  - applied
+  - rejected
+  - failed
+ApprovalCommand:
+  type: object
+  required:
+  - id
+  - organizationId
+  - actionRequestId
+  - type
+  - status
+  - createdAt
+  properties:
+    id:
+      type: string
+    organizationId:
+      type: string
+    actionRequestId:
+      type: string
+    taskId:
+      type:
+      - string
+      - 'null'
+    type:
+      type: string
+      enum:
+      - approve
+      - reject
+      - cancel
+    status:
+      $ref: ./schemas-02.yaml#/ApprovalCommandStatus
+    error:
+      oneOf:
+      - $ref: ./schemas-07.yaml#/Problem
+      - type: 'null'
+    createdAt:
+      type: string
+      format: date-time
+    appliedAt:
+      type:
+      - string
+      - 'null'
+      format: date-time
+  additionalProperties: false
+AuthorizationSimulation:
+  type: object
+  required:
+  - outcome
+  properties:
+    outcome:
+      type: string
+      enum:
+      - allow
+      - deny
+      - error
+    code:
+      type: string
+    reason:
+      type: string
+  additionalProperties: false
+ApplicablePolicy:
+  type: object
+  required:
+  - bindingId
+  - policyKey
+  - policyVersion
+  - outcome
+  properties:
+    bindingId:
+      type: string
+    policyKey:
+      type: string
+    policyVersion:
+      type: integer
+    matchedRuleKey:
+      type:
+      - string
+      - 'null'
+    outcome:
+      type: string
+      enum:
+      - none
+      - flow
+  additionalProperties: false

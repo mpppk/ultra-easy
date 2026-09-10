@@ -1,0 +1,189 @@
+ValueExpression:
+  oneOf:
+  - $ref: ./schemas-04.yaml#/LiteralExpression
+  - $ref: ./schemas-04.yaml#/FieldExpression
+LiteralExpression:
+  type: object
+  required:
+  - type
+  - value
+  properties:
+    type:
+      const: literal
+    value:
+      $ref: ./schemas-01.yaml#/JsonValue
+  additionalProperties: false
+FieldExpression:
+  type: object
+  required:
+  - type
+  - path
+  properties:
+    type:
+      const: field
+    path:
+      type: string
+  additionalProperties: false
+Condition:
+  oneOf:
+  - $ref: ./schemas-04.yaml#/ComparisonCondition
+  - $ref: ./schemas-04.yaml#/AndCondition
+  - $ref: ./schemas-04.yaml#/OrCondition
+  - $ref: ./schemas-04.yaml#/NotCondition
+  - $ref: ./schemas-04.yaml#/InCondition
+  - $ref: ./schemas-04.yaml#/ContainsCondition
+ComparisonCondition:
+  type: object
+  required:
+  - type
+  - left
+  - operator
+  - right
+  properties:
+    type:
+      const: comparison
+    left:
+      $ref: ./schemas-04.yaml#/ValueExpression
+    operator:
+      type: string
+      enum:
+      - eq
+      - ne
+      - gt
+      - gte
+      - lt
+      - lte
+    right:
+      $ref: ./schemas-04.yaml#/ValueExpression
+  additionalProperties: false
+AndCondition:
+  type: object
+  required:
+  - type
+  - conditions
+  properties:
+    type:
+      const: and
+    conditions:
+      type: array
+      minItems: 1
+      items:
+        $ref: ./schemas-04.yaml#/Condition
+  additionalProperties: false
+OrCondition:
+  type: object
+  required:
+  - type
+  - conditions
+  properties:
+    type:
+      const: or
+    conditions:
+      type: array
+      minItems: 1
+      items:
+        $ref: ./schemas-04.yaml#/Condition
+  additionalProperties: false
+NotCondition:
+  type: object
+  required:
+  - type
+  - condition
+  properties:
+    type:
+      const: not
+    condition:
+      $ref: ./schemas-04.yaml#/Condition
+  additionalProperties: false
+InCondition:
+  type: object
+  required:
+  - type
+  - value
+  - candidates
+  properties:
+    type:
+      const: in
+    value:
+      $ref: ./schemas-04.yaml#/ValueExpression
+    candidates:
+      type: array
+      items:
+        $ref: ./schemas-04.yaml#/ValueExpression
+  additionalProperties: false
+ContainsCondition:
+  type: object
+  required:
+  - type
+  - collection
+  - value
+  properties:
+    type:
+      const: contains
+    collection:
+      $ref: ./schemas-04.yaml#/ValueExpression
+    value:
+      $ref: ./schemas-04.yaml#/ValueExpression
+  additionalProperties: false
+FlowDefinition:
+  oneOf:
+  - $ref: ./schemas-04.yaml#/NoApprovalFlow
+  - $ref: ./schemas-05.yaml#/ApprovalStepDefinition
+  - $ref: ./schemas-04.yaml#/SerialFlowDefinition
+  - $ref: ./schemas-04.yaml#/ParallelFlowDefinition
+NoApprovalFlow:
+  type: object
+  required:
+  - type
+  properties:
+    type:
+      const: none
+  additionalProperties: false
+FlowConstraints:
+  type: object
+  properties:
+    distinctApprovers:
+      type: boolean
+  additionalProperties: false
+SerialFlowDefinition:
+  type: object
+  required:
+  - type
+  - children
+  properties:
+    type:
+      const: serial
+    children:
+      type: array
+      minItems: 1
+      items:
+        $ref: ./schemas-04.yaml#/FlowDefinition
+    constraints:
+      $ref: ./schemas-04.yaml#/FlowConstraints
+  additionalProperties: false
+ParallelFlowDefinition:
+  type: object
+  required:
+  - type
+  - strategy
+  - children
+  properties:
+    type:
+      const: parallel
+    strategy:
+      type: string
+      enum:
+      - all
+      - any
+      - quorum
+    quorum:
+      type: integer
+      minimum: 1
+    children:
+      type: array
+      minItems: 1
+      items:
+        $ref: ./schemas-04.yaml#/FlowDefinition
+    constraints:
+      $ref: ./schemas-04.yaml#/FlowConstraints
+  additionalProperties: false

@@ -1,0 +1,112 @@
+/v1/organizations/{organizationId}/approval-policies/{policyKey}:
+  get:
+    tags:
+    - ApprovalPolicies
+    operationId: getApprovalPolicy
+    summary: Approval Policy identity と current version を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/PolicyKey
+    responses:
+      '200':
+        description: Approval Policy。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-06.yaml#/ApprovalPolicyResource
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+/v1/organizations/{organizationId}/approval-policies/{policyKey}/draft:
+  get:
+    tags:
+    - ApprovalPolicies
+    operationId: getApprovalPolicyDraft
+    summary: Approval Policy Draft を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/PolicyKey
+    responses:
+      '200':
+        description: Draft。
+        headers:
+          ETag:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ApprovalPolicyDefinition
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+  put:
+    tags:
+    - ApprovalPolicies
+    operationId: replaceApprovalPolicyDraft
+    summary: Approval Policy Draft を置換する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/PolicyKey
+    - $ref: ../components/common.yaml#/parameters/IfMatch
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-03.yaml#/ApprovalPolicyDefinition
+    responses:
+      '200':
+        description: 更新済み Draft。
+        headers:
+          ETag:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ApprovalPolicyDefinition
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '412':
+        $ref: ../components/common.yaml#/responses/PreconditionFailed
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity
+/v1/organizations/{organizationId}/approval-policies/{policyKey}/publish:
+  post:
+    tags:
+    - ApprovalPolicies
+    operationId: publishApprovalPolicy
+    summary: Draft の publish を ActionRequest として要求する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/PolicyKey
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    - $ref: ../components/common.yaml#/parameters/IfMatch
+    responses:
+      '201':
+        description: publish 操作用 ActionRequest。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequest
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '412':
+        $ref: ../components/common.yaml#/responses/PreconditionFailed
+/v1/organizations/{organizationId}/approval-policies/{policyKey}/versions:
+  get:
+    tags:
+    - ApprovalPolicies
+    operationId: listApprovalPolicyVersions
+    summary: Published Approval Policy Version を一覧する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/PolicyKey
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    responses:
+      '200':
+        description: Version 一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-06.yaml#/ApprovalPolicyVersionPage

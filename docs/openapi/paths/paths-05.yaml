@@ -1,0 +1,105 @@
+/v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/publish:
+  post:
+    tags:
+    - ActionDefinitions
+    operationId: publishActionDefinition
+    summary: Draft の publish を ActionRequest として要求する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionDefinitionKey
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    - $ref: ../components/common.yaml#/parameters/IfMatch
+    responses:
+      '201':
+        description: publish 操作用 ActionRequest。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequest
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '412':
+        $ref: ../components/common.yaml#/responses/PreconditionFailed
+/v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/versions:
+  get:
+    tags:
+    - ActionDefinitions
+    operationId: listActionDefinitionVersions
+    summary: Published Action Definition Version を一覧する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionDefinitionKey
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    responses:
+      '200':
+        description: Version 一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionDefinitionVersionPage
+/v1/organizations/{organizationId}/action-definitions/{actionDefinitionKey}/versions/{version}:
+  get:
+    tags:
+    - ActionDefinitions
+    operationId: getActionDefinitionVersion
+    summary: Published Action Definition Version を取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionDefinitionKey
+    - $ref: ../components/common.yaml#/parameters/Version
+    responses:
+      '200':
+        description: Version。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionDefinitionVersion
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+/v1/organizations/{organizationId}/approval-policies:
+  get:
+    tags:
+    - ApprovalPolicies
+    operationId: listApprovalPolicies
+    summary: Approval Policy を一覧する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    responses:
+      '200':
+        description: Approval Policy 一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-06.yaml#/ApprovalPolicyPage
+  post:
+    tags:
+    - ApprovalPolicies
+    operationId: createApprovalPolicy
+    summary: Approval Policy identity と初期 Draft を作成する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-03.yaml#/ApprovalPolicyDefinition
+    responses:
+      '201':
+        description: Approval Policy が作成された。
+        headers:
+          ETag:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-06.yaml#/ApprovalPolicyResource
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity

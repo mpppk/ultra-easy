@@ -1,0 +1,201 @@
+ApprovalPlanSummary:
+  type: object
+  required:
+  - required
+  properties:
+    required:
+      type: boolean
+    stepCount:
+      type: integer
+      minimum: 0
+    approvalPlanChecksum:
+      type: string
+    flow:
+      $ref: ./schemas-04.yaml#/FlowDefinition
+  additionalProperties: false
+ActionSimulationResult:
+  type: object
+  required:
+  - authorization
+  - applicablePolicies
+  properties:
+    authorization:
+      $ref: ./schemas-02.yaml#/AuthorizationSimulation
+    applicablePolicies:
+      type: array
+      items:
+        $ref: ./schemas-02.yaml#/ApplicablePolicy
+    approvalPlan:
+      oneOf:
+      - $ref: ./schemas-03.yaml#/ApprovalPlanSummary
+      - type: 'null'
+  additionalProperties: false
+SchemaReference:
+  type: object
+  required:
+  - key
+  - version
+  properties:
+    key:
+      type: string
+    version:
+      type: integer
+      minimum: 1
+  additionalProperties: false
+PolicyFieldDefinition:
+  type: object
+  required:
+  - path
+  properties:
+    path:
+      type: string
+    type:
+      type: string
+    label:
+      type: string
+  additionalProperties: true
+ActionDefinitionDraft:
+  type: object
+  required:
+  - key
+  - actionType
+  - inputSchema
+  - executorKey
+  properties:
+    key:
+      type: string
+    name:
+      type: string
+    description:
+      type: string
+    actionType:
+      type: string
+    inputSchema:
+      $ref: ./schemas-03.yaml#/SchemaReference
+    executorKey:
+      type: string
+    normalizationVersion:
+      type: integer
+      minimum: 1
+    derivedAttributeCatalog:
+      type: array
+      items:
+        $ref: ./schemas-03.yaml#/PolicyFieldDefinition
+  additionalProperties: false
+ActionDefinitionResource:
+  type: object
+  required:
+  - key
+  - actionType
+  - hasDraft
+  - createdAt
+  - updatedAt
+  properties:
+    key:
+      type: string
+    actionType:
+      type: string
+    currentVersion:
+      type:
+      - integer
+      - 'null'
+    hasDraft:
+      type: boolean
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+  additionalProperties: false
+ActionDefinitionVersion:
+  allOf:
+  - $ref: ./schemas-03.yaml#/ActionDefinitionDraft
+  - type: object
+    required:
+    - version
+    - checksum
+    - createdAt
+    properties:
+      version:
+        type: integer
+        minimum: 1
+      checksum:
+        type: string
+      createdAt:
+        type: string
+        format: date-time
+      createdBy:
+        type: string
+ActionDefinitionPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-03.yaml#/ActionDefinitionResource
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false
+ActionDefinitionVersionPage:
+  type: object
+  required:
+  - items
+  - pageInfo
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-03.yaml#/ActionDefinitionVersion
+    pageInfo:
+      $ref: ./schemas-01.yaml#/PageInfo
+  additionalProperties: false
+ApprovalPolicyDefinition:
+  type: object
+  required:
+  - schemaVersion
+  - key
+  - name
+  - rules
+  properties:
+    schemaVersion:
+      const: 1
+    key:
+      type: string
+    name:
+      type: string
+    description:
+      type: string
+    rules:
+      type: array
+      minItems: 1
+      items:
+        $ref: ./schemas-03.yaml#/ApprovalRuleDefinition
+  additionalProperties: false
+ApprovalRuleDefinition:
+  type: object
+  required:
+  - key
+  - when
+  - flow
+  properties:
+    key:
+      type: string
+    when:
+      oneOf:
+      - $ref: ./schemas-04.yaml#/Condition
+      - $ref: ./schemas-03.yaml#/AlwaysCondition
+    flow:
+      $ref: ./schemas-04.yaml#/FlowDefinition
+  additionalProperties: false
+AlwaysCondition:
+  type: object
+  required:
+  - type
+  properties:
+    type:
+      const: always
+  additionalProperties: false

@@ -1,0 +1,118 @@
+/v1/organizations/{organizationId}/action-requests:
+  post:
+    tags:
+    - ActionRequests
+    operationId: createActionRequest
+    summary: ActionRequest を受付し、認可・Policy 評価・実行または承認待ちを開始する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/IdempotencyKey
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-01.yaml#/ActionRequestCreate
+          examples:
+            changeTicketPriority:
+              value:
+                action:
+                  type: ticket.priority.change
+                  resource:
+                    type: ticket
+                    id: TICKET-123
+                  input:
+                    priority: critical
+    responses:
+      '201':
+        description: ActionRequest が作成された。承認不要なら executed/executing、必要なら pending_approval になり得る。
+        headers:
+          Location:
+            schema:
+              type: string
+            description: 作成された ActionRequest の URL。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequest
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        description: Action authorization が deny した。
+        content:
+          application/problem+json:
+            schema:
+              $ref: ../components/schemas-07.yaml#/Problem
+      '409':
+        $ref: ../components/common.yaml#/responses/Conflict
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+  get:
+    tags:
+    - ActionRequests
+    operationId: listActionRequests
+    summary: ActionRequest を検索する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - $ref: ../components/common.yaml#/parameters/Limit
+    - name: status
+      in: query
+      schema:
+        $ref: ../components/schemas-01.yaml#/ActionRequestStatus
+    - name: actionType
+      in: query
+      schema:
+        type: string
+    - name: resourceType
+      in: query
+      schema:
+        type: string
+    - name: resourceId
+      in: query
+      schema:
+        type: string
+    responses:
+      '200':
+        description: ActionRequest 一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-01.yaml#/ActionRequestPage
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+/v1/organizations/{organizationId}/action-requests/simulate:
+  post:
+    tags:
+    - ActionRequests
+    operationId: simulateActionRequest
+    summary: 副作用なしで Authorization / Policy / Approval Plan を評価する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-01.yaml#/ActionRequestCreate
+    responses:
+      '200':
+        description: シミュレーション結果。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-03.yaml#/ActionSimulationResult
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '422':
+        $ref: ../components/common.yaml#/responses/UnprocessableEntity
