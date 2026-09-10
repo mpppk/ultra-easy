@@ -17,10 +17,7 @@ export type ServicePrincipalRef = {
   id: ServiceId;
 };
 
-export type PrincipalRef =
-  | UserPrincipalRef
-  | AgentPrincipalRef
-  | ServicePrincipalRef;
+export type PrincipalRef = UserPrincipalRef | AgentPrincipalRef | ServicePrincipalRef;
 
 export type DelegationHop = {
   delegator: PrincipalRef;
