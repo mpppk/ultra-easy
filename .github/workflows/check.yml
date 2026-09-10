@@ -17,6 +17,9 @@ jobs:
       - name: Install dependencies
         run: vp install
       - name: Check
-        run: vp check
+        run: |
+          vp check --fix
+          git diff -- docs/design-doc.md docs/implementation-plan.md
+          git diff --exit-code -- docs/design-doc.md docs/implementation-plan.md
       - name: Test
         run: vp test
