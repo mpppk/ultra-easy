@@ -1,12 +1,19 @@
+import type {
+  ActionType,
+  AgentRunId,
+  ClientId,
+  ResourceId,
+  ResourceType,
+} from "./brand.ts";
 import type { Delegation, PrincipalRef } from "./principal.ts";
 
 export type ResourceRef = {
-  type: string;
-  id: string;
+  type: ResourceType;
+  id: ResourceId;
 };
 
 export type Action = {
-  type: string;
+  type: ActionType;
   resource: ResourceRef;
   input: Record<string, unknown>;
 };
@@ -20,9 +27,9 @@ export type ActionOriginType = "ui" | "api" | "mcp" | "system";
 
 export type ActionOrigin = {
   type: ActionOriginType;
-  clientId?: string;
+  clientId?: ClientId;
   caller?: PrincipalRef;
-  agentRunId?: string;
+  agentRunId?: AgentRunId;
 };
 
 export type ActionRequest = {
