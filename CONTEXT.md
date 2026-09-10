@@ -1,85 +1,85 @@
-# Approval Workflow Platform
+# 承認ワークフロー基盤
 
-A platform for representing an intended application operation as an Action Request, authorizing it, determining whether human approval is required, and eventually executing it. This context defines the business language shared by human-, service-, and AI-initiated operations.
+アプリケーション上で意図された操作をAction Requestとして表現し、認可し、人間による承認が必要かを判定したうえで、最終的に実行するための基盤。このコンテキストでは、人間・Service・AI Agentから開始される操作に共通するドメイン言語を定義する。
 
-## Language
+## 用語
 
-**Action Request**:
-A request to perform one Action, recording who directly initiated it, whose authority it relies on, and where it originated.
-_Avoid_: Approval Request, Workflow Request
+**Action Request（アクション要求）**:
+1つのActionを実行するための要求。誰が直接要求したか、誰の権限を根拠とするか、どこから要求されたかを保持する。
+_避ける表現_: Approval Request、Workflow Request
 
-**Principal**:
-An identity that can participate in the domain as a user, agent, or service.
-_Avoid_: Actor when referring to an identity in general
+**Principal（主体）**:
+User、Agent、Serviceのいずれかとしてドメインに参加できるidentity。
+_避ける表現_: identity一般を指す場合のActor
 
-**Actor**:
-The Principal that directly initiated the Action Request at the platform boundary. The Actor is not necessarily the Principal whose authority is used.
-_Avoid_: Requester when authority is intended
+**Actor（実行要求主体）**:
+基盤の境界でAction Requestを直接開始したPrincipal。Actorと、そのActionで使用する権限のPrincipalは同一とは限らない。
+_避ける表現_: 権限主体を意味するRequester
 
-**Authority Principal**:
-The Principal whose permissions are the basis for an Action Request. Approval never grants the Authority Principal permissions they do not already have.
-_Avoid_: Actor, Requester
+**Authority Principal（権限主体）**:
+Action Requestの実行権限の根拠となるPrincipal。Approvalによって、Authority Principalが元々持たない権限を付与してはならない。
+_避ける表現_: Actor、Requester
 
-**Delegation**:
-An explicit, attenuating grant that allows another Principal to act using part of an Authority Principal's authority. A delegation chain must never become more permissive as it is extended.
-_Avoid_: Impersonation
+**Delegation（委任）**:
+あるPrincipalが持つ権限の一部を、別のPrincipalが代理で利用できるようにする明示的な委任。委任chainを延長しても、利用可能な権限範囲が拡大してはならない。
+_避ける表現_: Impersonation
 
-**Action**:
-A typed operation, its target Resource, and the input required to perform it.
-_Avoid_: Approval, Workflow
+**Action（操作）**:
+操作種別、対象Resource、操作に必要なinputから構成される型付きの操作。
+_避ける表現_: Approval、Workflow
 
-**Resource**:
-The domain object targeted by an Action, identified by a resource type and resource ID.
-_Avoid_: Object when referring to the target of an Action
+**Resource（対象リソース）**:
+Actionの対象となるドメインobject。resource typeとresource IDで識別する。
+_避ける表現_: Actionの対象を指す場合のObject
 
-**Origin**:
-The trusted channel or execution context from which an Action Request entered the platform, such as UI, API, MCP, or system automation.
-_Avoid_: Actor, Caller
+**Origin（起点）**:
+Action Requestが基盤へ入ってきた信頼済みのchannelまたは実行context。UI、API、MCP、system automationなどを表す。
+_避ける表現_: Actor、Caller
 
-**Caller**:
-The immediate trusted Principal that caused an agent- or service-mediated Action Request to be created when that identity is relevant. The Caller is context, not automatically the Authority Principal.
-_Avoid_: Creator, Owner
+**Caller（呼び出し主体）**:
+AgentまたはServiceを介したAction Requestを発生させた、直近の信頼済みPrincipal。必要な場合にのみ保持し、Callerだからといって自動的にAuthority Principalにはならない。
+_避ける表現_: Creator、Owner
 
-**Authorization**:
-The decision about whether an Action Request may proceed under its current Authority Principal and delegation. Authorization is evaluated independently from Approval.
-_Avoid_: Approval
+**Authorization（認可）**:
+現在のAuthority PrincipalとDelegationの範囲で、そのAction Requestを先へ進めてよいかを判定すること。AuthorizationはApprovalとは独立して評価する。
+_避ける表現_: Approval
 
-**Approval**:
-A required human decision that permits an already-authorized Action Request to continue. Approval does not elevate or create authority.
-_Avoid_: Authorization, Permission
+**Approval（承認）**:
+すでにAuthorizationを通過したAction Requestを先へ進めるために必要となる人間の判断。Approvalによって権限を新規作成したり、昇格させたりしてはならない。
+_避ける表現_: Authorization、Permission
 
-**Approval Policy**:
-A versioned rule set that maps an authorized Action Request and evaluation context to an Approval Flow.
-_Avoid_: Workflow Definition
+**Approval Policy（承認ポリシー）**:
+認可済みAction RequestとEvaluation Contextから、必要なApproval Flowを決定するversion付きのrule set。
+_避ける表現_: Workflow Definition
 
-**Policy Binding**:
-The rule that determines where an Approval Policy applies, including the relevant action/resource selectors and composition order.
-_Avoid_: Policy Scope
+**Policy Binding（ポリシー適用設定）**:
+Approval PolicyをどのAction Requestへ適用するかを決定するルール。action/resource selectorやcomposition orderを含む。
+_避ける表現_: Policy Scope
 
-**Rule**:
-A Condition and resulting Flow within an Approval Policy. Rules are ordered and a policy selects the first matching Rule.
-_Avoid_: Policy
+**Rule（ルール）**:
+Approval Policy内のConditionと、その条件に一致した場合のFlowの組。Ruleには順序があり、Policyは最初に一致したRuleを採用する。
+_避ける表現_: Policy
 
-**Condition**:
-A serializable predicate over approved field namespaces used to decide whether a Rule or Policy Binding applies.
-_Avoid_: Callback, Script
+**Condition（条件）**:
+許可されたfield namespaceを参照し、RuleまたはPolicy Bindingを適用するかを判定するためのシリアライズ可能なpredicate。
+_避ける表現_: Callback、Script
 
-**Flow**:
-The serializable structure of required Approval Steps and their serial or parallel composition.
-_Avoid_: Workflow when referring to the policy-defined approval structure
+**Flow（承認フロー）**:
+必要なApproval Stepと、それらのserial/parallelな組み合わせを表すシリアライズ可能な構造。
+_避ける表現_: Policyで定義された承認構造を指す場合のWorkflow
 
-**No Approval**:
-An explicit Flow result meaning that a Policy requires no additional human approval. It is distinct from no applicable Policy, an evaluation error, or an authorization denial.
-_Avoid_: Missing Flow
+**No Approval（承認不要）**:
+そのPolicyでは追加の人間承認を要求しないことを明示するFlow結果。適用Policyが存在しないこと、評価error、Authorization denyとは区別する。
+_避ける表現_: Missing Flow
 
-**Approval Step**:
-A single approval requirement within a Flow, including who may approve and constraints such as candidate completion and self-approval.
-_Avoid_: Task when referring to the policy definition
+**Approval Step（承認ステップ）**:
+Flow内の1つの承認要件。誰が承認可能か、候補者の完了条件、自己承認制約などを持つ。
+_避ける表現_: Policy定義を指す場合のTask
 
-**Approver Expression**:
-A serializable description of who is eligible to approve an Approval Step, expressed as a Principal, relationship, or explicit user reference rather than a pre-resolved concrete candidate list.
-_Avoid_: Approver List
+**Approver Expression（承認者式）**:
+Approval Stepを誰が承認可能かを表すシリアライズ可能な記述。事前解決済みの具体的な候補者一覧ではなく、Principal、relation、または明示的なUser参照として表現する。
+_避ける表現_: Approver List
 
-**Decision**:
-An immutable approval outcome submitted for an Approval Step, such as approve or reject.
-_Avoid_: Permission
+**Decision（承認判断）**:
+Approval Stepに対して提出されるimmutableな判断結果。approveまたはrejectなどを表す。
+_避ける表現_: Permission
