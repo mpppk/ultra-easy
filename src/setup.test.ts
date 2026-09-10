@@ -1,5 +1,4 @@
-// oxlint-disable-next-line vite-plus/prefer-vite-plus-imports -- vite-plus/test throws at runtime with the current Bun/Vite+ setup.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 describe("setup", () => {
   it("works", () => {
