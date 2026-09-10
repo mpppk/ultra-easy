@@ -1,9 +1,9 @@
-# Approval Workflow Platform — Implementation Plan & Acceptance Specification
+# 承認ワークフロー基盤 — 実装計画・受け入れ仕様
 
-**Status:** Draft  
-**Purpose:** v1をTDD/Acceptance-firstで実装するためのマイルストーン、期待挙動、テスト戦略、完了基準を定義する。  
+**状態:** Draft  
+**目的:** v1をTDD / Acceptance-firstで実装するためのマイルストーン、期待挙動、テスト戦略、完了基準を定義する。  
 **Design Doc:** [`design-doc.md`](design-doc.md)  
-**Detailed Specification:** [`approval-workflow-spec.md`](approval-workflow-spec.md)  
+**詳細仕様:** [`approval-workflow-spec.md`](approval-workflow-spec.md)  
 **OpenAPI:** [`openapi/openapi.yaml`](openapi/openapi.yaml)
 
 ## 1. この文書の役割
@@ -16,16 +16,16 @@
 Design Doc
   WHY / WHAT
       ↓
-Detailed Specification
+詳細仕様
   DOMAIN SEMANTICS
       ↓
-Implementation Plan
+実装計画
   ORDER / ACCEPTANCE CRITERIA
       ↓
-Tests
+テスト
   EXECUTABLE PROOF
       ↓
-Implementation
+実装
 ```
 
 ## 2. 開発原則
@@ -44,9 +44,9 @@ Implementation
 
 「内部でどの関数を呼んだか」ではなく、**同じ入力・同じ固定contextに対して何が観測できるか**をテストする。
 
-### 2.2 Test pyramid
+### 2.2 テストピラミッド
 
-| Level       | 主な対象                                                                               | 方針                                             |
+| レベル      | 主な対象                                                                               | 方針                                             |
 | ----------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | Unit        | Condition / Policy / Compiler / Materializer / Interpreter semantics                   | 最多。外部サービスなし、決定的、高速             |
 | Type test   | AST Builder / public TS API                                                            | compile-time contractを検証                      |
@@ -54,7 +54,7 @@ Implementation
 | Integration | D1 / OpenFGA / Cloudflare Workflows                                                    | 実サービスまたは互換test environmentで検証       |
 | E2E         | HTTP/MCP → Approval → Re-Authorization → Execute                                       | critical pathのみ。v1 acceptance suiteとして維持 |
 
-### 2.3 Test naming
+### 2.3 テスト命名
 
 Acceptance IDとテストを対応させる。
 
@@ -79,9 +79,9 @@ packages/*/src/**/*.test.ts
 it("AC-M1-004 fails closed when a field is missing", ...)
 ```
 
-## 3. Milestone overview
+## 3. マイルストーン概要
 
-| Milestone                              | Capability / 完了するとできること                                                     |
+| マイルストーン                         | 完了するとできること                                                                  |
 | -------------------------------------- | ------------------------------------------------------------------------------------- |
 | M0 Foundation                          | domain model、test harness、canonical fixturesが揃い、以降をTDDで進められる           |
 | M1 Policy Core                         | Action + Evaluation Context + Policy群から、承認Flowをpureかつ決定的に算出できる      |
@@ -96,15 +96,16 @@ it("AC-M1-004 fails closed when a field is missing", ...)
 
 ---
 
-# M0 — Foundation & Executable Contracts
+# M0 — 基盤と実行可能な契約
 
-## Goal
+## 目標
 
 実装を始める前に、用語・型・fixture・test harnessを固定し、以降のPRで「仕様を読んだ人によってテスト解釈が変わる」状態をなくす。
 
-## Scope
+## スコープ
 
 - `ActionRequest`, `PrincipalRef`, `DelegationHop`, `ResourceRef` のcore types
+- ID、key、type等の意味が異なる識別子をbranded typeで区別する
 - Action / Policy / Flow / Condition AST types
 - Standard Schema依存境界のinterfaceのみ
 - package dependency rules
@@ -113,25 +114,25 @@ it("AC-M1-004 fails closed when a field is missing", ...)
 - representative fixture: human / AI / delegated action / ticket action / purchase action
 - acceptance test directoryとID naming convention
 
-## Expected behavior
+## 期待する挙動
 
 ### AC-M0-001 — ActionRequestはactorとauthorityを分離できる
 
 **Given** AI Agentがuserの限定委任で操作する  
 **When** ActionRequest fixtureを生成する  
-**Then** `actor=agent`、`authority.principal=user`、delegation chainを独立して表現できる。
+**Then** `actor=agent`、`authority.principal=user`、delegation chainを独立して表現できる。また、`UserId`、`AgentId`、`ResourceId`等の意味が異なる識別子は相互に代入できず、取り違えをcompile-time errorとして検出できる。
 
 ### AC-M0-002 — Core ASTはJSONとしてround-tripできる
 
 **Given** serial + parallel + approvalを含むPolicy AST  
 **When** `JSON.stringify` → `JSON.parse`する  
-**Then** domain上同一のASTとして扱える。function/class instance/runtime handleを含まない。
+**Then** domain上同一のASTとして扱える。function/class instance/runtime handleを含まない。branded typeはTypeScript上だけの情報とし、JSON表現へ余計なbrand fieldを追加しない。
 
 ### AC-M0-003 — Core packageはAdapterへ依存しない
 
 `approval-core`からCloudflare、D1、OpenFGA SDK、HTTP framework、Zod等をimportしないことをdependency testで保証する。
 
-## Suggested tests
+## 推奨テスト
 
 ```text
 packages/approval-core/src/action-request.test.ts
@@ -140,7 +141,7 @@ tests/architecture/dependency-rules.test.ts
 tests/fixtures/fixture-contract.test.ts
 ```
 
-## Deliverables
+## 成果物
 
 - package skeleton
 - Vitest / type-test configuration
@@ -148,10 +149,11 @@ tests/fixtures/fixture-contract.test.ts
 - deterministic test utilities
 - CIでunit/type testsが実行可能
 
-## Definition of Done
+## 完了条件
 
 - AC-M0-001〜003がgreen
 - empty implementationでもない最小domain typesが公開される
+- 意味が異なる主要な識別子がbranded typeとして公開され、代表的な取り違えがtype testで拒否される
 - `pnpm test`等の単一commandでunit testが実行できる
 - CIでCoreの禁止dependencyを検知できる
 - 次のMilestoneが外部serviceなしで開始できる
@@ -160,11 +162,11 @@ tests/fixtures/fixture-contract.test.ts
 
 # M1 — Policy Core
 
-## Goal
+## 目標
 
 外部サービスを使わず、ActionRequestと固定Evaluation Contextに対して「どのApproval Flowが必要か」をpureかつ決定的に計算できる。
 
-## Scope
+## スコープ
 
 - Action Definition resolution contract
 - Standard Schema validation integration
@@ -180,7 +182,7 @@ tests/fixtures/fixture-contract.test.ts
 - explicit `none`
 - root `defaultFlowConstraints`
 
-## Expected behavior / Acceptance Scenarios
+## 期待する挙動 / Acceptance Scenarios
 
 ### AC-M1-001 — first matching ruleのみ採用する
 
@@ -232,7 +234,7 @@ tests/fixtures/fixture-contract.test.ts
 
 Builderで生成したASTと直接JSONで記述した同じPolicyが、同じcanonical ASTになる。
 
-## Suggested unit tests
+## 推奨Unit Test
 
 ```ts
 describe("PolicyEvaluator", () => {
@@ -250,7 +252,7 @@ describe("ApprovalPlanCompiler", () => {
 });
 ```
 
-## Definition of Done
+## 完了条件
 
 - AC-M1-001〜008がunit/type testsとしてgreen
 - evaluator/compilerはDB・HTTP・clockの暗黙参照を持たない
@@ -260,13 +262,13 @@ describe("ApprovalPlanCompiler", () => {
 
 ---
 
-# M2 — Materialization, Snapshots & Persistence Primitives
+# M2 — Materialization、Snapshot、永続化プリミティブ
 
-## Goal
+## 目標
 
 Policy評価結果を、数日後・数か月後でも同じ意味で再現可能なimmutable Materialized Approval Planへ固定できる。
 
-## Scope
+## スコープ
 
 - EvaluationSnapshot
 - ActionDefinition/Schema version snapshot
@@ -312,7 +314,7 @@ Workflowへ渡された`approvalPlanChecksum`とD1からloadしたimmutable plan
 
 `resolution=snapshot`かつ`all/quorum`のStepでは、activation時candidate集合をcohortとして固定し、その後のorganization変更で集合が変化しない。
 
-## Suggested tests
+## 推奨テスト
 
 ```text
 packages/approval-core/src/materializer.test.ts
@@ -322,7 +324,7 @@ packages/approval-d1/src/plan-repository.integration.test.ts
 tests/golden/canonical-json.test.ts
 ```
 
-## Definition of Done
+## 完了条件
 
 - AC-M2-001〜007がgreen
 - 同じfixtureから生成したchecksumのgolden fileをCIで固定
@@ -332,13 +334,13 @@ tests/golden/canonical-json.test.ts
 
 ---
 
-# M3 — Authorization & Approver Resolution
+# M3 — Authorizationと承認者解決
 
-## Goal
+## 目標
 
 「このActionを要求できるか」と「このStepを誰が承認できるか」をApproval Flow semanticsから分離し、OpenFGA等のAdapterを通して安全に判定できる。
 
-## Scope
+## スコープ
 
 - `ActionAuthorizer` Port / evidence / allow-deny-error
 - direct authority
@@ -395,7 +397,7 @@ Agent Bへ再委譲しても、元principalまたは上流grantにないpermissi
 
 異なるPrincipalとしてfixtureを構成し、それぞれをPolicy/Authorizationで独立して参照できる。
 
-## Suggested tests
+## 推奨テスト
 
 ```text
 packages/approval-core/src/action-authorizer.contract.test.ts
@@ -405,7 +407,7 @@ packages/approval-fga/src/approver-resolver.integration.test.ts
 packages/approval-fga/src/delegation.integration.test.ts
 ```
 
-## Definition of Done
+## 完了条件
 
 - AC-M3-001〜009がgreen
 - OpenFGA test store/model testsをCIで実行
@@ -417,11 +419,11 @@ packages/approval-fga/src/delegation.integration.test.ts
 
 # M4 — Durable Approval Runtime
 
-## Goal
+## 目標
 
 Human decisionを待つ時間を跨いでも、Materialized Flowを正しいsemanticsでdurableに実行・再開できる。
 
-## Scope
+## スコープ
 
 - `DurableRuntime` Port
 - InMemoryRuntime
@@ -482,7 +484,7 @@ business approvalではauthority principal自身のapprovalを拒否でき、exe
 
 対象外user、既にclosedなtask、同じidempotency keyの再送でFlowを二重進行させない。
 
-## Suggested tests
+## 推奨テスト
 
 ```text
 packages/approval-core/src/interpreter/*.test.ts
@@ -493,7 +495,7 @@ tests/acceptance/m4-durable-runtime.test.ts
 
 Cloudflare integrationでは少なくとも、instance resume、`step.do` retry、event buffering、explicit timeout、plan checksum load、payload limit付近を検証する。
 
-## Definition of Done
+## 完了条件
 
 - AC-M4-001〜011がInMemoryRuntimeでgreen
 - critical scenariosがCloudflare Workflows integrationでもgreen
@@ -503,13 +505,13 @@ Cloudflare integrationでは少なくとも、instance resume、`step.do` retry�
 
 ---
 
-# M5 — Safe Action Execution
+# M5 — 安全なAction実行
 
-## Goal
+## 目標
 
 Approval完了後またはApproval不要時に、最新authorityを再確認し、外部side effectを可能な限り重複なく安全に実行できる。
 
-## Scope
+## スコープ
 
 - `ActionExecutor` contract
 - idempotency key
@@ -555,7 +557,7 @@ Decisionにbindされたfingerprint/checksumと実行対象が一致しなけれ
 
 外部systemがidempotencyを提供しないExecutorについて、保証レベルをcontract上明示し、local recordだけでexactly-onceを主張しない。
 
-## Suggested tests
+## 推奨テスト
 
 ```text
 packages/approval-core/src/action-executor.contract.test.ts
@@ -563,7 +565,7 @@ packages/approval-runtime-cloudflare/src/execution.integration.test.ts
 tests/acceptance/m5-action-execution.test.ts
 ```
 
-## Definition of Done
+## 完了条件
 
 - AC-M5-001〜008がgreen
 - side-effect mock/test serverでretry/idempotencyを検証
@@ -572,13 +574,13 @@ tests/acceptance/m5-action-execution.test.ts
 
 ---
 
-# M6 — Public API & MCP Integration
+# M6 — Public APIとMCP統合
 
-## Goal
+## 目標
 
 利用ApplicationとAI Agentが、Approval実装詳細を知らずにActionRequestを送るだけで、deny / immediate execute / pending approval / final resultまで利用できる。
 
-## Scope
+## スコープ
 
 - OpenAPI contract実装
 - `POST /action-requests`統一入口
@@ -635,7 +637,7 @@ silent hangや無承認executionを行わない。
 
 Authorization/適用Policy/Approval Planを説明できるがTask/Workflow/ActionExecutorを作成しない。
 
-## Critical-path E2E suite
+## 重要E2Eシナリオ
 
 v1では最低限以下を固定suiteとして維持する。
 
@@ -655,7 +657,7 @@ v1では最低限以下を固定suiteとして維持する。
 14. Policy複数合成 → deterministic serial plan
 15. unauthorized AI + human approval attempt → denyのまま
 
-## Definition of Done
+## 完了条件
 
 - AC-M6-001〜010がHTTP/MCP integrationでgreen
 - critical-path E2E 15ケースがgreen
@@ -664,13 +666,13 @@ v1では最低限以下を固定suiteとして維持する。
 
 ---
 
-# M7 — Production Readiness & Governance
+# M7 — 本番運用準備とガバナンス
 
-## Goal
+## 目標
 
 「機能が動く」状態から、本番で運用・監査・障害対応できる状態へ移行する。
 
-## Scope
+## スコープ
 
 - strict organization scope / multi-tenant tests
 - meta-approval for Policy / Binding / Action Definition publish
@@ -735,7 +737,7 @@ Action input、Decision comment、attachment content等がdefault application lo
 
 runbookに従い、原因確認 → force cancel → audit確認まで実施できる。
 
-## Definition of Done
+## 完了条件
 
 - AC-M7-001〜010がgreenまたはrunbook drillで実証済み
 - security / tenant isolation integration suiteがgreen
@@ -746,9 +748,9 @@ runbookに従い、原因確認 → force cancel → audit確認まで実施で�
 
 ---
 
-# 4. Cross-milestone acceptance rules
+# 4. マイルストーン横断の受け入れ規則
 
-## 4.1 Security invariantsは常にregression testする
+## 4.1 Security invariantは常にregression testする
 
 以下は一度実装した後、すべてのMilestoneでgreenを維持する。
 
@@ -761,7 +763,7 @@ runbookに従い、原因確認 → force cancel → audit確認まで実施で�
 - self approval / SoD制約
 - tenant boundary
 
-## 4.2 Determinism fixtures
+## 4.2 Determinism fixture
 
 以下はgolden testを持つ。
 
@@ -775,7 +777,7 @@ runbookに従い、原因確認 → force cancel → audit確認まで実施で�
 
 意図したbreaking semantics変更時のみfixtureを更新し、PRで差分理由を説明する。
 
-## 4.3 Failure-pathをhappy pathと同じ優先度で実装する
+## 4.3 Failure pathをhappy pathと同じ優先度で実装する
 
 各Milestoneで少なくとも以下を検討する。
 
@@ -813,7 +815,7 @@ Implement workflow
 
 後者は「何をもって完成か」が分からないため、必ずAcceptance IDと期待するobservable behaviorをIssue本文へ含める。
 
-# 6. Milestone completion review
+# 6. マイルストーン完了レビュー
 
 各Milestone終了時にはコード完成ではなく、次のchecklistでreviewする。
 
@@ -826,7 +828,7 @@ Implement workflow
 - [ ] demo scenarioを第三者が再現できる
 - [ ] 次Milestoneが未完成実装へ暗黙依存していない
 
-# 7. v1 Release Definition of Done
+# 7. v1リリース完了条件
 
 v1はM7まで単に実装済みであることではなく、次を満たした時点でrelease可能とする。
 

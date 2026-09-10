@@ -2,29 +2,29 @@
 
 ## **6.1 正本**
 
-Policyの正本はJSONとして完全にシリアライズ可能なASTである。TypeScript BuilderもGUI EditorもこのASTを生成するだけであり、実行エンジンは生成元を区別しない。
+Policyの正本はJSONとして完全にシリアライズ可能なASTである。TypeScript BuilderもGUI EditorもこのASTを生成するだけであり、実行エンジンは生成元を区別しない。Policy key、Rule key、Binding ID、Organization ID、Action type、Resource typeなど、意味の異なる識別子はTypeScript上では個別のbranded typeとして扱い、相互の取り違えをcompile-time errorにする。brandはJSON表現には含めない。
 
 type ApprovalPolicyDefinition \= {  
   schemaVersion: 1;  
-  key: string;  
+  key: ApprovalPolicyKey;  
   name: string;  
   description?: string;  
   rules: ApprovalRuleDefinition\[\];  
 };
 
 type ApprovalRuleDefinition \= {  
-  key: string;  
+  key: ApprovalRuleKey;  
   when: Condition | AlwaysCondition;  
   flow: FlowDefinition;  
 };
 
 type ApprovalPolicyBinding \= {  
-  id: string;  
-  organizationId: string;  
-  policyKey: string;  
+  id: ApprovalPolicyBindingId;  
+  organizationId: OrganizationId;  
+  policyKey: ApprovalPolicyKey;  
   selector: {  
-    actionTypes: string\[\];  
-    resourceTypes?: string\[\];  
+    actionTypes: ActionType\[\];  
+    resourceTypes?: ResourceType\[\];  
     when?: Condition;  
   };  
   compositionOrder?: number;  
