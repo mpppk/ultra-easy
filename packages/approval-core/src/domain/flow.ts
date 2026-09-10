@@ -30,10 +30,7 @@ export type ApprovalPurpose =
   | "security_approval"
   | "compliance_approval";
 
-export type CandidateCompletion =
-  | "any"
-  | "all"
-  | { type: "quorum"; count: number };
+export type CandidateCompletion = "any" | "all" | { type: "quorum"; count: number };
 
 export type UnresolvedApproverBehavior =
   | { type: "deny" }
@@ -84,9 +81,7 @@ type ParallelQuorumFlowDefinition = {
   constraints?: FlowConstraints;
 };
 
-export type ParallelFlowDefinition =
-  | ParallelAllOrAnyFlowDefinition
-  | ParallelQuorumFlowDefinition;
+export type ParallelFlowDefinition = ParallelAllOrAnyFlowDefinition | ParallelQuorumFlowDefinition;
 
 export type FlowDefinition =
   | NoApprovalFlowDefinition
