@@ -1,11 +1,11 @@
-# Approval Workflow Platform — Design Doc
+# 承認ワークフロー基盤 — Design Doc
 
-**Status:** Draft  
-**Audience:** Engineering / Product / Security / Architecture  
-**Detailed specification:** [`approval-workflow-spec.md`](approval-workflow-spec.md)  
+**状態:** Draft  
+**対象読者:** Engineering / Product / Security / Architecture  
+**詳細仕様:** [`approval-workflow-spec.md`](approval-workflow-spec.md)  
 **OpenAPI:** [`openapi/openapi.yaml`](openapi/openapi.yaml)
 
-## 1. Summary
+## 1. 概要
 
 本プロジェクトでは、アプリケーションから発生する操作要求に対して、
 
@@ -21,7 +21,7 @@
 
 ---
 
-## 2. Background
+## 2. 背景
 
 実際の業務システムでは、認可と承認は単純なRBACだけでは表現しきれない。
 
@@ -51,7 +51,7 @@ Principal × Resource × Action × State × Context × Approval
 
 ---
 
-## 3. Problem
+## 3. 現状の課題
 
 現在の典型的な実装方法では、各アプリケーションが個別に認可・承認ロジックを持つ。
 
@@ -116,7 +116,7 @@ AI Agentの「このコマンドを実行してよいですか？」という確
 
 ---
 
-## 4. Why this project is needed
+## 4. なぜこのプロジェクトが必要か
 
 承認要件が1つしかない単一アプリケーションであれば、そのアプリケーション内に専用実装を書く方が早い。
 
@@ -150,7 +150,7 @@ AI Agent対応
 
 ---
 
-## 5. Goals
+## 5. 目標
 
 本プロジェクトでは次を実現する。
 
@@ -164,7 +164,7 @@ AI Agent対応
 - Policy変更後も過去の承認判断を再現できる
 - 各業務システムがApprovalの状態機械を実装しなくてよい状態にする
 
-## 6. Non-goals
+## 6. 非目標
 
 v1では以下を目標としない。
 
@@ -182,9 +182,9 @@ v1では以下を目標としない。
 
 ---
 
-## 7. Core Ideas
+## 7. コアアイデア
 
-### 7.1 Everything starts from an Action
+### 7.1 すべてはActionから始まる
 
 システムへの操作をまず`ActionRequest`へ正規化する。
 
@@ -210,7 +210,7 @@ origin
 
 Ticket、Expense、MCP Toolなどの違いは、その後の承認基盤から見るとActionの種類の違いになる。
 
-### 7.2 Authorization comes before Approval
+### 7.2 AuthorizationをApprovalより先に行う
 
 処理順序は必ず次の順序とする。
 
@@ -232,7 +232,7 @@ Execute
 
 例えばAI Agentに本番DB削除権限がなければ、人間が「承認」ボタンを押しても削除できない。
 
-### 7.3 Policy is Data
+### 7.3 Policyはデータとして扱う
 
 承認ルールをアプリケーションコードではなくJSON ASTとして表現する。
 
@@ -262,7 +262,7 @@ TypeScript  GUI
 
 これによりPolicyの保存、validation、versioning、simulation、auditを共通化できる。
 
-### 7.4 Relationship resolution is separated from Flow
+### 7.4 Relationship解決をFlowから分離する
 
 Workflowは「requesterのmanagerの承認が必要」という意味だけを持つ。
 
@@ -282,7 +282,7 @@ OpenFGA / Relationship Resolver
 
 組織情報のSource of TruthはHRISや業務DBに置き、OpenFGAはauthorization/relationship projectionとして利用する。
 
-### 7.5 One generic Workflow interprets many policies
+### 7.5 1つのGeneric Workflowで複数Policyを解釈する
 
 PolicyごとにWorkflowのコードを生成しない。
 
@@ -307,7 +307,7 @@ Action C
 Security AND Legal
 ```
 
-### 7.6 Human and AI use the same model
+### 7.6 HumanとAIを同じモデルで扱う
 
 AI Agentによる操作も特殊ケースにしない。
 
@@ -327,7 +327,7 @@ Execute Tool
 
 ---
 
-## 8. High-level Architecture
+## 8. ハイレベルアーキテクチャ
 
 ```text
 Application / AI Agent / MCP
@@ -364,7 +364,7 @@ Application / AI Agent / MCP
 
 周辺では次を利用する。
 
-| Component            | Responsibility                          |
+| コンポーネント       | 責務                                    |
 | -------------------- | --------------------------------------- |
 | OpenFGA              | authorization / relationship resolution |
 | D1                   | policy, audit, read model               |
@@ -375,7 +375,7 @@ Domain Coreはこれらの具体製品には依存しない。
 
 ---
 
-## 9. Example: ticket priority change
+## 9. 例: ticket priority change
 
 Ticket `T-123` のpriorityをCriticalへ変更するとする。
 
@@ -406,7 +406,7 @@ Ticket Application自身は、Approval table、Approval state machine、Manager 
 
 ---
 
-## 10. Alternatives Considered
+## 10. 検討した代替案
 
 ### 10.1 Applicationごとに実装する
 
@@ -442,23 +442,24 @@ Runtimeは単純になる一方、Policy変更にdeployが必要になり、tena
 
 ---
 
-## 11. Key Design Decisions
+## 11. 主要な設計判断
 
-| Decision                         | Rationale                                |
-| -------------------------------- | ---------------------------------------- |
-| ActionRequestを共通入口にする    | Approvalの有無をcallerが意識しなくてよい |
-| AuthorizationとApprovalを分離    | Approvalによる権限昇格を防止             |
-| PolicyをJSON AST化               | Versioning、GUI、監査再現性              |
-| OpenFGAをrelation resolverに利用 | 組織・resource relationshipとFlowを分離  |
-| Generic Workflowを1つだけ持つ    | Policyごとのcode/deployを避ける          |
-| 実行直前にRe-Authorization       | 長時間待機中の権限変更へ対応             |
-| Published Policyをimmutable化    | 過去判断を再現可能にする                 |
-| fail closedを原則とする          | approver解決不能等で承認を迂回させない   |
-| CoreをCloudflare/FGA非依存にする | テスト容易性と将来的な移植性             |
+| 設計判断                           | 理由                                     |
+| ---------------------------------- | ---------------------------------------- |
+| ActionRequestを共通入口にする      | Approvalの有無をcallerが意識しなくてよい |
+| AuthorizationとApprovalを分離      | Approvalによる権限昇格を防止             |
+| PolicyをJSON AST化                 | Versioning、GUI、監査再現性              |
+| OpenFGAをrelation resolverに利用   | 組織・resource relationshipとFlowを分離  |
+| Generic Workflowを1つだけ持つ      | Policyごとのcode/deployを避ける          |
+| 実行直前にRe-Authorization         | 長時間待機中の権限変更へ対応             |
+| Published Policyをimmutable化      | 過去判断を再現可能にする                 |
+| fail closedを原則とする            | approver解決不能等で承認を迂回させない   |
+| CoreをCloudflare/FGA非依存にする   | テスト容易性と将来的な移植性             |
+| 識別子にbranded typeを利用する     | 意味の異なるID/key/typeの取り違えを防ぐ  |
 
 ---
 
-## 12. Trade-offs
+## 12. トレードオフ
 
 この設計には意図的なコストもある。
 
@@ -472,7 +473,7 @@ Runtimeは単純になる一方、Policy変更にdeployが必要になり、tena
 
 ---
 
-## 13. Security Invariants
+## 13. セキュリティ上の不変条件
 
 以下は実装上変更してはならない。
 
@@ -486,7 +487,7 @@ Runtimeは単純になる一方、Policy変更にdeployが必要になり、tena
 
 ---
 
-## 14. Rollout Strategy
+## 14. 導入方針
 
 最初から全業務へ導入しない。
 
@@ -521,7 +522,7 @@ notifications
 
 ---
 
-## 15. Success Metrics
+## 15. 成功指標
 
 このプロジェクトの成功を単に「Workflowが動くこと」では測らない。
 
@@ -537,7 +538,7 @@ notifications
 
 ---
 
-## 16. Risks
+## 16. リスク
 
 ### 16.1 基盤の過剰一般化
 
@@ -565,7 +566,7 @@ Port / Adapter境界を維持する。
 
 ---
 
-## 17. Open Questions
+## 17. 未解決事項
 
 実装を進めながら、特に次の項目を検証する。
 
@@ -579,7 +580,7 @@ Port / Adapter境界を維持する。
 
 ---
 
-## 18. Mental Model
+## 18. メンタルモデル
 
 このプロジェクトを最も短く説明するなら、次のようになる。
 
