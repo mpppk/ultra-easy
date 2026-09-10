@@ -2,6 +2,10 @@
 
 > Google Docs から GitHub へ移行した仕様書。HTTP API の機械可読な契約は [`openapi/openapi.yaml`](openapi/openapi.yaml) を参照。
 
+## Overview
+
+- [Design Doc — project background, motivation, core ideas, trade-offs, rollout](design-doc.md)
+
 ## Sections
 
 - [0. エグゼクティブサマリー / 1. 目的・スコープ](approval-workflow-spec/part-01.md)
