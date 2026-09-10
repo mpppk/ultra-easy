@@ -5,6 +5,7 @@
 ## Overview
 
 - [Design Doc — project background, motivation, core ideas, trade-offs, rollout](design-doc.md)
+- [Implementation Plan & Acceptance Specification — milestones, TDD scenarios, Definition of Done](implementation-plan.md)
 
 ## Sections
 
