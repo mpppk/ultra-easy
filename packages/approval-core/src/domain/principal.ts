@@ -1,9 +1,4 @@
-import type {
-  AgentId,
-  DelegationGrantId,
-  ServiceId,
-  UserId,
-} from "./brand.ts";
+import type { AgentId, DelegationGrantId, ServiceId, UserId } from "./brand.ts";
 
 export type PrincipalType = "user" | "agent" | "service";
 
