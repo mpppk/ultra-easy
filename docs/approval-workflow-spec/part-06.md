@@ -30,15 +30,17 @@ Condition評価はfail closedとする。missing field、順序比較の型不�
 
 ## **7.3 Evaluation Context**
 
-type PrincipalRef \= {  
-  type: "user" | "agent" | "service";  
-  id: string;  
-};
+User / Agent / Service、Resource、Delegation Grant、Organization、Action type等の識別子は、実行時表現は文字列のまま維持しつつTypeScript上では意味ごとのbranded typeを使う。外部境界から復元した値はvalidation後にbrandを付与し、単なる\`string\`をcoreへ直接流し込まない。
+
+type PrincipalRef \=  
+  | { type: "user"; id: UserId }  
+  | { type: "agent"; id: AgentId }  
+  | { type: "service"; id: ServiceId };
 
 type DelegationHop \= {  
   delegator: PrincipalRef;  
   delegatee: PrincipalRef;  
-  grantId: string;  
+  grantId: DelegationGrantId;  
 };
 
 type ActionRequest \= {  
@@ -50,20 +52,20 @@ type ActionRequest \= {
     };  
   };  
   action: {  
-    type: string;  
-    resource: { type: string; id: string };  
+    type: ActionType;  
+    resource: { type: ResourceType; id: ResourceId };  
     input: Record\<string, unknown\>;  
   };  
   origin: {  
     type: "ui" | "api" | "mcp" | "system";  
-    clientId?: string;  
+    clientId?: ClientId;  
     caller?: PrincipalRef;  
-    agentRunId?: string;  
+    agentRunId?: AgentRunId;  
   };  
 };
 
 type PolicyEvaluationContext \= ActionRequest & {  
-  organization: { id: string; settings?: Record\<string, JsonValue\> };  
+  organization: { id: OrganizationId; settings?: Record\<string, JsonValue\> };  
   attributes?: Record\<string, JsonValue\>;  
   now: string;  
 };
