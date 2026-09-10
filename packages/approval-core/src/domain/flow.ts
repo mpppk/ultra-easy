@@ -1,3 +1,9 @@
+import type {
+  ApprovalStepKey,
+  AuthorizationObjectRef,
+  AuthorizationObjectType,
+  RelationName,
+} from "./brand.ts";
 import type { ValueExpression } from "./condition.ts";
 
 export type FlowConstraints = {
@@ -11,16 +17,24 @@ export type PrincipalExpression =
   | { type: "delegator"; depth?: number | "root" };
 
 export type ObjectExpression =
-  | { type: "reference"; objectType: string; id: ValueExpression }
-  | { type: "literal"; object: string };
+  | {
+      type: "reference";
+      objectType: AuthorizationObjectType;
+      id: ValueExpression;
+    }
+  | { type: "literal"; object: AuthorizationObjectRef };
 
 export type ApproverExpression =
   | { type: "principal"; principal: PrincipalExpression }
-  | { type: "relation"; object: ObjectExpression; relation: string }
+  | {
+      type: "relation";
+      object: ObjectExpression;
+      relation: RelationName;
+    }
   | {
       type: "principal_relation";
       principal: PrincipalExpression;
-      relation: string;
+      relation: RelationName;
     }
   | { type: "user"; userId: ValueExpression };
 
@@ -43,7 +57,7 @@ export type SelfApproval = {
 
 export type ApprovalStepDefinition = {
   type: "approval";
-  key: string;
+  key: ApprovalStepKey;
   name?: string;
   purpose?: ApprovalPurpose;
   approver: ApproverExpression;
