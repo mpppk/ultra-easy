@@ -45,8 +45,9 @@ const runStatement = Result.fn({
   catch: (error): D1RepositoryError => repositoryError(error, "D1 statementの実行に失敗しました"),
 });
 
-const firstRow = Result.fn({
-  try: async <T>(statement: D1PreparedStatementLike): Promise<T | null> => statement.first<T>(),
+const firstStoredPlanRow = Result.fn({
+  try: async (statement: D1PreparedStatementLike): Promise<StoredPlanRow | null> =>
+    statement.first<StoredPlanRow>(),
   catch: (error): D1RepositoryError => repositoryError(error, "D1 rowの取得に失敗しました"),
 });
 
@@ -204,7 +205,7 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     organizationId: string,
     actionRequestId: string,
   ): Result.ResultAsync<StoredPlanRow | null, D1RepositoryError> {
-    return firstRow<StoredPlanRow>(
+    return firstStoredPlanRow(
       this.db
         .prepare(
           `SELECT materialized_plan, approval_plan_checksum, approval_binding_fingerprint

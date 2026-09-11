@@ -331,10 +331,10 @@ function toJsonValue(
   return Result.succeed(result);
 }
 
-function cloneDomain<T>(value: T, path = "$"): Result.Result<T, MaterializationFailure> {
+function cloneDomain<T>(value: T, path = "$"): Result.Result<Awaited<T>, MaterializationFailure> {
   const cloned = toJsonValue(value, path);
   if (Result.isFailure(cloned)) return cloned;
-  return Result.succeed(cloned.value as T);
+  return Result.succeed(cloned.value as Awaited<T>);
 }
 
 function requireJsonObject(

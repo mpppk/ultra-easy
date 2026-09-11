@@ -26,7 +26,7 @@ export function createDeterministicIdGenerator<Id extends string>(
       }
 
       index += 1;
-      return Result.succeed(id);
+      return Result.succeed(id) as Result.Result<Id, DeterministicIdExhaustedError>;
     },
   };
 }
