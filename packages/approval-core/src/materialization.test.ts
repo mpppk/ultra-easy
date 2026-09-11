@@ -8,6 +8,7 @@ import type {
   ApprovalPolicyBindingId,
   ApprovalPolicyKey,
   ExecutorKey,
+  MaterializedStepId,
   OrganizationId,
   ResourceId,
   SchemaKey,
@@ -16,9 +17,12 @@ import type {
 import type { PolicyEvaluationContext } from "./domain/evaluation.ts";
 import type { ApprovalPolicyBinding } from "./domain/policy.ts";
 import {
+  computeApprovalBindingFingerprint,
+  computeApprovalPlanChecksum,
   createMaterializedStepId,
   createSnapshotApproverCohort,
   materializeApprovalPlan,
+  verifyMaterializedApprovalPlan,
 } from "./materialization.ts";
 import { createTicketActionRequest, fixtureIds } from "./testing/fixtures.ts";
 
@@ -121,6 +125,19 @@ async function materialize(
   expect(result.type).toBe("materialized");
   if (result.type !== "materialized") throw new Error(result.message);
   return result.plan;
+}
+
+async function refreshPlanFingerprints(plan: Awaited<ReturnType<typeof materialize>>) {
+  plan.approvalPlanChecksum = await computeApprovalPlanChecksum({
+    policyBindingSnapshots: plan.policyBindingSnapshots,
+    flow: plan.flow,
+    interpreterSemanticsVersion: plan.interpreterSemanticsVersion,
+  });
+  plan.approvalBindingFingerprint = await computeApprovalBindingFingerprint({
+    actionFingerprint: plan.actionFingerprint,
+    evaluationSnapshotChecksum: plan.evaluationSnapshotChecksum,
+    approvalPlanChecksum: plan.approvalPlanChecksum,
+  });
 }
 
 describe("MaterializedStepId", () => {
@@ -233,6 +250,23 @@ describe("snapshot approver cohort", () => {
     expect(result.cohort.candidateUserIds.map(String)).toEqual(["user:alice", "user:bob"]);
   });
 
+  it("candidate IDをlocale非依存のcode-unit順で固定する", async () => {
+    const plan = await materialize({
+      sources: [policySource({ resolution: "snapshot", candidateCompletion: "all" })],
+    });
+    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+
+    const result = await createSnapshotApproverCohort({
+      step: plan.flow,
+      candidateUserIds: [branded<UserId>("user:a"), branded<UserId>("user:Z")],
+      complete: true,
+      resolvedAt: "2026-09-11T00:01:00.000Z",
+    });
+    expect(result.type).toBe("materialized");
+    if (result.type !== "materialized") return;
+    expect(result.cohort.candidateUserIds.map(String)).toEqual(["user:Z", "user:a"]);
+  });
+
   it("不完全なcandidate集合はsnapshot cohortとして固定しない", async () => {
     const plan = await materialize({
       sources: [policySource({ resolution: "snapshot", candidateCompletion: "all" })],
@@ -268,5 +302,41 @@ describe("snapshot approver cohort", () => {
         resolvedAt: "2026-09-11T00:01:00.000Z",
       }),
     ).resolves.toMatchObject({ type: "error", code: "candidate_quorum_unreachable" });
+  });
+});
+
+describe("Materialized Plan verification", () => {
+  it("MaterializedStepIdとsourceの不一致をchecksum再計算後も拒否する", async () => {
+    const plan = structuredClone(await materialize());
+    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    plan.flow.materializedStepId = branded<MaterializedStepId>(`mstep:${"0".repeat(64)}`);
+    await refreshPlanFingerprints(plan);
+
+    await expect(verifyMaterializedApprovalPlan(plan)).resolves.toMatchObject({
+      type: "invalid",
+      code: "materialized_step_id_mismatch",
+    });
+  });
+
+  it("Step sourceのPolicy情報がBinding snapshotと不一致なら拒否する", async () => {
+    const plan = structuredClone(await materialize());
+    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    plan.flow.source.policyKey = branded<ApprovalPolicyKey>("policy:other");
+    await refreshPlanFingerprints(plan);
+
+    await expect(verifyMaterializedApprovalPlan(plan)).resolves.toMatchObject({
+      type: "invalid",
+      code: "materialized_step_source_mismatch",
+    });
+  });
+
+  it("PlanとEvaluation SnapshotのorganizationId不一致を拒否する", async () => {
+    const plan = structuredClone(await materialize());
+    plan.organizationId = branded<OrganizationId>("org:other");
+
+    await expect(verifyMaterializedApprovalPlan(plan)).resolves.toMatchObject({
+      type: "invalid",
+      code: "organization_mismatch",
+    });
   });
 });
