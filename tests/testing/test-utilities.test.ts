@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { JsonValue, ResourceId } from "../../packages/approval-core/src/domain/index.ts";
+import type { JsonValue, ResourceId } from "@app/approval-core";
 import {
   canonicalizeJson,
   createDeterministicIdGenerator,
   createFixedClock,
-} from "../../packages/approval-core/src/testing/index.ts";
+} from "@app/approval-core/testing";
 
 describe("M0 deterministic test utilities", () => {
   it("fixed clockは同じ時刻を返し続ける", () => {

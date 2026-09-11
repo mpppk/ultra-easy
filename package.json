@@ -1,6 +1,9 @@
 {
   "name": "ultra-easy",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "type": "module",
   "imports": {
     "#/*": "./src/*"
@@ -14,6 +17,7 @@
     "prepare": "vp config"
   },
   "dependencies": {
+    "@app/approval-core": "workspace:*",
     "@tanstack/react-router": "latest",
     "@tanstack/react-start": "latest",
     "react": "^19.2.0",
@@ -21,6 +25,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.26.0",
+    "@standard-schema/spec": "^1.1.0",
     "@tanstack/router-cli": "^1.132.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.0",

@@ -5,7 +5,9 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { cloudflare } from "@cloudflare/vite-plugin";
 
-const config = defineConfig({
+export default defineConfig({
+  // Workspace root is itself the app; keep bare `vp dev`/`vp build` pointed here.
+  defaultPackage: ".",
   staged: {
     "*": "vp check --fix",
   },
@@ -55,5 +57,3 @@ const config = defineConfig({
     viteReact(),
   ]),
 });
-
-export default config;

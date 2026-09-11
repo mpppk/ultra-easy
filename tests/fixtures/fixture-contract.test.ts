@@ -7,7 +7,7 @@ import {
   createPurchaseActionRequest,
   createTicketActionRequest,
   fixtureIds,
-} from "../../packages/approval-core/src/testing/index.ts";
+} from "@app/approval-core/testing";
 
 describe("M0 representative fixtures", () => {
   it("Human / Agent / Delegated Agentのauthority semanticsを固定する", () => {

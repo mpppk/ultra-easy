@@ -5,6 +5,7 @@
     "": {
       "name": "ultra-easy-new",
       "dependencies": {
+        "@app/approval-core": "workspace:*",
         "@tanstack/react-router": "latest",
         "@tanstack/react-start": "latest",
         "react": "^19.2.0",
@@ -12,6 +13,7 @@
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "^1.26.0",
+        "@standard-schema/spec": "^1.1.0",
         "@tanstack/router-cli": "^1.132.0",
         "@types/node": "^22.10.2",
         "@types/react": "^19.2.0",
@@ -24,12 +26,21 @@
         "wrangler": "^4.70.0",
       },
     },
+    "packages/approval-core": {
+      "name": "@app/approval-core",
+      "version": "0.0.0",
+      "peerDependencies": {
+        "@standard-schema/spec": "^1.1.0",
+      },
+    },
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.8",
     "vitest": "4.1.10",
   },
   "packages": {
+    "@app/approval-core": ["@app/approval-core@workspace:packages/approval-core"],
+
     "@babel/code-frame": ["@babel/code-frame@7.27.1", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.27.1", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg=="],
 
     "@babel/compat-data": ["@babel/compat-data@7.29.7", "", {}, "sha512-locTkQyKvwIEgBzVrn8693ebc97F2U8ZHjbXwDXJ5Fn2TCpNwTlKcaKLkdHop5c/icOFE7qt7Q9JC5hnKNa6Gg=="],
