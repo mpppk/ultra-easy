@@ -1,7 +1,4 @@
-import {
-  canonicalizeJson,
-  verifyMaterializedApprovalPlan,
-} from "@app/approval-core";
+import { canonicalizeJson, verifyMaterializedApprovalPlan } from "@app/approval-core";
 import type {
   ApprovalPlanChecksum,
   JsonValue,
@@ -93,7 +90,9 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     };
   }
 
-  async load(input: Parameters<MaterializedPlanRepository["load"]>[0]): Promise<MaterializedPlanLoadResult> {
+  async load(
+    input: Parameters<MaterializedPlanRepository["load"]>[0],
+  ): Promise<MaterializedPlanLoadResult> {
     const row = await this.readRow(String(input.organizationId), String(input.actionRequestId));
     if (!row) return { type: "not_found" };
 

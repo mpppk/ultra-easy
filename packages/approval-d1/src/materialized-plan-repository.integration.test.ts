@@ -166,9 +166,7 @@ describe("D1MaterializedPlanRepository", () => {
     const loaded = await repository.load({
       organizationId,
       actionRequestId: plan.actionRequestId,
-      expectedApprovalPlanChecksum: branded<ApprovalPlanChecksum>(
-        `sha256:${"0".repeat(64)}`,
-      ),
+      expectedApprovalPlanChecksum: branded<ApprovalPlanChecksum>(`sha256:${"0".repeat(64)}`),
     });
 
     expect(loaded).toEqual({

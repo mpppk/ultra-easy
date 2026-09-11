@@ -34,12 +34,14 @@ function branded<T extends string>(value: string): T {
 const organizationId = branded<OrganizationId>("org:test");
 const actionRequestId = branded<ActionRequestId>("action-request:m2");
 
-function context(input: {
-  threshold?: number;
-  priority?: string;
-  resourceId?: string;
-  authorityUserId?: UserId;
-} = {}): PolicyEvaluationContext {
+function context(
+  input: {
+    threshold?: number;
+    priority?: string;
+    resourceId?: string;
+    authorityUserId?: UserId;
+  } = {},
+): PolicyEvaluationContext {
   const request = createTicketActionRequest();
   return {
     ...request,
@@ -114,25 +116,25 @@ function policySource(input: {
   };
 }
 
-async function materialize(input: {
-  context?: PolicyEvaluationContext;
-  sources?: VersionedApprovalPolicyBinding[];
-} = {}) {
+async function materialize(
+  input: {
+    context?: PolicyEvaluationContext;
+    sources?: VersionedApprovalPolicyBinding[];
+  } = {},
+) {
   const contextValue = input.context ?? context();
   const result = await materializeApprovalPlan({
     actionRequestId,
     context: contextValue,
     actionDefinition: actionDefinition(contextValue),
-    policyBindings:
-      input.sources ??
-      [
-        policySource({
-          bindingId: "binding:ticket",
-          policyKey: "policy:ticket",
-          policyVersion: 1,
-          stepKey: "manager",
-        }),
-      ],
+    policyBindings: input.sources ?? [
+      policySource({
+        bindingId: "binding:ticket",
+        policyKey: "policy:ticket",
+        policyVersion: 1,
+        stepKey: "manager",
+      }),
+    ],
   });
   if (result.type !== "materialized") throw new Error(result.message);
   return result.plan;
@@ -168,7 +170,9 @@ describe("M2 Materialization", () => {
     if (firstSteps[0]?.type !== "approval" || firstSteps[1]?.type !== "approval") return;
     expect(firstSteps[0].stepKey).toBe(firstSteps[1].stepKey);
     expect(firstSteps[0].materializedStepId).not.toBe(firstSteps[1].materializedStepId);
-    expect(secondSteps.map((step) => (step.type === "approval" ? step.materializedStepId : null))).toEqual(
+    expect(
+      secondSteps.map((step) => (step.type === "approval" ? step.materializedStepId : null)),
+    ).toEqual(
       firstSteps.map((step) => (step.type === "approval" ? step.materializedStepId : null)),
     );
   });

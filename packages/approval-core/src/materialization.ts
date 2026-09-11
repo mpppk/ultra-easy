@@ -298,7 +298,11 @@ function resolveField(path: string, context: PolicyEvaluationContext): JsonValue
   let current: unknown = context;
   for (const segment of segments) {
     if (segment === "__proto__" || segment === "prototype" || segment === "constructor") {
-      throw new MaterializationFailure("field_not_allowed", `安全でないfield pathです: ${path}`, path);
+      throw new MaterializationFailure(
+        "field_not_allowed",
+        `安全でないfield pathです: ${path}`,
+        path,
+      );
     }
     if (typeof current !== "object" || current === null || !Object.hasOwn(current, segment)) {
       throw new MaterializationFailure("field_missing", `fieldが存在しません: ${path}`, path);
@@ -419,11 +423,13 @@ function resolveApproverTarget(
 export async function createMaterializedStepId(
   source: MaterializedStepSource,
 ): Promise<MaterializedStepId> {
-  const digest = await sha256CanonicalJson(toJsonValue({
-    policyBindingId: source.policyBindingId,
-    policyVersion: source.policyVersion,
-    flowPath: source.flowPath,
-  }));
+  const digest = await sha256CanonicalJson(
+    toJsonValue({
+      policyBindingId: source.policyBindingId,
+      policyVersion: source.policyVersion,
+      flowPath: source.flowPath,
+    }),
+  );
   return `mstep:${String(digest).slice("sha256:".length)}` as MaterializedStepId;
 }
 
@@ -450,7 +456,11 @@ async function materializeFlow(
       ? {
           mode: flow.selfApproval.mode,
           ...(flow.selfApproval.subject
-            ? { subject: cloneDomain(resolvePrincipalExpression(flow.selfApproval.subject, context)) }
+            ? {
+                subject: cloneDomain(
+                  resolvePrincipalExpression(flow.selfApproval.subject, context),
+                ),
+              }
             : {}),
         }
       : undefined;
@@ -557,7 +567,9 @@ export async function computeActionFingerprint(
 export async function computeEvaluationSnapshotChecksum(
   snapshot: EvaluationSnapshot,
 ): Promise<EvaluationSnapshotChecksum> {
-  return (await sha256CanonicalJson(toJsonValue(snapshot))) as unknown as EvaluationSnapshotChecksum;
+  return (await sha256CanonicalJson(
+    toJsonValue(snapshot),
+  )) as unknown as EvaluationSnapshotChecksum;
 }
 
 export async function computeApprovalPlanChecksum(input: {
@@ -774,8 +786,9 @@ export async function createSnapshotApproverCohort(input: {
     };
   }
 
-  const candidateUserIds = [...new Map(input.candidateUserIds.map((id) => [String(id), id])).values()]
-    .sort((left, right) => String(left).localeCompare(String(right)));
+  const candidateUserIds = [
+    ...new Map(input.candidateUserIds.map((id) => [String(id), id])).values(),
+  ].sort((left, right) => String(left).localeCompare(String(right)));
   if (candidateUserIds.length === 0) {
     return {
       type: "error",

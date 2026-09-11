@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ActionDefinition } from "./action-definition.ts";
-import {
-  always,
-  approve,
-  authorityPrincipal,
-  definePolicy,
-  managerOf,
-  rule,
-} from "./builder.ts";
+import { always, approve, authorityPrincipal, definePolicy, managerOf, rule } from "./builder.ts";
 import type {
   ActionDefinitionKey,
   ActionRequestId,
@@ -36,12 +29,14 @@ function branded<T extends string>(value: string): T {
 const organizationId = branded<OrganizationId>("org:test");
 const actionRequestId = branded<ActionRequestId>("action-request:1");
 
-function context(input: {
-  threshold?: number;
-  priority?: string;
-  resourceId?: string;
-  authorityUserId?: UserId;
-} = {}): PolicyEvaluationContext {
+function context(
+  input: {
+    threshold?: number;
+    priority?: string;
+    resourceId?: string;
+    authorityUserId?: UserId;
+  } = {},
+): PolicyEvaluationContext {
   const request = createTicketActionRequest();
   return {
     ...request,
@@ -94,9 +89,7 @@ function policySource(input: {
           key: input.stepKey ?? "manager",
           approver: managerOf(authorityPrincipal()),
           ...(input.resolution ? { resolution: input.resolution } : {}),
-          ...(input.candidateCompletion
-            ? { candidateCompletion: input.candidateCompletion }
-            : {}),
+          ...(input.candidateCompletion ? { candidateCompletion: input.candidateCompletion } : {}),
         }),
       }),
     ],
@@ -112,10 +105,12 @@ function policySource(input: {
   return { binding, policyVersion: input.policyVersion ?? 1, policy };
 }
 
-async function materialize(input: {
-  context?: PolicyEvaluationContext;
-  sources?: ReturnType<typeof policySource>[];
-} = {}) {
+async function materialize(
+  input: {
+    context?: PolicyEvaluationContext;
+    sources?: ReturnType<typeof policySource>[];
+  } = {},
+) {
   const contextValue = input.context ?? context();
   const result = await materializeApprovalPlan({
     actionRequestId,

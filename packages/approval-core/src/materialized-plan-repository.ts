@@ -1,8 +1,4 @@
-import type {
-  ActionRequestId,
-  ApprovalPlanChecksum,
-  OrganizationId,
-} from "./domain/brand.ts";
+import type { ActionRequestId, ApprovalPlanChecksum, OrganizationId } from "./domain/brand.ts";
 import type { MaterializedApprovalPlan } from "./materialization.ts";
 
 export type MaterializedPlanSaveResult =
