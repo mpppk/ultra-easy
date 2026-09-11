@@ -21,6 +21,7 @@ import type {
   ApprovalPolicyBindingId,
   ApprovalPolicyKey,
   ExecutorKey,
+  MaterializedApprovalPlan,
   OrganizationId,
   PolicyEvaluationContext,
   SchemaKey,
@@ -80,11 +81,11 @@ function branded<T extends string>(value: string): T {
 
 const organizationId = branded<OrganizationId>("org:test");
 
-function context(): PolicyEvaluationContext {
+function context(threshold = 10): PolicyEvaluationContext {
   const request = createTicketActionRequest();
   return {
     ...request,
-    organization: { id: organizationId },
+    organization: { id: organizationId, settings: { threshold } },
     now: "2026-09-11T00:00:00.000Z",
   };
 }
@@ -99,8 +100,12 @@ function actionDefinition(contextValue: PolicyEvaluationContext): ActionDefiniti
   };
 }
 
-async function createPlan(input: { actionRequestId: string; policyVersion?: number }) {
-  const contextValue = context();
+async function createPlan(input: {
+  actionRequestId: string;
+  policyVersion?: number;
+  threshold?: number;
+}) {
+  const contextValue = context(input.threshold);
   const policyKey = branded<ApprovalPolicyKey>("policy:ticket");
   const policy = definePolicy({
     key: String(policyKey),
@@ -132,17 +137,23 @@ async function createPlan(input: { actionRequestId: string; policyVersion?: numb
   return result.plan;
 }
 
-function createRepository(): D1MaterializedPlanRepository {
+function createRepository(): {
+  repository: D1MaterializedPlanRepository;
+  sqlite: DatabaseSync;
+} {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(
     readFileSync(new URL("../migrations/0001_materialized_plans.sql", import.meta.url), "utf8"),
   );
-  return new D1MaterializedPlanRepository(new SqliteD1Database(sqlite));
+  return {
+    repository: new D1MaterializedPlanRepository(new SqliteD1Database(sqlite)),
+    sqlite,
+  };
 }
 
 describe("D1MaterializedPlanRepository", () => {
   it("Materialized Planを保存・再読込してsemantic identityを保持する", async () => {
-    const repository = createRepository();
+    const { repository } = createRepository();
     const plan = await createPlan({ actionRequestId: "action-request:1" });
 
     await expect(repository.save(plan)).resolves.toEqual({ type: "created" });
@@ -159,7 +170,7 @@ describe("D1MaterializedPlanRepository", () => {
   });
 
   it("AC-M2-006: expected approvalPlanChecksumが違えばPlanを返さない", async () => {
-    const repository = createRepository();
+    const { repository } = createRepository();
     const plan = await createPlan({ actionRequestId: "action-request:2" });
     await repository.save(plan);
 
@@ -176,7 +187,7 @@ describe("D1MaterializedPlanRepository", () => {
   });
 
   it("同じActionRequest IDへ異なるPlanを上書きしない", async () => {
-    const repository = createRepository();
+    const { repository } = createRepository();
     const first = await createPlan({ actionRequestId: "action-request:3", policyVersion: 1 });
     const second = await createPlan({ actionRequestId: "action-request:3", policyVersion: 2 });
 
@@ -185,5 +196,45 @@ describe("D1MaterializedPlanRepository", () => {
       type: "conflict",
       existingApprovalPlanChecksum: first.approvalPlanChecksum,
     });
+  });
+
+  it("Approval Planが同じでもEvaluation Snapshotが異なればexisting扱いしない", async () => {
+    const { repository } = createRepository();
+    const first = await createPlan({ actionRequestId: "action-request:4", threshold: 10 });
+    const second = await createPlan({ actionRequestId: "action-request:4", threshold: 20 });
+
+    expect(first.approvalPlanChecksum).toBe(second.approvalPlanChecksum);
+    expect(first.approvalBindingFingerprint).not.toBe(second.approvalBindingFingerprint);
+    await expect(repository.save(first)).resolves.toEqual({ type: "created" });
+    await expect(repository.save(second)).resolves.toEqual({
+      type: "conflict",
+      existingApprovalPlanChecksum: first.approvalPlanChecksum,
+    });
+  });
+
+  it("semantic verificationに失敗するPlanは保存しない", async () => {
+    const { repository } = createRepository();
+    const plan = structuredClone(await createPlan({ actionRequestId: "action-request:5" }));
+    plan.approvalPlanChecksum = branded<ApprovalPlanChecksum>(`sha256:${"0".repeat(64)}`);
+
+    await expect(repository.save(plan)).resolves.toMatchObject({ type: "invalid_plan" });
+  });
+
+  it("DB検索キーとPlan内部identityが不一致ならcross-tenant Planを返さない", async () => {
+    const { repository, sqlite } = createRepository();
+    const plan = await createPlan({ actionRequestId: "action-request:6" });
+    await repository.save(plan);
+
+    const corrupted = structuredClone(plan) as MaterializedApprovalPlan;
+    corrupted.organizationId = branded<OrganizationId>("org:other");
+    sqlite
+      .prepare(
+        "UPDATE action_requests SET materialized_plan = ? WHERE organization_id = ? AND id = ?",
+      )
+      .run(JSON.stringify(corrupted), String(organizationId), String(plan.actionRequestId));
+
+    await expect(
+      repository.load({ organizationId, actionRequestId: plan.actionRequestId }),
+    ).resolves.toMatchObject({ type: "invalid_plan" });
   });
 });
