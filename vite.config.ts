@@ -1,20 +1,15 @@
-import { defineConfig, lazyPlugins } from "vite-plus";
+import { defineConfig } from "vite-plus";
 
-import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-
-import viteReact from "@vitejs/plugin-react";
-import { cloudflare } from "@cloudflare/vite-plugin";
-
+// Workspace root: shared tooling config only.
+// App/runtime config lives in each package (see apps/web/vite.config.ts).
 export default defineConfig({
-  // Workspace root is itself the app; keep bare `vp dev`/`vp build` pointed here.
-  defaultPackage: ".",
   staged: {
     "*": "vp check --fix",
   },
   fmt: {
     // TanStack Routerが`vp dev`/`vp test`のたびに独自formatで再生成するため、
     // oxfmtの対象から外して差分が出ないようにする。
-    ignorePatterns: ["src/routeTree.gen.ts"],
+    ignorePatterns: ["apps/web/src/routeTree.gen.ts"],
   },
   lint: {
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
@@ -51,13 +46,4 @@ export default defineConfig({
     ],
     options: { typeAware: true, typeCheck: true },
   },
-  resolve: { tsconfigPaths: true },
-  plugins: lazyPlugins(() => [
-    // Cloudflare Vite plugin is incompatible with Vitest (sets resolve.external in ssr env).
-    // Skip it during `vp test` / Vitest runs.
-    ...(process.env.VITEST ? [] : [cloudflare({ viteEnvironment: { name: "ssr" } })]),
-
-    tanstackStart(),
-    viteReact(),
-  ]),
 });
