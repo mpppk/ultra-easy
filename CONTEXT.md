@@ -80,6 +80,42 @@ _避ける表現_: Policy定義を指す場合のTask
 Approval Stepを誰が承認可能かを表すシリアライズ可能な記述。事前解決済みの具体的な候補者一覧ではなく、Principal、relation、または明示的なUser参照として表現する。
 _避ける表現_: Approver List
 
+**Evaluation Snapshot（評価スナップショット）**:
+Approval Policyを評価した時点の、Actionそのもの以外の固定context。Actor、Authority、Delegation、Origin、Organization settings、derived attributes、評価時刻などを保持し、後から組織情報等が変化しても当時の評価環境を再現できるようにする。
+_避ける表現_: Current Context、Live Context
+
+**Materialized Approval Plan（具体化済み承認計画）**:
+Policy Bindingと固定済みPolicy Versionを評価した結果を、実行時にそのまま解釈できる形へ固定したimmutableな承認計画。Materialized Flow、各MaterializedStepId、Policy Binding snapshot、interpreter semantics versionを含む。
+_避ける表現_: Policy Definition、Mutable Workflow State
+
+**Materialized Approval Step（具体化済み承認ステップ）**:
+Approval StepのApprover Expressionや参照値をEvaluation Snapshotに対して解決し、実行時の承認targetと出所を固定したstep。
+_避ける表現_: Approval Task
+
+**MaterializedStepId（具体化済みステップID）**:
+Materialized Approval Stepを一意に識別するID。Policy-localなStep keyとは別物であり、Policy Binding ID、Policy Version、Flow pathから決定的に生成する。
+_避ける表現_: Step Key、Task ID
+
+**Snapshot Approver Cohort（固定承認候補集合）**:
+`resolution=snapshot`のApproval Stepで、activation時点に完全性を確認したうえで固定する承認候補User集合。固定後のOrganization変更では内容を変えない。
+_避ける表現_: Dynamic Approver List
+
+**Action Fingerprint（Actionフィンガープリント）**:
+正規化済みAction type、Resource、input、Action Definition Versionから生成するchecksum。Organization settingsやPolicy情報は含めない。
+_避ける表現_: Approval Plan Checksum
+
+**Evaluation Snapshot Checksum（評価スナップショットチェックサム）**:
+Evaluation Snapshotのcanonical JSONから生成するchecksum。Action Fingerprintとは独立して、Policy評価に利用した非Action contextのidentityを表す。
+_避ける表現_: Action Fingerprint
+
+**Approval Plan Checksum（承認計画チェックサム）**:
+固定済みPolicy Binding/Policy Version、Materialized Flow、MaterializedStepId、interpreter semantics version等から生成するchecksum。
+_避ける表現_: Action Fingerprint
+
+**Approval Binding Fingerprint（承認バインディングフィンガープリント）**:
+Action Fingerprint、Evaluation Snapshot Checksum、Approval Plan Checksumの3値を組み合わせて生成するfingerprint。既存のDecisionを新しいAction Requestへ再利用できるかを判断する境界となる。
+_避ける表現_: 単一のApproval Plan Checksum
+
 **Decision（承認判断）**:
 Approval Stepに対して提出されるimmutableな判断結果。approveまたはrejectなどを表す。
 _避ける表現_: Permission
