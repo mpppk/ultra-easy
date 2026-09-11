@@ -13,9 +13,6 @@ CREATE TABLE action_requests (
   PRIMARY KEY (organization_id, id)
 );
 
-CREATE UNIQUE INDEX action_requests_approval_binding_fingerprint_idx
-  ON action_requests (organization_id, approval_binding_fingerprint);
-
 CREATE TABLE approval_candidate_cohorts (
   id TEXT PRIMARY KEY,
   organization_id TEXT NOT NULL,
