@@ -213,6 +213,9 @@ export type MaterializedPlanVerificationResult =
         | "evaluation_snapshot_checksum_mismatch"
         | "approval_plan_checksum_mismatch"
         | "approval_binding_fingerprint_mismatch"
+        | "materialized_step_id_mismatch"
+        | "materialized_step_source_mismatch"
+        | "organization_mismatch"
         | "invalid_plan";
       message: string;
     };
@@ -282,6 +285,12 @@ function requireJsonObject(value: unknown, path: string): JsonObject {
     throw new MaterializationFailure("invalid_json_value", `objectが必要です: ${path}`, path);
   }
   return json;
+}
+
+function compareStrings(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function resolveField(path: string, context: PolicyEvaluationContext): JsonValue {
@@ -420,6 +429,10 @@ function resolveApproverTarget(
   };
 }
 
+/**
+ * MaterializedStepIdはPolicy-localなflowPathをBinding/versionへbindするidentity。
+ * policyKeyはBinding snapshotとの整合性検証対象であり、ID入力には意図的に含めない。
+ */
 export async function createMaterializedStepId(
   source: MaterializedStepSource,
 ): Promise<MaterializedStepId> {
@@ -756,11 +769,7 @@ export async function materializeApprovalPlan(input: {
         ...(error.path ? { path: error.path } : {}),
       };
     }
-    return {
-      type: "error",
-      code: "invalid_json_value",
-      message: error instanceof Error ? error.message : "Materializationに失敗しました",
-    };
+    throw error;
   }
 }
 
@@ -788,7 +797,7 @@ export async function createSnapshotApproverCohort(input: {
 
   const candidateUserIds = [
     ...new Map(input.candidateUserIds.map((id) => [String(id), id])).values(),
-  ].sort((left, right) => String(left).localeCompare(String(right)));
+  ].sort((left, right) => compareStrings(String(left), String(right)));
   if (candidateUserIds.length === 0) {
     return {
       type: "error",
@@ -828,10 +837,64 @@ export async function createSnapshotApproverCohort(input: {
   };
 }
 
+async function verifyMaterializedFlowSources(
+  flow: MaterializedFlow,
+  snapshots: readonly PolicyBindingSnapshot[],
+): Promise<MaterializedPlanVerificationResult> {
+  if (flow.type === "none") return { type: "valid" };
+
+  if (flow.type === "approval") {
+    const snapshot = snapshots.find(
+      (candidate) => String(candidate.bindingId) === String(flow.source.policyBindingId),
+    );
+    if (
+      !snapshot ||
+      String(snapshot.policyKey) !== String(flow.source.policyKey) ||
+      snapshot.policyVersion !== flow.source.policyVersion
+    ) {
+      return {
+        type: "invalid",
+        code: "materialized_step_source_mismatch",
+        message: `Materialized StepのsourceがPolicy Binding snapshotと一致しません: ${String(flow.stepKey)}`,
+      };
+    }
+
+    const expectedStepId = await createMaterializedStepId(flow.source);
+    if (String(expectedStepId) !== String(flow.materializedStepId)) {
+      return {
+        type: "invalid",
+        code: "materialized_step_id_mismatch",
+        message: `MaterializedStepIdがsourceと一致しません: ${String(flow.stepKey)}`,
+      };
+    }
+    return { type: "valid" };
+  }
+
+  for (const child of flow.children) {
+    const result = await verifyMaterializedFlowSources(child, snapshots);
+    if (result.type === "invalid") return result;
+  }
+  return { type: "valid" };
+}
+
 export async function verifyMaterializedApprovalPlan(
   plan: MaterializedApprovalPlan,
 ): Promise<MaterializedPlanVerificationResult> {
   try {
+    if (String(plan.organizationId) !== String(plan.evaluationSnapshot.organization.id)) {
+      return {
+        type: "invalid",
+        code: "organization_mismatch",
+        message: "Materialized PlanとEvaluation SnapshotのorganizationIdが一致しません",
+      };
+    }
+
+    const flowVerification = await verifyMaterializedFlowSources(
+      plan.flow,
+      plan.policyBindingSnapshots,
+    );
+    if (flowVerification.type === "invalid") return flowVerification;
+
     if (String(await computeActionFingerprint(plan.action)) !== String(plan.actionFingerprint)) {
       return {
         type: "invalid",
