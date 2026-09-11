@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   always,
@@ -136,7 +136,7 @@ async function materialize(
       }),
     ],
   });
-  if (result.type !== "materialized") throw new Error(result.message);
+  assert(result.type === "materialized", result.type === "error" ? result.message : undefined);
   return result.plan;
 }
 
@@ -243,7 +243,7 @@ describe("M2 Materialization", () => {
         }),
       ],
     });
-    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    assert(plan.flow.type === "approval");
 
     const currentCandidates = [fixtureIds.alice, branded<UserId>("user:bob")];
     const cohort = await createSnapshotApproverCohort({
@@ -253,7 +253,7 @@ describe("M2 Materialization", () => {
       resolvedAt: "2026-09-11T00:01:00.000Z",
       sourceRevision: "organization:1",
     });
-    if (cohort.type !== "materialized") throw new Error(cohort.message);
+    assert(cohort.type === "materialized", cohort.type === "error" ? cohort.message : undefined);
 
     currentCandidates.splice(0, currentCandidates.length, branded<UserId>("user:charlie"));
     expect(cohort.cohort.candidateUserIds.map(String)).toEqual(["user:alice", "user:bob"]);
