@@ -15,6 +15,7 @@ export type AgentId = Brand<string, "AgentId">;
 export type ServiceId = Brand<string, "ServiceId">;
 export type PrincipalId = UserId | AgentId | ServiceId;
 
+export type ActionRequestId = Brand<string, "ActionRequestId">;
 export type ActionType = Brand<string, "ActionType">;
 export type ActionDefinitionKey = Brand<string, "ActionDefinitionKey">;
 export type ExecutorKey = Brand<string, "ExecutorKey">;
@@ -30,6 +31,14 @@ export type ApprovalPolicyKey = Brand<string, "ApprovalPolicyKey">;
 export type ApprovalPolicyBindingId = Brand<string, "ApprovalPolicyBindingId">;
 export type ApprovalRuleKey = Brand<string, "ApprovalRuleKey">;
 export type ApprovalStepKey = Brand<string, "ApprovalStepKey">;
+export type MaterializedStepId = Brand<string, "MaterializedStepId">;
+export type SnapshotApproverCohortId = Brand<string, "SnapshotApproverCohortId">;
+
+export type Sha256Digest = Brand<string, "Sha256Digest">;
+export type ActionFingerprint = Brand<string, "ActionFingerprint">;
+export type EvaluationSnapshotChecksum = Brand<string, "EvaluationSnapshotChecksum">;
+export type ApprovalPlanChecksum = Brand<string, "ApprovalPlanChecksum">;
+export type ApprovalBindingFingerprint = Brand<string, "ApprovalBindingFingerprint">;
 
 export type SchemaKey = Brand<string, "SchemaKey">;
 
