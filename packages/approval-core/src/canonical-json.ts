@@ -3,19 +3,26 @@ import { Result } from "@praha/byethrow";
 import type { Sha256Digest } from "./domain/brand.ts";
 import type { JsonValue } from "./domain/json.ts";
 
-export type CanonicalJsonError = {
-  type: "canonical_json_error";
-  code:
-    | "invalid_unicode"
-    | "serialization_failed"
-    | "non_finite_number"
-    | "non_plain_object"
-    | "sha256_failed";
-  message: string;
-};
+export type CanonicalJsonErrorCode =
+  | "invalid_unicode"
+  | "serialization_failed"
+  | "non_finite_number"
+  | "non_plain_object"
+  | "sha256_failed";
 
-function fail(code: CanonicalJsonError["code"], message: string) {
-  return Result.fail<CanonicalJsonError>({ type: "canonical_json_error", code, message });
+export class CanonicalJsonError extends Error {
+  readonly name = "CanonicalJsonError";
+
+  constructor(
+    readonly code: CanonicalJsonErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function fail(code: CanonicalJsonErrorCode, message: string) {
+  return Result.fail(new CanonicalJsonError(code, message));
 }
 
 function assertValidUnicode(value: string): Result.Result<void, CanonicalJsonError> {
@@ -100,11 +107,8 @@ const digestText = Result.fn({
     );
     return `sha256:${hex}` as Sha256Digest;
   },
-  catch: (): CanonicalJsonError => ({
-    type: "canonical_json_error",
-    code: "sha256_failed",
-    message: "SHA-256 digestの計算に失敗しました",
-  }),
+  catch: (): CanonicalJsonError =>
+    new CanonicalJsonError("sha256_failed", "SHA-256 digestの計算に失敗しました"),
 });
 
 export function sha256Text(value: string): Result.ResultAsync<Sha256Digest, CanonicalJsonError> {
