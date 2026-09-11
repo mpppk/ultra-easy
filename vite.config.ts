@@ -28,21 +28,13 @@ const config = defineConfig({
                 {
                   name: "@standard-schema/spec",
                   allowTypeImports: true,
-                  message:
-                    "approval-coreでは@standard-schema/specを型としてのみ利用してください。",
+                  message: "approval-coreでは@standard-schema/specを型としてのみ利用してください。",
                 },
               ],
               patterns: [
                 {
-                  group: [
-                    "*",
-                    "**/*",
-                    "!./**",
-                    "!../**",
-                    "!@standard-schema/spec",
-                  ],
-                  message:
-                    "approval-coreのproduction codeから外部packageへ直接依存しないでください。",
+                  group: ["*", "**/*", "!./**", "!../**", "!@standard-schema/spec"],
+                  message: "approval-coreのproduction codeから外部packageへ直接依存しないでください。",
                 },
               ],
             },
