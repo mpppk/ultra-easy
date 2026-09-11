@@ -1,5 +1,9 @@
 import type { Condition, ValueExpression } from "./domain/condition.ts";
-import type { PolicyFieldCatalog, PolicyFieldDefinition, PolicyFieldType } from "./domain/evaluation.ts";
+import type {
+  PolicyFieldCatalog,
+  PolicyFieldDefinition,
+  PolicyFieldType,
+} from "./domain/evaluation.ts";
 import type { ApproverExpression, FlowDefinition } from "./domain/flow.ts";
 import type { ApprovalPolicyBinding, ApprovalPolicyDefinition } from "./domain/policy.ts";
 import { isAllowedPolicyFieldPath } from "./condition-evaluator.ts";
@@ -117,7 +121,12 @@ function validateValueExpression(
     (!Number.isFinite(expression.value) ||
       (Number.isInteger(expression.value) && !Number.isSafeInteger(expression.value)))
   ) {
-    addIssue(issues, "invalid_number", path, "数値literalは有限かつ安全に表現可能である必要があります。");
+    addIssue(
+      issues,
+      "invalid_number",
+      path,
+      "数値literalは有限かつ安全に表現可能である必要があります。",
+    );
   }
 }
 
@@ -223,7 +232,10 @@ function validateCondition(
       return;
     }
     case "and": {
-      const guards = mergeCurrencyGuards(inheritedGuards, collectCurrencyGuards(condition.conditions));
+      const guards = mergeCurrencyGuards(
+        inheritedGuards,
+        collectCurrencyGuards(condition.conditions),
+      );
       condition.conditions.forEach((child, index) =>
         validateCondition(child, `${path}.conditions[${index}]`, issues, options, guards),
       );
@@ -289,13 +301,23 @@ function validateFlow(
 
   if (flow.type === "parallel") {
     if (!Array.isArray(flow.children) || flow.children.length === 0) {
-      addIssue(issues, "empty_parallel", `${path}.children`, "parallel.childrenは1件以上必要です。");
+      addIssue(
+        issues,
+        "empty_parallel",
+        `${path}.children`,
+        "parallel.childrenは1件以上必要です。",
+      );
       return;
     }
 
     const strategy = (flow as { strategy?: unknown }).strategy;
     if (strategy !== "all" && strategy !== "any" && strategy !== "quorum") {
-      addIssue(issues, "invalid_parallel_strategy", `${path}.strategy`, "未対応のparallel strategyです。");
+      addIssue(
+        issues,
+        "invalid_parallel_strategy",
+        `${path}.strategy`,
+        "未対応のparallel strategyです。",
+      );
     } else if (strategy === "quorum") {
       const quorum = (flow as { quorum?: unknown }).quorum;
       if (
@@ -312,7 +334,12 @@ function validateFlow(
         );
       }
     } else if ("quorum" in flow && flow.quorum !== undefined) {
-      addIssue(issues, "unexpected_quorum", `${path}.quorum`, "quorum strategy以外ではquorumを指定できません。");
+      addIssue(
+        issues,
+        "unexpected_quorum",
+        `${path}.quorum`,
+        "quorum strategy以外ではquorumを指定できません。",
+      );
     }
 
     flow.children.forEach((child, index) =>
@@ -369,7 +396,8 @@ function validateFlow(
     );
   }
 
-  const unresolved = (flow as { onUnresolved?: { type?: unknown; approver?: unknown } }).onUnresolved;
+  const unresolved = (flow as { onUnresolved?: { type?: unknown; approver?: unknown } })
+    .onUnresolved;
   if (unresolved && unresolved.type !== "deny" && unresolved.type !== "fallback") {
     addIssue(
       issues,
@@ -420,7 +448,12 @@ export function validateApprovalPolicySemantics(
   const issues: SemanticValidationIssue[] = [];
 
   if (policy.schemaVersion !== 1) {
-    addIssue(issues, "unsupported_schema_version", "schemaVersion", "schemaVersion=1だけをサポートします。");
+    addIssue(
+      issues,
+      "unsupported_schema_version",
+      "schemaVersion",
+      "schemaVersion=1だけをサポートします。",
+    );
   }
 
   const ruleKeys = new Set<string>();
@@ -436,7 +469,12 @@ export function validateApprovalPolicySemantics(
 
     if (rule.when.type === "always") {
       if (index !== policy.rules.length - 1) {
-        addIssue(issues, "always_not_last", `${rulePath}.when`, "always Ruleは最後にだけ配置できます。");
+        addIssue(
+          issues,
+          "always_not_last",
+          `${rulePath}.when`,
+          "always Ruleは最後にだけ配置できます。",
+        );
       }
     } else {
       validateCondition(rule.when, `${rulePath}.when`, issues, options);
@@ -451,7 +489,11 @@ export function validateApprovalPolicySemantics(
 export function isValidActionTypePattern(value: string): boolean {
   const firstWildcard = value.indexOf("*");
   if (firstWildcard === -1) return value.length > 0;
-  return firstWildcard === value.length - 1 && firstWildcard > 0 && value.lastIndexOf("*") === firstWildcard;
+  return (
+    firstWildcard === value.length - 1 &&
+    firstWildcard > 0 &&
+    value.lastIndexOf("*") === firstWildcard
+  );
 }
 
 export function validateApprovalPolicyBindingSemantics(
@@ -461,7 +503,12 @@ export function validateApprovalPolicyBindingSemantics(
   const issues: SemanticValidationIssue[] = [];
 
   if (binding.selector.actionTypes.length === 0) {
-    addIssue(issues, "empty_action_selector", "selector.actionTypes", "actionTypesは1件以上必要です。");
+    addIssue(
+      issues,
+      "empty_action_selector",
+      "selector.actionTypes",
+      "actionTypesは1件以上必要です。",
+    );
   }
 
   binding.selector.actionTypes.forEach((actionType, index) => {
@@ -476,13 +523,15 @@ export function validateApprovalPolicyBindingSemantics(
   });
 
   if (binding.selector.resourceTypes?.length === 0) {
-    addIssue(issues, "empty_resource_selector", "selector.resourceTypes", "resourceTypesは指定するなら1件以上必要です。");
+    addIssue(
+      issues,
+      "empty_resource_selector",
+      "selector.resourceTypes",
+      "resourceTypesは指定するなら1件以上必要です。",
+    );
   }
 
-  if (
-    binding.compositionOrder !== undefined &&
-    !Number.isSafeInteger(binding.compositionOrder)
-  ) {
+  if (binding.compositionOrder !== undefined && !Number.isSafeInteger(binding.compositionOrder)) {
     addIssue(
       issues,
       "invalid_composition_order",

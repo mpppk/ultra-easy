@@ -20,9 +20,7 @@ export type ConditionEvaluationResult =
   | { type: "not_matched" }
   | ConditionEvaluationError;
 
-type ValueResolutionResult =
-  | { type: "resolved"; value: JsonValue }
-  | ConditionEvaluationError;
+type ValueResolutionResult = { type: "resolved"; value: JsonValue } | ConditionEvaluationError;
 
 const ALLOWED_FIELD_PREFIXES = [
   "action.input",
@@ -121,7 +119,7 @@ function resolveField(path: string, context: PolicyEvaluationContext): ValueReso
       };
     }
 
-    if ((typeof current !== "object" || current === null) || !Object.hasOwn(current, segment)) {
+    if (typeof current !== "object" || current === null || !Object.hasOwn(current, segment)) {
       return {
         type: "error",
         code: "field_missing",
@@ -139,7 +137,10 @@ function resolveField(path: string, context: PolicyEvaluationContext): ValueReso
   return { type: "resolved", value: current as JsonValue };
 }
 
-function resolveValue(expression: ValueExpression, context: PolicyEvaluationContext): ValueResolutionResult {
+function resolveValue(
+  expression: ValueExpression,
+  context: PolicyEvaluationContext,
+): ValueResolutionResult {
   if (expression.type === "field") {
     return resolveField(expression.path, context);
   }
@@ -227,7 +228,9 @@ export function evaluateCondition(
       return evaluateComparison(condition, context);
     case "and": {
       const results = condition.conditions.map((child) => evaluateCondition(child, context));
-      const error = results.find((result): result is ConditionEvaluationError => result.type === "error");
+      const error = results.find(
+        (result): result is ConditionEvaluationError => result.type === "error",
+      );
       if (error) return error;
       return results.every((result) => result.type === "matched")
         ? { type: "matched" }
@@ -235,7 +238,9 @@ export function evaluateCondition(
     }
     case "or": {
       const results = condition.conditions.map((child) => evaluateCondition(child, context));
-      const error = results.find((result): result is ConditionEvaluationError => result.type === "error");
+      const error = results.find(
+        (result): result is ConditionEvaluationError => result.type === "error",
+      );
       if (error) return error;
       return results.some((result) => result.type === "matched")
         ? { type: "matched" }
@@ -263,7 +268,9 @@ export function evaluateCondition(
       if (value.type === "error") return value;
 
       if (typeof collection.value === "string" && typeof value.value === "string") {
-        return collection.value.includes(value.value) ? { type: "matched" } : { type: "not_matched" };
+        return collection.value.includes(value.value)
+          ? { type: "matched" }
+          : { type: "not_matched" };
       }
       if (Array.isArray(collection.value)) {
         return collection.value.some((item) => equalJson(item, value.value))

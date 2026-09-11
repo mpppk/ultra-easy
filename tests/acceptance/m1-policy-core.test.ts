@@ -87,9 +87,7 @@ function createBinding(input: {
       ...(input.resourceTypes ? { resourceTypes: input.resourceTypes } : {}),
       ...(input.when ? { when: input.when } : {}),
     },
-    ...(input.compositionOrder !== undefined
-      ? { compositionOrder: input.compositionOrder }
-      : {}),
+    ...(input.compositionOrder !== undefined ? { compositionOrder: input.compositionOrder } : {}),
     enabled: input.enabled ?? true,
   };
 }
@@ -182,7 +180,10 @@ describe("M1 Policy Core", () => {
       name: "管理者承認",
       rules: [rule("always", { when: always(), flow: managerFlow })],
     });
-    const noApprovalBinding = createBinding({ id: "binding:none", policyKey: noApprovalPolicy.key });
+    const noApprovalBinding = createBinding({
+      id: "binding:none",
+      policyKey: noApprovalPolicy.key,
+    });
     const managerBinding = createBinding({ id: "binding:manager", policyKey: managerPolicy.key });
 
     const mixed = evaluateApprovalPlan({
@@ -265,7 +266,9 @@ describe("M1 Policy Core", () => {
     const unsafeResult = validateApprovalPolicySemantics(unsafePolicy, { fieldCatalog });
     expect(unsafeResult.valid).toBe(false);
     if (unsafeResult.valid) return;
-    expect(unsafeResult.issues.map((issue) => issue.code)).toContain("money_currency_guard_required");
+    expect(unsafeResult.issues.map((issue) => issue.code)).toContain(
+      "money_currency_guard_required",
+    );
   });
 
   it("AC-M1-006: enabledかつaction/resource/conditionに一致するBindingだけを選ぶ", () => {
@@ -394,7 +397,9 @@ describe("M1 Policy Core", () => {
     const bindingResult = validateApprovalPolicyBindingSemantics(invalidBinding);
     expect(bindingResult.valid).toBe(false);
     if (bindingResult.valid) return;
-    expect(bindingResult.issues.map((issue) => issue.code)).toContain("invalid_action_type_pattern");
+    expect(bindingResult.issues.map((issue) => issue.code)).toContain(
+      "invalid_action_type_pattern",
+    );
   });
 
   it("AC-M1-008: Builderで生成したPolicyは直接記述したJSON ASTと同値になる", () => {

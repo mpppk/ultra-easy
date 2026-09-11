@@ -173,10 +173,7 @@ export function approve(input: {
   };
 }
 
-export function serial(
-  first: FlowDefinition,
-  ...rest: FlowDefinition[]
-): FlowDefinition {
+export function serial(first: FlowDefinition, ...rest: FlowDefinition[]): FlowDefinition {
   return { type: "serial", children: [first, ...rest] };
 }
 

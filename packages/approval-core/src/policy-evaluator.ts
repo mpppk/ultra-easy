@@ -189,7 +189,9 @@ export function evaluateApprovalPlan(input: {
 
   const policyEvaluations: EvaluatedPolicyBinding[] = [];
   for (const binding of resolved.bindings) {
-    const policy = input.policies.find((candidate) => String(candidate.key) === String(binding.policyKey));
+    const policy = input.policies.find(
+      (candidate) => String(candidate.key) === String(binding.policyKey),
+    );
     if (!policy) {
       return {
         type: "error",
