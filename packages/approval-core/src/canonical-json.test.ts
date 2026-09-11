@@ -40,13 +40,11 @@ describe("canonical JSON", () => {
   });
 
   it("指数表記をECMAScriptのJSON number serializationで固定する", () => {
-    expect(canonicalizeJson({ large: 1e30, small: 1e-7 })).toBe(
-      '{"large":1e+30,"small":1e-7}',
-    );
+    expect(canonicalizeJson({ large: 1e30, small: 1e-7 })).toBe('{"large":1e+30,"small":1e-7}');
   });
 
   it("control文字・quote・backslashのescapeを固定する", () => {
-    expect(canonicalizeJson({ value: "\b\t\n\f\r\"\\" })).toBe(
+    expect(canonicalizeJson({ value: '\b\t\n\f\r"\\' })).toBe(
       '{"value":"\\b\\t\\n\\f\\r\\\"\\\\"}',
     );
   });
