@@ -7,6 +7,12 @@
     ".": "./src/index.ts",
     "./testing": "./src/testing/index.ts"
   },
+  "scripts": {
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "@standard-schema/spec": "^1.1.0"
+  },
   "peerDependencies": {
     "@standard-schema/spec": "^1.1.0"
   }

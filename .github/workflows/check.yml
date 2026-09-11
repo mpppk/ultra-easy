@@ -19,4 +19,4 @@ jobs:
       - name: Check
         run: vp check
       - name: Test
-        run: vp test
+        run: vp run -r test
