@@ -12,8 +12,29 @@ export default defineConfig({
     ignorePatterns: ["apps/web/src/routeTree.gen.ts"],
   },
   lint: {
-    jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
-    rules: { "vite-plus/prefer-vite-plus-imports": "error" },
+    jsPlugins: [
+      { name: "vite-plus", specifier: "vite-plus/oxlint-plugin" },
+      { name: "byethrow", specifier: "@praha/byethrow-oxlint" },
+      { name: "eslint-js", specifier: "oxlint-plugin-eslint" },
+    ],
+    rules: {
+      "vite-plus/prefer-vite-plus-imports": "error",
+      "eslint-js/no-restricted-syntax": [
+        "error",
+        {
+          selector: "ThrowStatement",
+          message: "throwは禁止です。失敗は@praha/byethrowのResultで明示的に返してください。",
+        },
+      ],
+      "byethrow/consistent-namespace": "error",
+      "byethrow/no-ambiguous-error-type": "error",
+      "byethrow/no-ambiguous-success-type": "error",
+      "byethrow/no-negated-type-guards": "error",
+      "byethrow/no-throw-in-callback": "error",
+      "byethrow/no-try-catch-in-callback": "error",
+      "byethrow/prefer-result-async": "error",
+      "byethrow/prefer-result-maybe-async": "error",
+    },
     overrides: [
       {
         files: ["packages/approval-core/src/**/*.ts"],
@@ -34,9 +55,16 @@ export default defineConfig({
               ],
               patterns: [
                 {
-                  group: ["*", "**/*", "!./**", "!../**", "!@standard-schema/spec"],
+                  group: [
+                    "*",
+                    "**/*",
+                    "!./**",
+                    "!../**",
+                    "!@standard-schema/spec",
+                    "!@praha/byethrow",
+                  ],
                   message:
-                    "approval-coreのproduction codeから外部packageへ直接依存しないでください。",
+                    "approval-coreのproduction codeから許可されていない外部packageへ直接依存しないでください。",
                 },
               ],
             },

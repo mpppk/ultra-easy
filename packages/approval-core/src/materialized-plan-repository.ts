@@ -5,6 +5,7 @@ export type MaterializedPlanSaveResult =
   | { type: "created" }
   | { type: "existing" }
   | { type: "invalid_plan"; message: string }
+  | { type: "repository_error"; message: string }
   | {
       type: "conflict";
       existingApprovalPlanChecksum: ApprovalPlanChecksum;
@@ -17,7 +18,8 @@ export type MaterializedPlanLoadResult =
       type: "checksum_mismatch";
       actualApprovalPlanChecksum: ApprovalPlanChecksum;
     }
-  | { type: "invalid_plan"; message: string };
+  | { type: "invalid_plan"; message: string }
+  | { type: "repository_error"; message: string };
 
 /**
  * Materialized Approval PlanはINSERT-onlyとして扱う。
