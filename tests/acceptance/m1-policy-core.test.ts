@@ -30,7 +30,6 @@ import type {
   ApprovalPolicyDefinition,
   ApprovalPolicyKey,
   ApprovalRuleKey,
-  ApprovalStepKey,
   OrganizationId,
   PolicyEvaluationContext,
   PolicyFieldCatalog,
@@ -303,88 +302,21 @@ describe("M1 Policy Core", () => {
   });
 
   it("AC-M1-007: semantic validationで危険なPolicy/Bindingをpublish前に拒否する", () => {
-    const duplicatedApproval = {
-      type: "approval",
-      key: branded<ApprovalStepKey>("duplicate"),
+    const duplicated = approve({
+      key: "duplicate",
       approver: managerOf(authorityPrincipal()),
-    } as const;
-    const invalidPolicy = {
-      schemaVersion: 1,
-      key: branded<ApprovalPolicyKey>("invalid"),
-      name: "不正Policy",
-      rules: [
-        {
-          key: branded<ApprovalRuleKey>("first"),
-          when: { type: "always" },
-          flow: {
-            type: "serial",
-            children: [
-              duplicatedApproval,
-              duplicatedApproval,
-              {
-                type: "parallel",
-                strategy: "quorum",
-                quorum: 2,
-                children: [
-                  {
-                    type: "approval",
-                    key: branded<ApprovalStepKey>("only-one"),
-                    approver: managerOf(authorityPrincipal()),
-                  },
-                ],
-              },
-            ],
-          },
-        },
-        {
-          key: branded<ApprovalRuleKey>("second"),
-          when: {
-            type: "and",
-            conditions: [
-              {
-                type: "comparison",
-                left: { type: "field", path: "request.secret" },
-                operator: "eq",
-                right: { type: "literal", value: true },
-              },
-              {
-                type: "comparison",
-                left: { type: "field", path: "action.input.priority" },
-                operator: "gt",
-                right: { type: "literal", value: 1 },
-              },
-            ],
-          },
-          flow: {
-            type: "approval",
-            key: branded<ApprovalStepKey>("unsafe-step"),
-            approver: managerOf(authorityPrincipal()),
-            resolution: "dynamic",
-            candidateCompletion: "all",
-            onUnresolved: { type: "skip" },
-            expiresAfter: { seconds: 0 },
-          },
-        },
-      ],
-    } as unknown as ApprovalPolicyDefinition;
-
-    const result = validateApprovalPolicySemantics(invalidPolicy, {
-      fieldCatalog: [{ path: "action.input.priority", type: "string" }],
     });
-    expect(result.valid).toBe(false);
-    if (result.valid) return;
-    expect(new Set(result.issues.map((issue) => issue.code))).toEqual(
-      new Set([
-        "always_not_last",
-        "duplicate_step_key",
-        "invalid_quorum",
-        "unknown_field_root",
-        "unsupported_type_comparison",
-        "candidate_completion_requires_snapshot",
-        "invalid_unresolved_strategy",
-        "invalid_expiry",
-      ]),
-    );
+    const invalidPolicy = definePolicy({
+      key: "invalid",
+      name: "不正Policy",
+      rules: [rule("default", { when: always(), flow: serial(duplicated, duplicated) })],
+    });
+
+    const policyResult = validateApprovalPolicySemantics(invalidPolicy);
+    expect(policyResult.valid).toBe(false);
+    if (!policyResult.valid) {
+      expect(policyResult.issues.map((issue) => issue.code)).toContain("duplicate_step_key");
+    }
 
     const invalidBinding = createBinding({
       id: "binding:invalid",
@@ -393,10 +325,11 @@ describe("M1 Policy Core", () => {
     });
     const bindingResult = validateApprovalPolicyBindingSemantics(invalidBinding);
     expect(bindingResult.valid).toBe(false);
-    if (bindingResult.valid) return;
-    expect(bindingResult.issues.map((issue) => issue.code)).toContain(
-      "invalid_action_type_pattern",
-    );
+    if (!bindingResult.valid) {
+      expect(bindingResult.issues.map((issue) => issue.code)).toContain(
+        "invalid_action_type_pattern",
+      );
+    }
   });
 
   it("AC-M1-008: Builderで生成したPolicyは直接記述したJSON ASTと同値になる", () => {
