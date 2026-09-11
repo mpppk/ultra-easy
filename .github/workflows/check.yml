@@ -5,33 +5,18 @@ on:
     branches: [main]
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
       - uses: voidzero-dev/setup-vp@v1.19.0
         with:
           node-version: "24"
           cache: true
       - name: Install dependencies
         run: vp install
-      - name: Apply formatter
-        run: |
-          set +e
-          vp check --fix
-          status=$?
-          set -e
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "style: M1のformatter出力を反映"
-            git push
-          fi
-          exit $status
+      - name: Check
+        run: vp check
+      - name: Test
+        run: vp test
