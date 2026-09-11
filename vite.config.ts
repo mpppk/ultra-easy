@@ -11,7 +11,11 @@ export default defineConfig({
   staged: {
     "*": "vp check --fix",
   },
-  fmt: {},
+  fmt: {
+    // TanStack Routerが`vp dev`/`vp test`のたびに独自formatで再生成するため、
+    // oxfmtの対象から外して差分が出ないようにする。
+    ignorePatterns: ["src/routeTree.gen.ts"],
+  },
   lint: {
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
