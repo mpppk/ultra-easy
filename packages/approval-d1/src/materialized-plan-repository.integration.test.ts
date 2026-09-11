@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   always,
@@ -48,7 +48,7 @@ function sqlValues(values: readonly unknown[]): SqlValue[] {
     ) {
       return value;
     }
-    throw new Error(`SQLiteへbindできない値です: ${typeof value}`);
+    assert.fail(`SQLiteへbindできない値です: ${typeof value}`);
   });
 }
 
@@ -133,7 +133,7 @@ async function createPlan(input: {
     actionDefinition: actionDefinition(contextValue),
     policyBindings: [{ binding, policyVersion: input.policyVersion ?? 1, policy }],
   });
-  if (result.type !== "materialized") throw new Error(result.message);
+  assert(result.type === "materialized", result.type === "error" ? result.message : undefined);
   return result.plan;
 }
 
