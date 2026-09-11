@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test";
+import { Result } from "@praha/byethrow";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import type { ActionDefinition } from "./action-definition.ts";
 import { always, approve, authorityPrincipal, definePolicy, managerOf, rule } from "./builder.ts";
@@ -122,22 +123,26 @@ async function materialize(
     actionDefinition: actionDefinition(contextValue),
     policyBindings: input.sources ?? [policySource({})],
   });
-  expect(result.type).toBe("materialized");
-  if (result.type !== "materialized") throw new Error(result.message);
+  assert(result.type === "materialized", result.type === "error" ? result.message : undefined);
   return result.plan;
 }
 
 async function refreshPlanFingerprints(plan: Awaited<ReturnType<typeof materialize>>) {
-  plan.approvalPlanChecksum = await computeApprovalPlanChecksum({
+  const approvalPlanChecksum = await computeApprovalPlanChecksum({
     policyBindingSnapshots: plan.policyBindingSnapshots,
     flow: plan.flow,
     interpreterSemanticsVersion: plan.interpreterSemanticsVersion,
   });
-  plan.approvalBindingFingerprint = await computeApprovalBindingFingerprint({
+  assert(Result.isSuccess(approvalPlanChecksum));
+  plan.approvalPlanChecksum = approvalPlanChecksum.value;
+
+  const approvalBindingFingerprint = await computeApprovalBindingFingerprint({
     actionFingerprint: plan.actionFingerprint,
     evaluationSnapshotChecksum: plan.evaluationSnapshotChecksum,
     approvalPlanChecksum: plan.approvalPlanChecksum,
   });
+  assert(Result.isSuccess(approvalBindingFingerprint));
+  plan.approvalBindingFingerprint = approvalBindingFingerprint.value;
 }
 
 describe("MaterializedStepId", () => {
@@ -149,7 +154,7 @@ describe("MaterializedStepId", () => {
       flowPath: "root.children[0]",
     };
 
-    expect(await createMaterializedStepId(source)).toBe(await createMaterializedStepId(source));
+    expect(await createMaterializedStepId(source)).toEqual(await createMaterializedStepId(source));
   });
 
   it("同じstepKeyでもbindingが異なればMaterializedStepIdは衝突しない", async () => {
@@ -254,7 +259,7 @@ describe("snapshot approver cohort", () => {
     const plan = await materialize({
       sources: [policySource({ resolution: "snapshot", candidateCompletion: "all" })],
     });
-    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    assert(plan.flow.type === "approval");
 
     const result = await createSnapshotApproverCohort({
       step: plan.flow,
@@ -271,7 +276,7 @@ describe("snapshot approver cohort", () => {
     const plan = await materialize({
       sources: [policySource({ resolution: "snapshot", candidateCompletion: "all" })],
     });
-    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    assert(plan.flow.type === "approval");
 
     await expect(
       createSnapshotApproverCohort({
@@ -292,7 +297,7 @@ describe("snapshot approver cohort", () => {
         }),
       ],
     });
-    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    assert(plan.flow.type === "approval");
 
     await expect(
       createSnapshotApproverCohort({
@@ -308,7 +313,7 @@ describe("snapshot approver cohort", () => {
 describe("Materialized Plan verification", () => {
   it("MaterializedStepIdとsourceの不一致をchecksum再計算後も拒否する", async () => {
     const plan = structuredClone(await materialize());
-    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    assert(plan.flow.type === "approval");
     plan.flow.materializedStepId = branded<MaterializedStepId>(`mstep:${"0".repeat(64)}`);
     await refreshPlanFingerprints(plan);
 
@@ -320,7 +325,7 @@ describe("Materialized Plan verification", () => {
 
   it("Step sourceのPolicy情報がBinding snapshotと不一致なら拒否する", async () => {
     const plan = structuredClone(await materialize());
-    if (plan.flow.type !== "approval") throw new Error("approval flowが必要です");
+    assert(plan.flow.type === "approval");
     plan.flow.source.policyKey = branded<ApprovalPolicyKey>("policy:other");
     await refreshPlanFingerprints(plan);
 
