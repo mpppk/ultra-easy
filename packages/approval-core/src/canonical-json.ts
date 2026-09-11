@@ -32,7 +32,10 @@ function assertValidUnicode(value: string): Result.Result<void, CanonicalJsonErr
     if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
       const next = value.charCodeAt(index + 1);
       if (!(next >= 0xdc00 && next <= 0xdfff)) {
-        return fail("invalid_unicode", "lone high surrogateを含む文字列はcanonical JSONにできません");
+        return fail(
+          "invalid_unicode",
+          "lone high surrogateを含む文字列はcanonical JSONにできません",
+        );
       }
       index += 1;
       continue;
@@ -102,9 +105,9 @@ export function canonicalizeJson(value: JsonValue): Result.Result<string, Canoni
 const digestText = Result.fn({
   try: async (value: string): Promise<Sha256Digest> => {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-    const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
-      "",
-    );
+    const hex = Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
     return `sha256:${hex}` as Sha256Digest;
   },
   catch: (): CanonicalJsonError =>

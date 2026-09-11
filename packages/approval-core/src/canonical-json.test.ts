@@ -33,9 +33,7 @@ describe("canonical JSON", () => {
   });
 
   it("Unicode normalizationは暗黙に行わない", () => {
-    expect(canonicalizeJson({ value: "é" })).not.toEqual(
-      canonicalizeJson({ value: "é" }),
-    );
+    expect(canonicalizeJson({ value: "é" })).not.toEqual(canonicalizeJson({ value: "é" }));
   });
 
   it("ECMAScript/JCSの数値表現としてnegative zeroを0へ正規化する", () => {

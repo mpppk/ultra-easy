@@ -311,11 +311,7 @@ function toJsonValue(
 
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    return failure(
-      "invalid_json_value",
-      `plain object以外はsnapshotできません: ${path}`,
-      path,
-    );
+    return failure("invalid_json_value", `plain object以外はsnapshotできません: ${path}`, path);
   }
   if (seen.has(value)) {
     return failure("invalid_json_value", `循環参照があります: ${path}`, path);
@@ -416,10 +412,7 @@ function resolvePrincipalExpression(
 
   const depth = expression.depth ?? 0;
   if (!Number.isSafeInteger(depth) || depth < 0 || depth >= chain.length) {
-    return failure(
-      "principal_unresolved",
-      `delegator depthを解決できません: ${String(depth)}`,
-    );
+    return failure("principal_unresolved", `delegator depthを解決できません: ${String(depth)}`);
   }
   return Result.succeed(chain[chain.length - 1 - depth]!.delegator);
 }
@@ -1066,7 +1059,10 @@ async function verifyMaterializedApprovalPlanUnsafe(
     };
   }
 
-  const flowVerification = await verifyMaterializedFlowSources(plan.flow, plan.policyBindingSnapshots);
+  const flowVerification = await verifyMaterializedFlowSources(
+    plan.flow,
+    plan.policyBindingSnapshots,
+  );
   if (flowVerification.type === "invalid") return flowVerification;
 
   const actionFingerprint = await computeActionFingerprint(plan.action);

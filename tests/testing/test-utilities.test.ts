@@ -49,9 +49,7 @@ describe("M0 deterministic test utilities", () => {
       z: 1,
     } satisfies JsonValue;
 
-    expect(canonicalizeJson(left)).toEqual(
-      Result.succeed('{"a":{"x":null,"y":true},"z":1}'),
-    );
+    expect(canonicalizeJson(left)).toEqual(Result.succeed('{"a":{"x":null,"y":true},"z":1}'));
     expect(canonicalizeJson(right)).toEqual(canonicalizeJson(left));
   });
 

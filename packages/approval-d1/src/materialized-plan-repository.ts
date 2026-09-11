@@ -42,20 +42,17 @@ function repositoryError(error: unknown, fallback: string): D1RepositoryError {
 
 const runStatement = Result.fn({
   try: async (statement: D1PreparedStatementLike): Promise<D1RunResultLike> => statement.run(),
-  catch: (error): D1RepositoryError =>
-    repositoryError(error, "D1 statementの実行に失敗しました"),
+  catch: (error): D1RepositoryError => repositoryError(error, "D1 statementの実行に失敗しました"),
 });
 
 const firstRow = Result.fn({
   try: async <T>(statement: D1PreparedStatementLike): Promise<T | null> => statement.first<T>(),
-  catch: (error): D1RepositoryError =>
-    repositoryError(error, "D1 rowの取得に失敗しました"),
+  catch: (error): D1RepositoryError => repositoryError(error, "D1 rowの取得に失敗しました"),
 });
 
 const parsePlan = Result.fn({
   try: (value: string): MaterializedApprovalPlan => JSON.parse(value) as MaterializedApprovalPlan,
-  catch: (error): D1RepositoryError =>
-    repositoryError(error, "保存済みPlan JSONをparseできません"),
+  catch: (error): D1RepositoryError => repositoryError(error, "保存済みPlan JSONをparseできません"),
 });
 
 function serialize(value: unknown) {
@@ -152,7 +149,10 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
   async load(
     input: Parameters<MaterializedPlanRepository["load"]>[0],
   ): Promise<MaterializedPlanLoadResult> {
-    const rowResult = await this.readRow(String(input.organizationId), String(input.actionRequestId));
+    const rowResult = await this.readRow(
+      String(input.organizationId),
+      String(input.actionRequestId),
+    );
     if (Result.isFailure(rowResult)) {
       return { type: "repository_error", message: rowResult.error.message };
     }
