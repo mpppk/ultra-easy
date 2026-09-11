@@ -4,6 +4,7 @@ import type { MaterializedApprovalPlan } from "./materialization.ts";
 export type MaterializedPlanSaveResult =
   | { type: "created" }
   | { type: "existing" }
+  | { type: "invalid_plan"; message: string }
   | {
       type: "conflict";
       existingApprovalPlanChecksum: ApprovalPlanChecksum;
