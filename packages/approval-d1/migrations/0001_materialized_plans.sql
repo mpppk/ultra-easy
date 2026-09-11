@@ -12,23 +12,3 @@ CREATE TABLE action_requests (
   created_at TEXT NOT NULL,
   PRIMARY KEY (organization_id, id)
 );
-
-CREATE TABLE approval_candidate_cohorts (
-  id TEXT PRIMARY KEY,
-  organization_id TEXT NOT NULL,
-  action_request_id TEXT NOT NULL,
-  materialized_step_id TEXT NOT NULL,
-  resolved_at TEXT NOT NULL,
-  source_revision TEXT,
-  FOREIGN KEY (organization_id, action_request_id)
-    REFERENCES action_requests (organization_id, id)
-);
-
-CREATE TABLE approval_candidate_cohort_members (
-  cohort_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  ordinal INTEGER NOT NULL,
-  PRIMARY KEY (cohort_id, user_id),
-  UNIQUE (cohort_id, ordinal),
-  FOREIGN KEY (cohort_id) REFERENCES approval_candidate_cohorts (id)
-);
