@@ -27,6 +27,7 @@ export interface D1DatabaseLike {
 type StoredPlanRow = {
   materialized_plan: string;
   approval_plan_checksum: string;
+  approval_binding_fingerprint: string;
 };
 
 function serialize(value: unknown): string {
@@ -41,6 +42,11 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
   constructor(private readonly db: D1DatabaseLike) {}
 
   async save(plan: MaterializedApprovalPlan): Promise<MaterializedPlanSaveResult> {
+    const verification = await verifyMaterializedApprovalPlan(plan);
+    if (verification.type === "invalid") {
+      return { type: "invalid_plan", message: verification.message };
+    }
+
     const result = await this.db
       .prepare(
         `INSERT OR IGNORE INTO action_requests (
@@ -81,7 +87,7 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     if (!existing) {
       throw new Error("INSERT OR IGNORE後に既存Planを取得できませんでした");
     }
-    if (existing.approval_plan_checksum === String(plan.approvalPlanChecksum)) {
+    if (existing.approval_binding_fingerprint === String(plan.approvalBindingFingerprint)) {
       return { type: "existing" };
     }
     return {
@@ -114,12 +120,28 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
       };
     }
 
+    if (
+      String(plan.organizationId) !== String(input.organizationId) ||
+      String(plan.actionRequestId) !== String(input.actionRequestId)
+    ) {
+      return {
+        type: "invalid_plan",
+        message: "DB検索キーとMaterialized Plan内部のorganizationId/actionRequestIdが一致しません",
+      };
+    }
+
     const verification = await verifyMaterializedApprovalPlan(plan);
     if (verification.type === "invalid") {
       return { type: "invalid_plan", message: verification.message };
     }
     if (String(plan.approvalPlanChecksum) !== row.approval_plan_checksum) {
       return { type: "invalid_plan", message: "DB列とMaterialized Plan内のchecksumが一致しません" };
+    }
+    if (String(plan.approvalBindingFingerprint) !== row.approval_binding_fingerprint) {
+      return {
+        type: "invalid_plan",
+        message: "DB列とMaterialized Plan内のapprovalBindingFingerprintが一致しません",
+      };
     }
 
     return { type: "found", plan };
@@ -128,7 +150,7 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
   private readRow(organizationId: string, actionRequestId: string): Promise<StoredPlanRow | null> {
     return this.db
       .prepare(
-        `SELECT materialized_plan, approval_plan_checksum
+        `SELECT materialized_plan, approval_plan_checksum, approval_binding_fingerprint
          FROM action_requests
          WHERE organization_id = ? AND id = ?`,
       )
