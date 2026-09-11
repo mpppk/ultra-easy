@@ -22,7 +22,7 @@ import {
   validateActionInput,
   validateApprovalPolicyBindingSemantics,
   validateApprovalPolicySemantics,
-} from "../../packages/approval-core/src/index.ts";
+} from "@app/approval-core";
 import type {
   ActionType,
   ApprovalPolicyBinding,
@@ -35,11 +35,8 @@ import type {
   PolicyEvaluationContext,
   PolicyFieldCatalog,
   ResourceType,
-} from "../../packages/approval-core/src/index.ts";
-import {
-  createPurchaseActionRequest,
-  createTicketActionRequest,
-} from "../../packages/approval-core/src/testing/index.ts";
+} from "@app/approval-core";
+import { createPurchaseActionRequest, createTicketActionRequest } from "@app/approval-core/testing";
 
 function branded<T extends string>(value: string): T {
   return value as T;
