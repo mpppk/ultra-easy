@@ -13,6 +13,37 @@ const config = defineConfig({
   lint: {
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
+    overrides: [
+      {
+        files: ["packages/approval-core/src/**/*.ts"],
+        excludeFiles: [
+          "packages/approval-core/src/**/*.test.ts",
+          "packages/approval-core/src/**/*.type-test.ts",
+        ],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [
+                {
+                  name: "@standard-schema/spec",
+                  allowTypeImports: true,
+                  message:
+                    "approval-coreでは@standard-schema/specを型としてのみ利用してください。",
+                },
+              ],
+              patterns: [
+                {
+                  group: ["*", "**/*", "!./**", "!../**", "!@standard-schema/spec"],
+                  message:
+                    "approval-coreのproduction codeから外部packageへ直接依存しないでください。",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
     options: { typeAware: true, typeCheck: true },
   },
   resolve: { tsconfigPaths: true },
