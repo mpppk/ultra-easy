@@ -5,82 +5,18 @@ on:
     branches: [main]
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.head_ref }}
       - uses: voidzero-dev/setup-vp@v1.19.0
         with:
           node-version: "24"
           cache: true
       - name: Install dependencies
         run: vp install
-      - name: Apply final Byethrow migration fixes
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("packages/approval-core/src/materialization.ts")
-          text = path.read_text()
-          old = "  return Result.succeed(cloned.value as Awaited<T>);"
-          new = '  return { type: "Success", value: cloned.value as Awaited<T> };'
-          assert text.count(old) == 1, "cloneDomain success pattern mismatch"
-          path.write_text(text.replace(old, new))
-
-          path = Path("docs/implementation-plan.md")
-          text = path.read_text()
-          old = "`approval-core`からCloudflare、D1、OpenFGA SDK、HTTP framework、Zod等をimportしないことをdependency testで保証する。"
-          new = "`approval-core`からCloudflare、D1、OpenFGA SDK、HTTP framework、Zod等をimportしない。外部packageは`@praha/byethrow`と型専用の`@standard-schema/spec`だけを許可し、Oxlintの`no-restricted-imports`を`vp check`で保証する。"
-          assert text.count(old) == 1, "AC-M0-003 pattern mismatch"
-          text = text.replace(old, new)
-          text = text.replace("tests/architecture/dependency-rules.test.ts\n", "")
-          path.write_text(text)
-
-          path = Path("AGENTS.md")
-          text = path.read_text()
-          marker = "## Notes\n"
-          addition = '''## エラー処理\n\n- `throw`文は禁止する。失敗可能な処理は原則として`@praha/byethrow`の`Result` / `ResultAsync`で表現する。\n- Promiseや外部SDKなど例外を投げうる境界は`Result.fn`等で捕捉し、型付きerrorへ変換する。\n- `vp check`で`ThrowStatement`を検出し、CIで再発を防止する。\n\n'''
-          assert marker in text, "AGENTS Notes marker missing"
-          if addition not in text:
-              text = text.replace(marker, addition + marker, 1)
-          path.write_text(text)
-
-          normal_workflow = '''name: check
-
-          on:
-            push:
-              branches: [main]
-            pull_request:
-
-          jobs:
-            check:
-              runs-on: ubuntu-latest
-              steps:
-                - uses: actions/checkout@v7
-                - uses: voidzero-dev/setup-vp@v1.19.0
-                  with:
-                    node-version: "24"
-                    cache: true
-                - name: Install dependencies
-                  run: vp install
-                - name: Check
-                  run: vp check
-                - name: Test
-                  run: vp run -r test
-          '''
-          import textwrap
-          Path(".github/workflows/check.yml").write_text(textwrap.dedent(normal_workflow))
-          PY
-          vp check --fix
-          vp run -r test
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit --no-verify -m "refactor: Byethrow移行を完了"
-          git push
+      - name: Check
+        run: vp check
+      - name: Test
+        run: vp run -r test

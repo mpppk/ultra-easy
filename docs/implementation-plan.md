@@ -130,14 +130,13 @@ it("AC-M1-004 fails closed when a field is missing", ...)
 
 ### AC-M0-003 — Core packageはAdapterへ依存しない
 
-`approval-core`からCloudflare、D1、OpenFGA SDK、HTTP framework、Zod等をimportしないことをdependency testで保証する。
+`approval-core`からCloudflare、D1、OpenFGA SDK、HTTP framework、Zod等をimportしない。外部packageは`@praha/byethrow`と型専用の`@standard-schema/spec`だけを許可し、Oxlintの`no-restricted-imports`を`vp check`で保証する。
 
 ## 推奨テスト
 
 ```text
 packages/approval-core/src/action-request.test.ts
 packages/approval-core/src/ast-roundtrip.test.ts
-tests/architecture/dependency-rules.test.ts
 tests/fixtures/fixture-contract.test.ts
 ```
 

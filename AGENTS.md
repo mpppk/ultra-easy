@@ -56,6 +56,12 @@ tests/                    @app/tests — milestone-spanning acceptance suite (se
 - Build everything with `bun run build` (`vp run -r build`); build just the app with `vp -C apps/web build`.
 - Dev server: `bun run dev` (`vp run @app/web#dev`, port 3000). Deploy: `bun run deploy` (`vp build && wrangler deploy` inside `apps/web`).
 
+## エラー処理
+
+- `throw`文は禁止する。失敗可能な処理は原則として`@praha/byethrow`の`Result` / `ResultAsync`で表現する。
+- Promiseや外部SDKなど例外を投げうる境界は`Result.fn`等で捕捉し、型付きerrorへ変換する。
+- `vp check`で`ThrowStatement`を検出し、CIで再発を防止する。
+
 ## Notes
 
 - `apps/web/vite.config.ts` applies `@cloudflare/vite-plugin` (ssr environment) + TanStack Start + React. The Cloudflare plugin is skipped when `VITEST=true` because it is incompatible with Vitest (`resolve.external` in ssr env).
