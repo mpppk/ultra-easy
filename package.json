@@ -2,40 +2,24 @@
   "name": "ultra-easy",
   "private": true,
   "workspaces": [
+    "apps/*",
     "packages/*"
   ],
   "type": "module",
-  "imports": {
-    "#/*": "./src/*"
-  },
   "scripts": {
-    "dev": "vp dev --port 3000",
-    "generate-routes": "tsr generate",
-    "build": "vp build",
-    "preview": "vp preview",
-    "deploy": "bun run build && wrangler deploy",
+    "dev": "vp run @app/web#dev",
+    "build": "vp run -r build",
+    "deploy": "vp run @app/web#deploy",
     "prepare": "vp config"
   },
-  "dependencies": {
-    "@app/approval-core": "workspace:*",
-    "@tanstack/react-router": "latest",
-    "@tanstack/react-start": "latest",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
-  },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.26.0",
+    "@app/approval-core": "workspace:*",
     "@standard-schema/spec": "^1.1.0",
-    "@tanstack/router-cli": "^1.132.0",
     "@types/node": "^22.10.2",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^6.0.1",
     "typescript": "^6.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.8",
     "vite-plus": "0.2.8",
-    "vitest": "4.1.10",
-    "wrangler": "^4.70.0"
+    "vitest": "4.1.10"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@0.2.8",
