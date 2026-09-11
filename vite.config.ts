@@ -34,7 +34,8 @@ const config = defineConfig({
               patterns: [
                 {
                   group: ["*", "**/*", "!./**", "!../**", "!@standard-schema/spec"],
-                  message: "approval-coreのproduction codeから外部packageへ直接依存しないでください。",
+                  message:
+                    "approval-coreのproduction codeから外部packageへ直接依存しないでください。",
                 },
               ],
             },
