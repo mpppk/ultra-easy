@@ -258,9 +258,7 @@ describe("validateApprovalPolicySemantics", () => {
           }),
         ],
       });
-      const fieldCatalog: PolicyFieldCatalog = [
-        { path: "action.input.priority", type: "string" },
-      ];
+      const fieldCatalog: PolicyFieldCatalog = [{ path: "action.input.priority", type: "string" }];
 
       expect(issueCodes(validateApprovalPolicySemantics(policy, { fieldCatalog }))).toContain(
         "unsupported_type_comparison",
