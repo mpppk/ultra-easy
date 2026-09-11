@@ -29,6 +29,8 @@ export type ApprovalPolicyBindingId = Brand<string, "ApprovalPolicyBindingId">;
 export type ApprovalRuleKey = Brand<string, "ApprovalRuleKey">;
 export type ApprovalStepKey = Brand<string, "ApprovalStepKey">;
 
+export type SchemaKey = Brand<string, "SchemaKey">;
+
 export type RelationName = Brand<string, "RelationName">;
 export type AuthorizationObjectType = Brand<string, "AuthorizationObjectType">;
 export type AuthorizationObjectRef = Brand<string, "AuthorizationObjectRef">;

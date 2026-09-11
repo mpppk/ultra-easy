@@ -1,0 +1,13 @@
+{
+  "name": "@app/approval-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "peerDependencies": {
+    "@standard-schema/spec": "^1.1.0"
+  }
+}
