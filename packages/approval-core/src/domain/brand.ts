@@ -16,6 +16,8 @@ export type ServiceId = Brand<string, "ServiceId">;
 export type PrincipalId = UserId | AgentId | ServiceId;
 
 export type ActionType = Brand<string, "ActionType">;
+export type ActionDefinitionKey = Brand<string, "ActionDefinitionKey">;
+export type ExecutorKey = Brand<string, "ExecutorKey">;
 export type ResourceType = Brand<string, "ResourceType">;
 export type ResourceId = Brand<string, "ResourceId">;
 

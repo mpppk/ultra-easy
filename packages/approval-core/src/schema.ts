@@ -19,3 +19,21 @@ export type SchemaReference = {
 export interface SchemaResolver {
   resolve(ref: SchemaReference): StandardSchemaV1 | Promise<StandardSchemaV1>;
 }
+
+export type SchemaValidationResult<Output> =
+  | { type: "valid"; value: Output }
+  | { type: "invalid"; issues: ReadonlyArray<StandardSchemaV1.Issue> };
+
+/** Standard Schemaの共通validation contractだけを使ってAction inputを検証する。 */
+export async function validateActionInput<Output>(
+  schema: StandardSchemaV1<unknown, Output>,
+  input: unknown,
+): Promise<SchemaValidationResult<Output>> {
+  const result = await schema["~standard"].validate(input);
+
+  if (result.issues) {
+    return { type: "invalid", issues: result.issues };
+  }
+
+  return { type: "valid", value: result.value };
+}
