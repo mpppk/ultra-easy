@@ -34,4 +34,20 @@ describe("canonical JSON", () => {
   it("Unicode normalizationは暗黙に行わない", () => {
     expect(canonicalizeJson({ value: "é" })).not.toBe(canonicalizeJson({ value: "é" }));
   });
+
+  it("ECMAScript/JCSの数値表現としてnegative zeroを0へ正規化する", () => {
+    expect(canonicalizeJson({ value: -0 })).toBe('{"value":0}');
+  });
+
+  it("指数表記をECMAScriptのJSON number serializationで固定する", () => {
+    expect(canonicalizeJson({ large: 1e30, small: 1e-7 })).toBe(
+      '{"large":1e+30,"small":1e-7}',
+    );
+  });
+
+  it("control文字・quote・backslashのescapeを固定する", () => {
+    expect(canonicalizeJson({ value: "\b\t\n\f\r\"\\" })).toBe(
+      '{"value":"\\b\\t\\n\\f\\r\\\"\\\\"}',
+    );
+  });
 });
