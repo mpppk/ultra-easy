@@ -3,18 +3,18 @@
   "private": true,
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "tests"
   ],
   "type": "module",
   "scripts": {
     "dev": "vp run @app/web#dev",
     "build": "vp run -r build",
+    "test": "vp run -r test",
     "deploy": "vp run @app/web#deploy",
     "prepare": "vp config"
   },
   "devDependencies": {
-    "@app/approval-core": "workspace:*",
-    "@standard-schema/spec": "^1.1.0",
     "@types/node": "^22.10.2",
     "typescript": "^7.0.0",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1",
