@@ -115,9 +115,10 @@ export function flowStatus(flow: MaterializedFlow, state: ApprovalRuntimeState):
     if (rejections === statuses.length) return "rejected";
     return "expired";
   }
-
-  if (approvals >= flow.quorum) return "approved";
-  if (approvals + pending < flow.quorum) return rejections > 0 ? "rejected" : "expired";
+  if (flow.strategy === "quorum") {
+    if (approvals >= flow.quorum) return "approved";
+    if (approvals + pending < flow.quorum) return rejections > 0 ? "rejected" : "expired";
+  }
   return "pending";
 }
 
