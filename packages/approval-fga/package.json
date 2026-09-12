@@ -1,0 +1,17 @@
+{
+  "name": "@app/approval-fga",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@app/approval-core": "workspace:*",
+    "@praha/byethrow": "^0.12.0",
+    "@praha/error-factory": "^1.4.1"
+  }
+}
