@@ -1,7 +1,11 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 import { WorkflowEntrypoint } from "cloudflare:workers";
-import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
+import type {
+  WorkflowEvent,
+  WorkflowSleepDuration,
+  WorkflowStep,
+} from "cloudflare:workers";
 import type { D1Database } from "@cloudflare/workers-types";
 
 import {
@@ -67,12 +71,14 @@ const waitForDecision = Result.fn({
   try: async (input: {
     step: WorkflowStep;
     name: string;
-    timeout: string;
-  }): Promise<ApprovalDecisionEvent> =>
-    input.step.waitForEvent<ApprovalDecisionEvent>(input.name, {
+    timeout: WorkflowSleepDuration;
+  }): Promise<ApprovalDecisionEvent> => {
+    const event = await input.step.waitForEvent<ApprovalDecisionEvent>(input.name, {
       type: "approval-decision",
       timeout: input.timeout,
-    }),
+    });
+    return event.payload;
+  },
   catch: (error): WorkflowEventWaitError =>
     new WorkflowEventWaitError({
       code: "workflow_event_wait_failed",
@@ -217,7 +223,10 @@ function addSeconds(value: string, seconds: number): string {
   return new Date(Date.parse(value) + seconds * 1000).toISOString();
 }
 
-function timeoutUntil(now: string, expiresAt?: string): { timeout: string; seconds: number } {
+function timeoutUntil(
+  now: string,
+  expiresAt?: string,
+): { timeout: WorkflowSleepDuration; seconds: number } {
   if (!expiresAt) return { timeout: "365 days", seconds: 365 * 24 * 60 * 60 };
   const delta = Math.ceil((Date.parse(expiresAt) - Date.parse(now)) / 1000);
   const seconds = Math.max(1, Math.min(365 * 24 * 60 * 60, delta));
