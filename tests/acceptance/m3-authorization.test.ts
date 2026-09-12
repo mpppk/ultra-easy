@@ -127,10 +127,7 @@ class InMemoryProjectionRepository implements ApproverCandidateProjectionReposit
   }
 }
 
-function relationTarget(
-  object = "user:alice",
-  relation = "manager",
-): ResolvedApproverTarget {
+function relationTarget(object = "user:alice", relation = "manager"): ResolvedApproverTarget {
   return {
     type: "relation",
     object: branded<AuthorizationObjectRef>(object),
@@ -139,9 +136,7 @@ function relationTarget(
   };
 }
 
-function materializedStep(
-  input: Partial<MaterializedApprovalStep> = {},
-): MaterializedApprovalStep {
+function materializedStep(input: Partial<MaterializedApprovalStep> = {}): MaterializedApprovalStep {
   return {
     type: "approval",
     materializedStepId: branded<MaterializedStepId>("mstep:m3-manager"),
@@ -318,7 +313,11 @@ describe("M3 Authorization / Approver Resolution", () => {
       step,
       resolvedAt: "2026-09-12T12:00:00.000Z",
     });
-    await checkApprovalDecisionCandidate({ resolver, target: step.target, userId: fixtureIds.alice });
+    await checkApprovalDecisionCandidate({
+      resolver,
+      target: step.target,
+      userId: fixtureIds.alice,
+    });
 
     const authorizer = new FakeAuthorizer(true);
     await reauthorizeActionRequest({

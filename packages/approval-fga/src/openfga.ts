@@ -1,10 +1,7 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
-import {
-  ApproverResolverProviderError,
-  AuthorizationProviderError,
-} from "@app/approval-core";
+import { ApproverResolverProviderError, AuthorizationProviderError } from "@app/approval-core";
 import type {
   ActionAuthorizer,
   ActionRequest,
@@ -89,9 +86,7 @@ const serializeJson = Result.fn({
     }),
 });
 
-export type OpenFgaListUsersCompleteness =
-  | "assume_complete"
-  | ((response: unknown) => boolean);
+export type OpenFgaListUsersCompleteness = "assume_complete" | ((response: unknown) => boolean);
 
 export type OpenFgaClientOptions = {
   apiUrl: string;
@@ -110,7 +105,9 @@ function normalizeBaseUrl(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
-function consistencyValue(value: AuthorizationConsistency): "MINIMIZE_LATENCY" | "HIGHER_CONSISTENCY" {
+function consistencyValue(
+  value: AuthorizationConsistency,
+): "MINIMIZE_LATENCY" | "HIGHER_CONSISTENCY" {
   return value === "higher_consistency" ? "HIGHER_CONSISTENCY" : "MINIMIZE_LATENCY";
 }
 
@@ -143,7 +140,10 @@ export class OpenFgaClient {
     this.listUsersCompleteness = options.listUsersCompleteness;
   }
 
-  private async post(path: string, body: unknown): Result.ResultAsync<unknown, OpenFgaRequestError> {
+  private async post(
+    path: string,
+    body: unknown,
+  ): Result.ResultAsync<unknown, OpenFgaRequestError> {
     const serialized = serializeJson(body);
     if (Result.isFailure(serialized)) return serialized;
 

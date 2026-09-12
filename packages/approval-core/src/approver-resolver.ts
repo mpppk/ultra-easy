@@ -1,16 +1,8 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
-import type {
-  ApprovalTaskId,
-  MaterializedStepId,
-  OrganizationId,
-  UserId,
-} from "./domain/brand.ts";
-import type {
-  MaterializedApprovalStep,
-  ResolvedApproverTarget,
-} from "./materialization.ts";
+import type { ApprovalTaskId, MaterializedStepId, OrganizationId, UserId } from "./domain/brand.ts";
+import type { MaterializedApprovalStep, ResolvedApproverTarget } from "./materialization.ts";
 import type { AuthorizationConsistency } from "./authorization.ts";
 
 export type ApproverCandidateList = {
@@ -103,9 +95,9 @@ function compareStrings(left: string, right: string): number {
 }
 
 function normalizeCandidateList(list: ApproverCandidateList): ApproverCandidateList {
-  const userIds = [...new Map(list.userIds.map((userId) => [String(userId), userId])).values()].sort(
-    (left, right) => compareStrings(String(left), String(right)),
-  );
+  const userIds = [
+    ...new Map(list.userIds.map((userId) => [String(userId), userId])).values(),
+  ].sort((left, right) => compareStrings(String(left), String(right)));
   return { ...list, userIds };
 }
 
@@ -266,7 +258,10 @@ export interface ApproverCandidateProjectionRepository {
   load(input: {
     organizationId: OrganizationId;
     approvalTaskId: ApprovalTaskId;
-  }): Result.ResultAsync<ApprovalTaskCandidateProjection | null, ApproverCandidateProjectionRepositoryError>;
+  }): Result.ResultAsync<
+    ApprovalTaskCandidateProjection | null,
+    ApproverCandidateProjectionRepositoryError
+  >;
 }
 
 /**
@@ -280,7 +275,10 @@ export async function refreshApproverCandidateProjection(input: {
   step: MaterializedApprovalStep;
   resolvedAt: string;
   context?: Record<string, unknown>;
-}): Result.ResultAsync<ApprovalTaskCandidateProjection, ApproverResolverProviderError | ApproverCandidateProjectionRepositoryError> {
+}): Result.ResultAsync<
+  ApprovalTaskCandidateProjection,
+  ApproverResolverProviderError | ApproverCandidateProjectionRepositoryError
+> {
   const listed = await listApproverTarget({
     resolver: input.resolver,
     target: input.step.target,

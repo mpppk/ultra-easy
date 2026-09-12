@@ -49,7 +49,9 @@ const firstProjectionRow = Result.fn({
 const serializeCandidateIds = Result.fn({
   try: (userIds: UserId[]): string => JSON.stringify(userIds),
   catch: (error): ApproverCandidateProjectionRepositoryError =>
-    repositoryError(error instanceof Error ? error.message : "candidate user IDsをserializeできません"),
+    repositoryError(
+      error instanceof Error ? error.message : "candidate user IDsをserializeできません",
+    ),
 });
 
 const parseCandidateIds = Result.fn({
@@ -58,9 +60,7 @@ const parseCandidateIds = Result.fn({
     repositoryError(error instanceof Error ? error.message : "candidate user IDsをparseできません"),
 });
 
-export class D1ApproverCandidateProjectionRepository
-  implements ApproverCandidateProjectionRepository
-{
+export class D1ApproverCandidateProjectionRepository implements ApproverCandidateProjectionRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
   async replace(
@@ -110,7 +110,10 @@ export class D1ApproverCandidateProjectionRepository
   async load(input: {
     organizationId: OrganizationId;
     approvalTaskId: ApprovalTaskId;
-  }): Result.ResultAsync<ApprovalTaskCandidateProjection | null, ApproverCandidateProjectionRepositoryError> {
+  }): Result.ResultAsync<
+    ApprovalTaskCandidateProjection | null,
+    ApproverCandidateProjectionRepositoryError
+  > {
     const row = await firstProjectionRow(
       this.db
         .prepare(

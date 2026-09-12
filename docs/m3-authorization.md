@@ -33,10 +33,10 @@ D1の`approval_task_candidate_projections`はこの検索用projectionだけを�
 
 ## Consistency Policy
 
-| 用途 | Consistency |
-| --- | --- |
-| Inbox candidate projection | `minimize_latency` |
-| Approval Decision受理直前 | `higher_consistency` |
+| 用途                             | Consistency          |
+| -------------------------------- | -------------------- |
+| Inbox candidate projection       | `minimize_latency`   |
+| Approval Decision受理直前        | `higher_consistency` |
 | Action実行直前のRe-Authorization | `higher_consistency` |
 
 ## OpenFGA Adapter

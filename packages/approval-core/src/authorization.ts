@@ -171,7 +171,8 @@ function validateDelegationContinuity(chain: readonly DelegationHop[]): boolean 
   for (let index = 1; index < chain.length; index += 1) {
     const previous = chain[index - 1];
     const current = chain[index];
-    if (!previous || !current || !samePrincipal(previous.delegatee, current.delegator)) return false;
+    if (!previous || !current || !samePrincipal(previous.delegatee, current.delegator))
+      return false;
   }
   return true;
 }

@@ -51,9 +51,8 @@ describe("OpenFGA adapters", () => {
       authorizationModelId: "model-1",
       fetch: responseFetch({ allowed: true }, requests),
     });
-    const authorizer = new OpenFgaActionAuthorizer(
-      client,
-      (_actionType: ActionType) => branded<RelationName>("change_priority"),
+    const authorizer = new OpenFgaActionAuthorizer(client, (_actionType: ActionType) =>
+      branded<RelationName>("change_priority"),
     );
     const result = await authorizer.check({
       request: createHumanActionRequest(),
