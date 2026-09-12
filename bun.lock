@@ -38,6 +38,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@praha/byethrow": "^0.12.0",
+        "@praha/error-factory": "^1.4.1",
       },
       "devDependencies": {
         "@standard-schema/spec": "^1.1.0",
@@ -366,6 +367,8 @@
     "@praha/byethrow-docs": ["@praha/byethrow-docs@0.12.0", "", { "dependencies": { "citty": "^0.2.0", "find-up": "8.0.0", "flexsearch": "^0.8.212", "mdast-util-from-markdown": "^2.0.2", "mdast-util-to-string": "^4.0.0", "sqlite3": "^6.0.0" }, "peerDependencies": { "@praha/byethrow": "0.12.0" }, "bin": { "byethrow-docs": "./bin/cli.js" } }, "sha512-jJRL9C/8ADirLybh2ACZ50Kp9nQwAjgc8oskUaL8h7lxhh0ff2+KRbVpl8UyyTk3UeKf+MiP9pG2Oj41+hq/Sg=="],
 
     "@praha/byethrow-oxlint": ["@praha/byethrow-oxlint@0.12.0", "", { "dependencies": { "@oxlint/plugins": "^1.68.0" }, "peerDependencies": { "@praha/byethrow": "0.12.0", "oxlint": "^1.0.0" } }, "sha512-zdg/oa50/N+a62FsCVHz/J+9RnuaIWZVzwo9frIXZdyPuNNHRYBCee9AwCnfYinOQ6dLOzFmOS9lATnw/MDGdQ=="],
+
+    "@praha/error-factory": ["@praha/error-factory@1.4.1", "", {}, "sha512-HA+y+xwmQIl9EPvZonRk1/hsSAvAlpDjlpruyW8kTAQ++Oq5Fi7hFV0Y84TLHXJ6SciYHlKGqrekrS5wzkD5+Q=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 

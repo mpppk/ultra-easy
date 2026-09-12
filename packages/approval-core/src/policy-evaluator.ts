@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { ErrorFactory } from "@praha/error-factory";
 
 import type { ApprovalPolicyBinding, ApprovalPolicyDefinition } from "./domain/policy.ts";
 import type { ApprovalPolicyBindingId, ApprovalPolicyKey } from "./domain/brand.ts";
@@ -16,17 +17,49 @@ export type PolicyEvaluation =
     }
   | { type: "not_matched"; policyKey: ApprovalPolicyKey };
 
-export type PolicyEvaluationError = {
-  policyKey: ApprovalPolicyKey;
-  cause: ConditionEvaluationError;
-};
+const PolicyEvaluationErrorBase = ErrorFactory({
+  name: "PolicyEvaluationError",
+  message: "PolicyのCondition評価に失敗しました。",
+  fields: ErrorFactory.fields<{
+    code: "policy_condition_evaluation_failed";
+    policyKey: ApprovalPolicyKey;
+  }>(),
+});
+
+export class PolicyEvaluationError extends PolicyEvaluationErrorBase {
+  declare readonly cause: ConditionEvaluationError;
+
+  constructor(options: { policyKey: ApprovalPolicyKey; cause: ConditionEvaluationError }) {
+    super({
+      code: "policy_condition_evaluation_failed",
+      policyKey: options.policyKey,
+      cause: options.cause,
+    });
+  }
+}
 
 export type PolicyEvaluationResult = Result.Result<PolicyEvaluation, PolicyEvaluationError>;
 
-export type PolicyBindingResolutionError = {
-  bindingId: ApprovalPolicyBindingId;
-  cause: ConditionEvaluationError;
-};
+const PolicyBindingResolutionErrorBase = ErrorFactory({
+  name: "PolicyBindingResolutionError",
+  message: "Policy BindingのCondition評価に失敗しました。",
+  fields: ErrorFactory.fields<{
+    code: "binding_condition_evaluation_failed";
+    bindingId: ApprovalPolicyBindingId;
+  }>(),
+});
+
+export class PolicyBindingResolutionError extends PolicyBindingResolutionErrorBase {
+  declare readonly cause: ConditionEvaluationError;
+
+  constructor(options: { bindingId: ApprovalPolicyBindingId; cause: ConditionEvaluationError }) {
+    super({
+      code: "binding_condition_evaluation_failed",
+      bindingId: options.bindingId,
+      cause: options.cause,
+    });
+  }
+}
 
 export type PolicyBindingResolutionResult = Result.Result<
   ApprovalPolicyBinding[],
@@ -44,23 +77,71 @@ export type ApprovalPlanEvaluation = {
   policyEvaluations: EvaluatedPolicyBinding[];
 };
 
+const ApprovalPlanBindingEvaluationErrorBase = ErrorFactory({
+  name: "ApprovalPlanBindingEvaluationError",
+  message: "Approval PlanのBinding評価に失敗しました。",
+  fields: ErrorFactory.fields<{
+    type: "binding_evaluation_failed";
+    bindingId: ApprovalPolicyBindingId;
+  }>(),
+});
+
+export class ApprovalPlanBindingEvaluationError extends ApprovalPlanBindingEvaluationErrorBase {
+  declare readonly cause: PolicyBindingResolutionError;
+
+  constructor(options: {
+    bindingId: ApprovalPolicyBindingId;
+    cause: PolicyBindingResolutionError;
+  }) {
+    super({
+      type: "binding_evaluation_failed",
+      bindingId: options.bindingId,
+      cause: options.cause,
+    });
+  }
+}
+
+export class ApprovalPlanPolicyNotFoundError extends ErrorFactory({
+  name: "ApprovalPlanPolicyNotFoundError",
+  message: ({ policyKey }) => `Policyが見つかりません: ${String(policyKey)}`,
+  fields: ErrorFactory.fields<{
+    type: "policy_not_found";
+    bindingId: ApprovalPolicyBindingId;
+    policyKey: ApprovalPolicyKey;
+  }>(),
+}) {}
+
+const ApprovalPlanPolicyEvaluationErrorBase = ErrorFactory({
+  name: "ApprovalPlanPolicyEvaluationError",
+  message: "Approval PlanのPolicy評価に失敗しました。",
+  fields: ErrorFactory.fields<{
+    type: "policy_evaluation_failed";
+    bindingId: ApprovalPolicyBindingId;
+    policyKey: ApprovalPolicyKey;
+  }>(),
+});
+
+export class ApprovalPlanPolicyEvaluationError extends ApprovalPlanPolicyEvaluationErrorBase {
+  declare readonly cause: PolicyEvaluationError;
+
+  constructor(options: {
+    bindingId: ApprovalPolicyBindingId;
+    policyKey: ApprovalPolicyKey;
+    cause: PolicyEvaluationError;
+  }) {
+    super({
+      type: "policy_evaluation_failed",
+      bindingId: options.bindingId,
+      policyKey: options.policyKey,
+      cause: options.cause,
+    });
+  }
+}
+
 export type ApprovalPlanEvaluationError =
-  | {
-      type: "binding_evaluation_failed";
-      bindingId: ApprovalPolicyBindingId;
-      cause: ConditionEvaluationError;
-    }
-  | {
-      type: "policy_not_found";
-      bindingId: ApprovalPolicyBindingId;
-      policyKey: ApprovalPolicyKey;
-    }
-  | {
-      type: "policy_evaluation_failed";
-      bindingId: ApprovalPolicyBindingId;
-      policyKey: ApprovalPolicyKey;
-      cause: ConditionEvaluationError;
-    };
+  | ApprovalPlanBindingEvaluationError
+  | ApprovalPlanPolicyNotFoundError
+  | ApprovalPlanPolicyEvaluationError;
 
 export type ApprovalPlanEvaluationResult = Result.Result<
   ApprovalPlanEvaluation,
@@ -113,7 +194,9 @@ export function resolvePolicyBindings(
     if (binding.selector.when) {
       const result = evaluateCondition(binding.selector.when, context);
       if (Result.isFailure(result)) {
-        return Result.fail({ bindingId: binding.id, cause: result.error });
+        return Result.fail(
+          new PolicyBindingResolutionError({ bindingId: binding.id, cause: result.error }),
+        );
       }
       if (result.value.type === "not_matched") continue;
     }
@@ -141,7 +224,7 @@ export function evaluatePolicy(
 
     const result = evaluateCondition(rule.when, context);
     if (Result.isFailure(result)) {
-      return Result.fail({ policyKey: policy.key, cause: result.error });
+      return Result.fail(new PolicyEvaluationError({ policyKey: policy.key, cause: result.error }));
     }
     if (result.value.type === "matched") {
       return Result.succeed({
@@ -190,11 +273,12 @@ export function evaluateApprovalPlan(input: {
 }): ApprovalPlanEvaluationResult {
   const resolved = resolvePolicyBindings(input.bindings, input.context);
   if (Result.isFailure(resolved)) {
-    return Result.fail({
-      type: "binding_evaluation_failed",
-      bindingId: resolved.error.bindingId,
-      cause: resolved.error.cause,
-    });
+    return Result.fail(
+      new ApprovalPlanBindingEvaluationError({
+        bindingId: resolved.error.bindingId,
+        cause: resolved.error,
+      }),
+    );
   }
 
   const policyEvaluations: EvaluatedPolicyBinding[] = [];
@@ -203,21 +287,24 @@ export function evaluateApprovalPlan(input: {
       (candidate) => String(candidate.key) === String(binding.policyKey),
     );
     if (!policy) {
-      return Result.fail({
-        type: "policy_not_found",
-        bindingId: binding.id,
-        policyKey: binding.policyKey,
-      });
+      return Result.fail(
+        new ApprovalPlanPolicyNotFoundError({
+          type: "policy_not_found",
+          bindingId: binding.id,
+          policyKey: binding.policyKey,
+        }),
+      );
     }
 
     const evaluation = evaluatePolicy(policy, input.context);
     if (Result.isFailure(evaluation)) {
-      return Result.fail({
-        type: "policy_evaluation_failed",
-        bindingId: binding.id,
-        policyKey: policy.key,
-        cause: evaluation.error.cause,
-      });
+      return Result.fail(
+        new ApprovalPlanPolicyEvaluationError({
+          bindingId: binding.id,
+          policyKey: policy.key,
+          cause: evaluation.error,
+        }),
+      );
     }
     policyEvaluations.push({ binding, evaluation: evaluation.value });
   }

@@ -1,20 +1,76 @@
 import { Result } from "@praha/byethrow";
+import { ErrorFactory } from "@praha/error-factory";
 
 import type { Condition, ValueExpression } from "./domain/condition.ts";
 import type { JsonValue } from "./domain/json.ts";
 import type { PolicyEvaluationContext } from "./domain/evaluation.ts";
 
-export type ConditionEvaluationError = {
-  code:
-    | "field_not_allowed"
-    | "field_missing"
-    | "invalid_value"
-    | "type_mismatch"
-    | "invalid_number"
-    | "invalid_date";
-  path?: string;
-  message: string;
-};
+export class PolicyFieldNotAllowedError extends ErrorFactory({
+  name: "PolicyFieldNotAllowedError",
+  message: ({ path, reason }) =>
+    reason === "unsafe"
+      ? `安全でないfield pathです: ${path}`
+      : `Policyから参照できないfield pathです: ${path}`,
+  fields: ErrorFactory.fields<{
+    code: "field_not_allowed";
+    path: string;
+    reason: "not_allowed" | "unsafe";
+  }>(),
+}) {}
+
+export class PolicyFieldMissingError extends ErrorFactory({
+  name: "PolicyFieldMissingError",
+  message: ({ path }) => `fieldが存在しません: ${path}`,
+  fields: ErrorFactory.fields<{
+    code: "field_missing";
+    path: string;
+  }>(),
+}) {}
+
+export class PolicyInvalidValueError extends ErrorFactory({
+  name: "PolicyInvalidValueError",
+  message: "Policy評価ではJSONとして表現できる値だけを利用できます。",
+  fields: ErrorFactory.fields<{
+    code: "invalid_value";
+    path: string | undefined;
+  }>(),
+}) {}
+
+export class PolicyTypeMismatchError extends ErrorFactory({
+  name: "PolicyTypeMismatchError",
+  message: ({ detail }) => detail,
+  fields: ErrorFactory.fields<{
+    code: "type_mismatch";
+    path: string | undefined;
+    detail: string;
+  }>(),
+}) {}
+
+export class PolicyInvalidNumberError extends ErrorFactory({
+  name: "PolicyInvalidNumberError",
+  message: "Policy評価では有限かつ安全に表現できる数値だけを利用できます。",
+  fields: ErrorFactory.fields<{
+    code: "invalid_number";
+    path: string | undefined;
+  }>(),
+}) {}
+
+export class PolicyInvalidDateError extends ErrorFactory({
+  name: "PolicyInvalidDateError",
+  message: "nowは有効な日時文字列である必要があります。",
+  fields: ErrorFactory.fields<{
+    code: "invalid_date";
+    path: string;
+  }>(),
+}) {}
+
+export type ConditionEvaluationError =
+  | PolicyFieldNotAllowedError
+  | PolicyFieldMissingError
+  | PolicyInvalidValueError
+  | PolicyTypeMismatchError
+  | PolicyInvalidNumberError
+  | PolicyInvalidDateError;
 
 export type ConditionEvaluation = { type: "matched" } | { type: "not_matched" };
 
@@ -61,11 +117,10 @@ function invalidRuntimeValue(value: unknown, path?: string): ConditionEvaluation
 
   if (typeof value === "number") {
     if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
-      return {
+      return new PolicyInvalidNumberError({
         code: "invalid_number",
         path,
-        message: "Policy評価では有限かつ安全に表現できる数値だけを利用できます。",
-      };
+      });
     }
     return undefined;
   }
@@ -86,29 +141,31 @@ function invalidRuntimeValue(value: unknown, path?: string): ConditionEvaluation
     return undefined;
   }
 
-  return {
+  return new PolicyInvalidValueError({
     code: "invalid_value",
     path,
-    message: "Policy評価ではJSONとして表現できる値だけを利用できます。",
-  };
+  });
 }
 
 function resolveField(path: string, context: PolicyEvaluationContext): ValueResolutionResult {
   if (!isAllowedPolicyFieldPath(path)) {
-    return failed({
-      code: "field_not_allowed",
-      path,
-      message: `Policyから参照できないfield pathです: ${path}`,
-    });
+    return failed(
+      new PolicyFieldNotAllowedError({
+        code: "field_not_allowed",
+        path,
+        reason: "not_allowed",
+      }),
+    );
   }
 
   if (path === "now") {
     if (!Number.isFinite(Date.parse(context.now))) {
-      return failed({
-        code: "invalid_date",
-        path,
-        message: "nowは有効な日時文字列である必要があります。",
-      });
+      return failed(
+        new PolicyInvalidDateError({
+          code: "invalid_date",
+          path,
+        }),
+      );
     }
     return Result.succeed(context.now);
   }
@@ -118,19 +175,22 @@ function resolveField(path: string, context: PolicyEvaluationContext): ValueReso
 
   for (const segment of segments) {
     if (segment === "__proto__" || segment === "prototype" || segment === "constructor") {
-      return failed({
-        code: "field_not_allowed",
-        path,
-        message: `安全でないfield pathです: ${path}`,
-      });
+      return failed(
+        new PolicyFieldNotAllowedError({
+          code: "field_not_allowed",
+          path,
+          reason: "unsafe",
+        }),
+      );
     }
 
     if (typeof current !== "object" || current === null || !Object.hasOwn(current, segment)) {
-      return failed({
-        code: "field_missing",
-        path,
-        message: `fieldが存在しません: ${path}`,
-      });
+      return failed(
+        new PolicyFieldMissingError({
+          code: "field_missing",
+          path,
+        }),
+      );
     }
 
     current = (current as Record<string, unknown>)[segment];
@@ -215,10 +275,13 @@ function evaluateComparison(
     return isMatched ? matched() : notMatched();
   }
 
-  return failed({
-    code: "type_mismatch",
-    message: `順序比較${condition.operator}の左右は同じ比較可能型である必要があります。`,
-  });
+  return failed(
+    new PolicyTypeMismatchError({
+      code: "type_mismatch",
+      path: undefined,
+      detail: `順序比較${condition.operator}の左右は同じ比較可能型である必要があります。`,
+    }),
+  );
 }
 
 export function evaluateCondition(
@@ -273,10 +336,13 @@ export function evaluateCondition(
           ? matched()
           : notMatched();
       }
-      return failed({
-        code: "type_mismatch",
-        message: "containsのcollectionは文字列または配列である必要があります。",
-      });
+      return failed(
+        new PolicyTypeMismatchError({
+          code: "type_mismatch",
+          path: undefined,
+          detail: "containsのcollectionは文字列または配列である必要があります。",
+        }),
+      );
     }
   }
 }
