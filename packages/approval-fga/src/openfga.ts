@@ -140,10 +140,10 @@ export class OpenFgaClient {
     this.listUsersCompleteness = options.listUsersCompleteness;
   }
 
-  private async post(
+  private async postResponse(
     path: string,
     body: unknown,
-  ): Result.ResultAsync<unknown, OpenFgaRequestError> {
+  ): Result.ResultAsync<Response, OpenFgaRequestError> {
     const serialized = serializeJson(body);
     if (Result.isFailure(serialized)) return serialized;
 
@@ -170,7 +170,28 @@ export class OpenFgaClient {
         }),
       );
     }
-    return parseJsonResponse(response.value);
+    return response;
+  }
+
+  private async postJsonObject(
+    path: string,
+    body: unknown,
+  ): Result.ResultAsync<Record<string, unknown>, OpenFgaRequestError> {
+    const response = await this.postResponse(path, body);
+    if (Result.isFailure(response)) return response;
+
+    const parsed = await parseJsonResponse(response.value);
+    if (Result.isFailure(parsed)) return parsed;
+    if (typeof parsed.value !== "object" || parsed.value === null || Array.isArray(parsed.value)) {
+      return Result.fail(
+        new OpenFgaRequestError({
+          code: "invalid_json_response",
+          detail: "OpenFGA responseがJSON objectではありません",
+          retriable: false,
+        }),
+      );
+    }
+    return Result.succeed(parsed.value as Record<string, unknown>);
   }
 
   async check(input: {
@@ -180,7 +201,7 @@ export class OpenFgaClient {
     context?: Record<string, unknown>;
     consistency: AuthorizationConsistency;
   }): Result.ResultAsync<boolean, OpenFgaRequestError> {
-    const response = await this.post(`/stores/${encodeURIComponent(this.storeId)}/check`, {
+    const response = await this.postJsonObject(`/stores/${encodeURIComponent(this.storeId)}/check`, {
       authorization_model_id: this.authorizationModelId,
       tuple_key: {
         user: input.user,
@@ -191,12 +212,7 @@ export class OpenFgaClient {
       consistency: consistencyValue(input.consistency),
     });
     if (Result.isFailure(response)) return response;
-    if (
-      typeof response.value !== "object" ||
-      response.value === null ||
-      !("allowed" in response.value) ||
-      typeof response.value.allowed !== "boolean"
-    ) {
+    if (!("allowed" in response.value) || typeof response.value.allowed !== "boolean") {
       return Result.fail(
         new OpenFgaRequestError({
           code: "invalid_check_response",
@@ -224,21 +240,19 @@ export class OpenFgaClient {
         }),
       );
     }
-    const response = await this.post(`/stores/${encodeURIComponent(this.storeId)}/list-users`, {
-      authorization_model_id: this.authorizationModelId,
-      object,
-      relation: String(input.relation),
-      user_filters: [{ type: "user" }],
-      ...(input.context ? { context: input.context } : {}),
-      consistency: consistencyValue(input.consistency),
-    });
+    const response = await this.postJsonObject(
+      `/stores/${encodeURIComponent(this.storeId)}/list-users`,
+      {
+        authorization_model_id: this.authorizationModelId,
+        object,
+        relation: String(input.relation),
+        user_filters: [{ type: "user" }],
+        ...(input.context ? { context: input.context } : {}),
+        consistency: consistencyValue(input.consistency),
+      },
+    );
     if (Result.isFailure(response)) return response;
-    if (
-      typeof response.value !== "object" ||
-      response.value === null ||
-      !("users" in response.value) ||
-      !Array.isArray(response.value.users)
-    ) {
+    if (!("users" in response.value) || !Array.isArray(response.value.users)) {
       return Result.fail(
         new OpenFgaRequestError({
           code: "invalid_list_users_response",
@@ -281,7 +295,7 @@ export class OpenFgaClient {
     writes?: OpenFgaTupleKey[];
     deletes?: OpenFgaTupleKey[];
   }): Result.ResultAsync<void, OpenFgaRequestError> {
-    const response = await this.post(`/stores/${encodeURIComponent(this.storeId)}/write`, {
+    const response = await this.postResponse(`/stores/${encodeURIComponent(this.storeId)}/write`, {
       authorization_model_id: this.authorizationModelId,
       ...(input.writes?.length ? { writes: { tuple_keys: input.writes } } : {}),
       ...(input.deletes?.length ? { deletes: { tuple_keys: input.deletes } } : {}),
