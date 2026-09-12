@@ -797,12 +797,12 @@ export async function materializeApprovalPlan(input: {
     input.policyBindings.map((source) => source.binding),
     input.context,
   );
-  if (bindingResolution.type === "error") {
+  if (Result.isFailure(bindingResolution)) {
     return asMaterializationError(
       new MaterializationFailure(
         "binding_resolution_error",
-        bindingResolution.error.message,
-        bindingResolution.error.path,
+        bindingResolution.error.cause.message,
+        bindingResolution.error.cause.path,
       ),
     );
   }
@@ -810,7 +810,7 @@ export async function materializeApprovalPlan(input: {
   const policyBindingSnapshots: PolicyBindingSnapshot[] = [];
   const materializedFlows: MaterializedFlow[] = [];
 
-  for (const binding of bindingResolution.bindings) {
+  for (const binding of bindingResolution.value) {
     const source = byBindingId.get(String(binding.id));
     if (!source) {
       return asMaterializationError(
@@ -822,12 +822,12 @@ export async function materializeApprovalPlan(input: {
     }
 
     const evaluation = evaluatePolicy(source.policy, input.context);
-    if (evaluation.type === "error") {
+    if (Result.isFailure(evaluation)) {
       return asMaterializationError(
         new MaterializationFailure(
           "policy_evaluation_error",
-          evaluation.error.message,
-          evaluation.error.path,
+          evaluation.error.cause.message,
+          evaluation.error.cause.path,
         ),
       );
     }
@@ -840,8 +840,12 @@ export async function materializeApprovalPlan(input: {
     if (Result.isFailure(selector)) return asMaterializationError(selector.error);
 
     const outcome: PolicyBindingSnapshotOutcome =
-      evaluation.type === "matched"
-        ? { type: "matched", ruleKey: evaluation.ruleKey, flowType: evaluation.flow.type }
+      evaluation.value.type === "matched"
+        ? {
+            type: "matched",
+            ruleKey: evaluation.value.ruleKey,
+            flowType: evaluation.value.flow.type,
+          }
         : { type: "not_matched" };
     policyBindingSnapshots.push({
       bindingId: binding.id,
@@ -856,9 +860,9 @@ export async function materializeApprovalPlan(input: {
       outcome,
     });
 
-    if (evaluation.type === "matched" && evaluation.flow.type !== "none") {
+    if (evaluation.value.type === "matched" && evaluation.value.flow.type !== "none") {
       const materialized = await materializeFlow(
-        evaluation.flow,
+        evaluation.value.flow,
         {
           policyBindingId: binding.id,
           policyKey: binding.policyKey,

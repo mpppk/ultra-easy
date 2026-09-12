@@ -1,3 +1,5 @@
+import { Result } from "@praha/byethrow";
+
 import type { ApprovalPolicyBinding, ApprovalPolicyDefinition } from "./domain/policy.ts";
 import type { ApprovalPolicyBindingId, ApprovalPolicyKey } from "./domain/brand.ts";
 import type { FlowConstraints, FlowDefinition } from "./domain/flow.ts";
@@ -5,52 +7,65 @@ import type { PolicyEvaluationContext } from "./domain/evaluation.ts";
 import type { ConditionEvaluationError } from "./condition-evaluator.ts";
 import { evaluateCondition } from "./condition-evaluator.ts";
 
-export type PolicyEvaluationResult =
+export type PolicyEvaluation =
   | {
       type: "matched";
       policyKey: ApprovalPolicyKey;
       ruleKey: ApprovalPolicyDefinition["rules"][number]["key"];
       flow: FlowDefinition;
     }
-  | { type: "not_matched"; policyKey: ApprovalPolicyKey }
-  | { type: "error"; policyKey: ApprovalPolicyKey; error: ConditionEvaluationError };
+  | { type: "not_matched"; policyKey: ApprovalPolicyKey };
 
-export type PolicyBindingResolutionResult =
-  | { type: "resolved"; bindings: ApprovalPolicyBinding[] }
-  | {
-      type: "error";
-      bindingId: ApprovalPolicyBindingId;
-      error: ConditionEvaluationError;
-    };
+export type PolicyEvaluationError = {
+  policyKey: ApprovalPolicyKey;
+  cause: ConditionEvaluationError;
+};
+
+export type PolicyEvaluationResult = Result.Result<PolicyEvaluation, PolicyEvaluationError>;
+
+export type PolicyBindingResolutionError = {
+  bindingId: ApprovalPolicyBindingId;
+  cause: ConditionEvaluationError;
+};
+
+export type PolicyBindingResolutionResult = Result.Result<
+  ApprovalPolicyBinding[],
+  PolicyBindingResolutionError
+>;
 
 export type EvaluatedPolicyBinding = {
   binding: ApprovalPolicyBinding;
-  evaluation: PolicyEvaluationResult;
+  evaluation: PolicyEvaluation;
 };
 
-export type ApprovalFlowCompilationResult =
-  | { type: "compiled"; flow: FlowDefinition }
-  | {
-      type: "error";
-      bindingId: ApprovalPolicyBindingId;
-      policyKey: ApprovalPolicyKey;
-      error: ConditionEvaluationError;
-    };
+export type ApprovalPlanEvaluation = {
+  flow: FlowDefinition;
+  applicableBindings: ApprovalPolicyBinding[];
+  policyEvaluations: EvaluatedPolicyBinding[];
+};
 
-export type ApprovalPlanEvaluationResult =
+export type ApprovalPlanEvaluationError =
   | {
-      type: "compiled";
-      flow: FlowDefinition;
-      applicableBindings: ApprovalPolicyBinding[];
-      policyEvaluations: EvaluatedPolicyBinding[];
+      type: "binding_evaluation_failed";
+      bindingId: ApprovalPolicyBindingId;
+      cause: ConditionEvaluationError;
     }
   | {
-      type: "error";
-      stage: "binding" | "policy" | "policy_resolution";
-      bindingId?: ApprovalPolicyBindingId;
-      policyKey?: ApprovalPolicyKey;
-      error: ConditionEvaluationError | { code: "policy_not_found"; message: string };
+      type: "policy_not_found";
+      bindingId: ApprovalPolicyBindingId;
+      policyKey: ApprovalPolicyKey;
+    }
+  | {
+      type: "policy_evaluation_failed";
+      bindingId: ApprovalPolicyBindingId;
+      policyKey: ApprovalPolicyKey;
+      cause: ConditionEvaluationError;
     };
+
+export type ApprovalPlanEvaluationResult = Result.Result<
+  ApprovalPlanEvaluation,
+  ApprovalPlanEvaluationError
+>;
 
 function compareStrings(left: string, right: string): number {
   if (left < right) return -1;
@@ -97,16 +112,16 @@ export function resolvePolicyBindings(
 
     if (binding.selector.when) {
       const result = evaluateCondition(binding.selector.when, context);
-      if (result.type === "error") {
-        return { type: "error", bindingId: binding.id, error: result };
+      if (Result.isFailure(result)) {
+        return Result.fail({ bindingId: binding.id, cause: result.error });
       }
-      if (result.type === "not_matched") continue;
+      if (result.value.type === "not_matched") continue;
     }
 
     applicable.push(binding);
   }
 
-  return { type: "resolved", bindings: applicable.sort(compareBindings) };
+  return Result.succeed(applicable.sort(compareBindings));
 }
 
 /** 単一Policyを配列順で評価し、最初に一致したRuleだけを採用する。 */
@@ -116,19 +131,29 @@ export function evaluatePolicy(
 ): PolicyEvaluationResult {
   for (const rule of policy.rules) {
     if (rule.when.type === "always") {
-      return { type: "matched", policyKey: policy.key, ruleKey: rule.key, flow: rule.flow };
+      return Result.succeed({
+        type: "matched",
+        policyKey: policy.key,
+        ruleKey: rule.key,
+        flow: rule.flow,
+      });
     }
 
     const result = evaluateCondition(rule.when, context);
-    if (result.type === "error") {
-      return { type: "error", policyKey: policy.key, error: result };
+    if (Result.isFailure(result)) {
+      return Result.fail({ policyKey: policy.key, cause: result.error });
     }
-    if (result.type === "matched") {
-      return { type: "matched", policyKey: policy.key, ruleKey: rule.key, flow: rule.flow };
+    if (result.value.type === "matched") {
+      return Result.succeed({
+        type: "matched",
+        policyKey: policy.key,
+        ruleKey: rule.key,
+        flow: rule.flow,
+      });
     }
   }
 
-  return { type: "not_matched", policyKey: policy.key };
+  return Result.succeed({ type: "not_matched", policyKey: policy.key });
 }
 
 /**
@@ -138,18 +163,7 @@ export function evaluatePolicy(
 export function compileApprovalFlow(
   evaluations: readonly EvaluatedPolicyBinding[],
   defaultFlowConstraints?: FlowConstraints,
-): ApprovalFlowCompilationResult {
-  for (const item of evaluations) {
-    if (item.evaluation.type === "error") {
-      return {
-        type: "error",
-        bindingId: item.binding.id,
-        policyKey: item.evaluation.policyKey,
-        error: item.evaluation.error,
-      };
-    }
-  }
-
+): FlowDefinition {
   const flows = [...evaluations]
     .sort((left, right) => compareBindings(left.binding, right.binding))
     .flatMap((item) =>
@@ -158,16 +172,13 @@ export function compileApprovalFlow(
         : [],
     );
 
-  if (flows.length === 0) return { type: "compiled", flow: { type: "none" } };
-  if (flows.length === 1) return { type: "compiled", flow: flows[0] as FlowDefinition };
+  if (flows.length === 0) return { type: "none" };
+  if (flows.length === 1) return flows[0] as FlowDefinition;
 
   return {
-    type: "compiled",
-    flow: {
-      type: "serial",
-      children: flows,
-      ...(defaultFlowConstraints ? { constraints: defaultFlowConstraints } : {}),
-    },
+    type: "serial",
+    children: flows,
+    ...(defaultFlowConstraints ? { constraints: defaultFlowConstraints } : {}),
   };
 }
 
@@ -178,64 +189,47 @@ export function evaluateApprovalPlan(input: {
   policies: readonly ApprovalPolicyDefinition[];
 }): ApprovalPlanEvaluationResult {
   const resolved = resolvePolicyBindings(input.bindings, input.context);
-  if (resolved.type === "error") {
-    return {
-      type: "error",
-      stage: "binding",
-      bindingId: resolved.bindingId,
-      error: resolved.error,
-    };
+  if (Result.isFailure(resolved)) {
+    return Result.fail({
+      type: "binding_evaluation_failed",
+      bindingId: resolved.error.bindingId,
+      cause: resolved.error.cause,
+    });
   }
 
   const policyEvaluations: EvaluatedPolicyBinding[] = [];
-  for (const binding of resolved.bindings) {
+  for (const binding of resolved.value) {
     const policy = input.policies.find(
       (candidate) => String(candidate.key) === String(binding.policyKey),
     );
     if (!policy) {
-      return {
-        type: "error",
-        stage: "policy_resolution",
+      return Result.fail({
+        type: "policy_not_found",
         bindingId: binding.id,
         policyKey: binding.policyKey,
-        error: {
-          code: "policy_not_found",
-          message: `Bindingが参照するPolicyが見つかりません: ${String(binding.policyKey)}`,
-        },
-      };
+      });
     }
 
     const evaluation = evaluatePolicy(policy, input.context);
-    if (evaluation.type === "error") {
-      return {
-        type: "error",
-        stage: "policy",
+    if (Result.isFailure(evaluation)) {
+      return Result.fail({
+        type: "policy_evaluation_failed",
         bindingId: binding.id,
         policyKey: policy.key,
-        error: evaluation.error,
-      };
+        cause: evaluation.error.cause,
+      });
     }
-    policyEvaluations.push({ binding, evaluation });
+    policyEvaluations.push({ binding, evaluation: evaluation.value });
   }
 
-  const compiled = compileApprovalFlow(
+  const flow = compileApprovalFlow(
     policyEvaluations,
     input.context.organization.defaultFlowConstraints,
   );
-  if (compiled.type === "error") {
-    return {
-      type: "error",
-      stage: "policy",
-      bindingId: compiled.bindingId,
-      policyKey: compiled.policyKey,
-      error: compiled.error,
-    };
-  }
 
-  return {
-    type: "compiled",
-    flow: compiled.flow,
-    applicableBindings: resolved.bindings,
+  return Result.succeed({
+    flow,
+    applicableBindings: resolved.value,
     policyEvaluations,
-  };
+  });
 }

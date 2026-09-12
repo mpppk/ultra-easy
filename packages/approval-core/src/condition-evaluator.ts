@@ -1,9 +1,10 @@
+import { Result } from "@praha/byethrow";
+
 import type { Condition, ValueExpression } from "./domain/condition.ts";
 import type { JsonValue } from "./domain/json.ts";
 import type { PolicyEvaluationContext } from "./domain/evaluation.ts";
 
 export type ConditionEvaluationError = {
-  type: "error";
   code:
     | "field_not_allowed"
     | "field_missing"
@@ -15,12 +16,14 @@ export type ConditionEvaluationError = {
   message: string;
 };
 
-export type ConditionEvaluationResult =
-  | { type: "matched" }
-  | { type: "not_matched" }
-  | ConditionEvaluationError;
+export type ConditionEvaluation = { type: "matched" } | { type: "not_matched" };
 
-type ValueResolutionResult = { type: "resolved"; value: JsonValue } | ConditionEvaluationError;
+export type ConditionEvaluationResult = Result.Result<
+  ConditionEvaluation,
+  ConditionEvaluationError
+>;
+
+type ValueResolutionResult = Result.Result<JsonValue, ConditionEvaluationError>;
 
 const ALLOWED_FIELD_PREFIXES = [
   "action.input",
@@ -30,6 +33,14 @@ const ALLOWED_FIELD_PREFIXES = [
   "organization.settings",
   "attributes",
 ] as const;
+
+const matched = (): ConditionEvaluationResult => Result.succeed({ type: "matched" as const });
+const notMatched = (): ConditionEvaluationResult =>
+  Result.succeed({ type: "not_matched" as const });
+
+function failed<T>(error: ConditionEvaluationError): Result.Result<T, ConditionEvaluationError> {
+  return Result.fail(error);
+}
 
 export function isAllowedPolicyFieldPath(path: string): boolean {
   if (path === "now") {
@@ -51,7 +62,6 @@ function invalidRuntimeValue(value: unknown, path?: string): ConditionEvaluation
   if (typeof value === "number") {
     if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
       return {
-        type: "error",
         code: "invalid_number",
         path,
         message: "Policy評価では有限かつ安全に表現できる数値だけを利用できます。",
@@ -77,7 +87,6 @@ function invalidRuntimeValue(value: unknown, path?: string): ConditionEvaluation
   }
 
   return {
-    type: "error",
     code: "invalid_value",
     path,
     message: "Policy評価ではJSONとして表現できる値だけを利用できます。",
@@ -86,24 +95,22 @@ function invalidRuntimeValue(value: unknown, path?: string): ConditionEvaluation
 
 function resolveField(path: string, context: PolicyEvaluationContext): ValueResolutionResult {
   if (!isAllowedPolicyFieldPath(path)) {
-    return {
-      type: "error",
+    return failed({
       code: "field_not_allowed",
       path,
       message: `Policyから参照できないfield pathです: ${path}`,
-    };
+    });
   }
 
   if (path === "now") {
     if (!Number.isFinite(Date.parse(context.now))) {
-      return {
-        type: "error",
+      return failed({
         code: "invalid_date",
         path,
         message: "nowは有効な日時文字列である必要があります。",
-      };
+      });
     }
-    return { type: "resolved", value: context.now };
+    return Result.succeed(context.now);
   }
 
   const segments = path.split(".");
@@ -111,30 +118,28 @@ function resolveField(path: string, context: PolicyEvaluationContext): ValueReso
 
   for (const segment of segments) {
     if (segment === "__proto__" || segment === "prototype" || segment === "constructor") {
-      return {
-        type: "error",
+      return failed({
         code: "field_not_allowed",
         path,
         message: `安全でないfield pathです: ${path}`,
-      };
+      });
     }
 
     if (typeof current !== "object" || current === null || !Object.hasOwn(current, segment)) {
-      return {
-        type: "error",
+      return failed({
         code: "field_missing",
         path,
         message: `fieldが存在しません: ${path}`,
-      };
+      });
     }
 
     current = (current as Record<string, unknown>)[segment];
   }
 
   const error = invalidRuntimeValue(current, path);
-  if (error) return error;
+  if (error) return failed(error);
 
-  return { type: "resolved", value: current as JsonValue };
+  return Result.succeed(current as JsonValue);
 }
 
 function resolveValue(
@@ -146,8 +151,8 @@ function resolveValue(
   }
 
   const error = invalidRuntimeValue(expression.value);
-  if (error) return error;
-  return { type: "resolved", value: expression.value };
+  if (error) return failed(error);
+  return Result.succeed(expression.value);
 }
 
 function equalJson(left: JsonValue, right: JsonValue): boolean {
@@ -177,19 +182,17 @@ function evaluateComparison(
   context: PolicyEvaluationContext,
 ): ConditionEvaluationResult {
   const left = resolveValue(condition.left, context);
-  if (left.type === "error") return left;
+  if (Result.isFailure(left)) return left;
   const right = resolveValue(condition.right, context);
-  if (right.type === "error") return right;
+  if (Result.isFailure(right)) return right;
 
   if (condition.operator === "eq" || condition.operator === "ne") {
     const equal = equalJson(left.value, right.value);
-    return (condition.operator === "eq" ? equal : !equal)
-      ? { type: "matched" }
-      : { type: "not_matched" };
+    return (condition.operator === "eq" ? equal : !equal) ? matched() : notMatched();
   }
 
   if (typeof left.value === "number" && typeof right.value === "number") {
-    const matched =
+    const isMatched =
       condition.operator === "gt"
         ? left.value > right.value
         : condition.operator === "gte"
@@ -197,11 +200,11 @@ function evaluateComparison(
           : condition.operator === "lt"
             ? left.value < right.value
             : left.value <= right.value;
-    return matched ? { type: "matched" } : { type: "not_matched" };
+    return isMatched ? matched() : notMatched();
   }
 
   if (typeof left.value === "string" && typeof right.value === "string") {
-    const matched =
+    const isMatched =
       condition.operator === "gt"
         ? left.value > right.value
         : condition.operator === "gte"
@@ -209,14 +212,13 @@ function evaluateComparison(
           : condition.operator === "lt"
             ? left.value < right.value
             : left.value <= right.value;
-    return matched ? { type: "matched" } : { type: "not_matched" };
+    return isMatched ? matched() : notMatched();
   }
 
-  return {
-    type: "error",
+  return failed({
     code: "type_mismatch",
     message: `順序比較${condition.operator}の左右は同じ比較可能型である必要があります。`,
-  };
+  });
 }
 
 export function evaluateCondition(
@@ -228,60 +230,53 @@ export function evaluateCondition(
       return evaluateComparison(condition, context);
     case "and": {
       const results = condition.conditions.map((child) => evaluateCondition(child, context));
-      const error = results.find(
-        (result): result is ConditionEvaluationError => result.type === "error",
-      );
+      const error = results.find(Result.isFailure);
       if (error) return error;
-      return results.every((result) => result.type === "matched")
-        ? { type: "matched" }
-        : { type: "not_matched" };
+      return results.every((result) => Result.isSuccess(result) && result.value.type === "matched")
+        ? matched()
+        : notMatched();
     }
     case "or": {
       const results = condition.conditions.map((child) => evaluateCondition(child, context));
-      const error = results.find(
-        (result): result is ConditionEvaluationError => result.type === "error",
-      );
+      const error = results.find(Result.isFailure);
       if (error) return error;
-      return results.some((result) => result.type === "matched")
-        ? { type: "matched" }
-        : { type: "not_matched" };
+      return results.some((result) => Result.isSuccess(result) && result.value.type === "matched")
+        ? matched()
+        : notMatched();
     }
     case "not": {
       const result = evaluateCondition(condition.condition, context);
-      if (result.type === "error") return result;
-      return result.type === "matched" ? { type: "not_matched" } : { type: "matched" };
+      if (Result.isFailure(result)) return result;
+      return result.value.type === "matched" ? notMatched() : matched();
     }
     case "in": {
       const value = resolveValue(condition.value, context);
-      if (value.type === "error") return value;
+      if (Result.isFailure(value)) return value;
       for (const candidateExpression of condition.candidates) {
         const candidate = resolveValue(candidateExpression, context);
-        if (candidate.type === "error") return candidate;
-        if (equalJson(value.value, candidate.value)) return { type: "matched" };
+        if (Result.isFailure(candidate)) return candidate;
+        if (equalJson(value.value, candidate.value)) return matched();
       }
-      return { type: "not_matched" };
+      return notMatched();
     }
     case "contains": {
       const collection = resolveValue(condition.collection, context);
-      if (collection.type === "error") return collection;
+      if (Result.isFailure(collection)) return collection;
       const value = resolveValue(condition.value, context);
-      if (value.type === "error") return value;
+      if (Result.isFailure(value)) return value;
 
       if (typeof collection.value === "string" && typeof value.value === "string") {
-        return collection.value.includes(value.value)
-          ? { type: "matched" }
-          : { type: "not_matched" };
+        return collection.value.includes(value.value) ? matched() : notMatched();
       }
       if (Array.isArray(collection.value)) {
         return collection.value.some((item) => equalJson(item, value.value))
-          ? { type: "matched" }
-          : { type: "not_matched" };
+          ? matched()
+          : notMatched();
       }
-      return {
-        type: "error",
+      return failed({
         code: "type_mismatch",
         message: "containsのcollectionは文字列または配列である必要があります。",
-      };
+      });
     }
   }
 }
