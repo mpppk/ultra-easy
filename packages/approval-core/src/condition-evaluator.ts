@@ -35,7 +35,8 @@ const ALLOWED_FIELD_PREFIXES = [
 ] as const;
 
 const matched = (): ConditionEvaluationResult => Result.succeed({ type: "matched" as const });
-const notMatched = (): ConditionEvaluationResult => Result.succeed({ type: "not_matched" as const });
+const notMatched = (): ConditionEvaluationResult =>
+  Result.succeed({ type: "not_matched" as const });
 
 function failed<T>(error: ConditionEvaluationError): Result.Result<T, ConditionEvaluationError> {
   return Result.fail(error);
