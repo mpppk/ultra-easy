@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { beforeEach, describe, expect, it, assert } from "vite-plus/test";
+import { assert, beforeEach, describe, expect, it } from "vite-plus/test";
 import { env } from "cloudflare:workers";
 import { introspectWorkflowInstance } from "cloudflare:test";
 
@@ -22,6 +22,7 @@ import type {
   MaterializedFlow,
   MaterializedStepSource,
   OrganizationId,
+  SchemaKey,
   Sha256Digest,
   UserId,
 } from "@app/approval-core";
@@ -30,25 +31,7 @@ import {
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
 
-import type { ActionWorkflowEnv, ActionWorkflowParams } from "./workflow.ts";
-
-type WorkflowInstanceLike = {
-  sendEvent(input: { type: string; payload: unknown }): Promise<void>;
-  pause(): Promise<void>;
-  resume(): Promise<void>;
-  status(): Promise<{ status: string }>;
-};
-
-type WorkflowBindingLike = {
-  create(input: { id: string; params: ActionWorkflowParams }): Promise<WorkflowInstanceLike>;
-  get(id: string): Promise<WorkflowInstanceLike> | WorkflowInstanceLike;
-};
-
-declare module "cloudflare:workers" {
-  interface ProvidedEnv extends ActionWorkflowEnv {
-    ACTION_WORKFLOW: WorkflowBindingLike;
-  }
-}
+import type { ActionWorkflowParams } from "./workflow.ts";
 
 const organizationId = "organization:workflow-test" as OrganizationId;
 const bindingId = "binding:workflow-test" as ApprovalPolicyBindingId;
@@ -136,7 +119,7 @@ async function validPlan(
       key: "action:workflow" as MaterializedApprovalPlan["action"]["definition"]["key"],
       version: 1,
       actionType: "workflow" as MaterializedApprovalPlan["action"]["definition"]["actionType"],
-      inputSchema: { key: "schema:workflow", version: 1 },
+      inputSchema: { key: "schema:workflow" as SchemaKey, version: 1 },
       executorKey:
         "executor:workflow" as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
     },
@@ -235,7 +218,7 @@ async function createInstance(plan: MaterializedApprovalPlan, id: string) {
 }
 
 async function expectCompleted(instanceId: string, status: string) {
-  const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW as never, instanceId);
+  const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, instanceId);
   await introspector.waitForStatus("complete");
   expect(await introspector.getOutput()).toMatchObject({ type: "completed", status });
   await introspector.dispose();
@@ -302,7 +285,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await savePlan(plan);
 
     const id = "cf-resume";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW as never, id);
+    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
     const instance = await createInstance(plan, id);
     await introspector.waitForStatus("waiting");
     await instance.pause();
@@ -324,7 +307,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await savePlan(plan);
 
     const id = "cf-retry";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW as never, id);
+    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
       await modifier.mockStepError(
@@ -356,7 +339,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await savePlan(plan);
 
     const id = "cf-timeout";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW as never, id);
+    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.forceEventTimeout({ name: "wait for approval decision 0" });
     });
@@ -378,7 +361,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
         approvalPlanChecksum: `sha256:${"f".repeat(64)}` as ApprovalPlanChecksum,
       },
     });
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW as never, id);
+    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
     await introspector.waitForStatus("complete");
     expect(await introspector.getOutput()).toMatchObject({
       type: "failed",
@@ -397,16 +380,12 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     expect(new TextEncoder().encode(JSON.stringify(params)).byteLength).toBeLessThan(1024);
 
     const id = "cf-payload";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW as never, id);
+    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
     await env.ACTION_WORKFLOW.create({ id, params });
     await introspector.waitForStatus("complete");
     expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
-    const initialized = await introspector.waitForStepResult({
-      name: "initialize approval runtime",
-    });
-    expect(new TextEncoder().encode(JSON.stringify(initialized)).byteLength).toBeLessThan(
-      1024 * 1024,
-    );
+    const initialized = await introspector.waitForStepResult({ name: "initialize approval runtime" });
+    expect(new TextEncoder().encode(JSON.stringify(initialized)).byteLength).toBeLessThan(1024 * 1024);
     await introspector.dispose();
   });
 });
