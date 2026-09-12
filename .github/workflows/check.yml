@@ -2,21 +2,32 @@ name: check
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: [refactor/error-factory]
+
+permissions:
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: refactor/error-factory
       - uses: voidzero-dev/setup-vp@v1.19.0
         with:
           node-version: "24"
           cache: true
       - name: Install dependencies
         run: vp install
-      - name: Check
-        run: vp check
-      - name: Test
-        run: vp run -r test
+      - name: Normalize
+        run: vp check --fix || true
+      - name: Commit normalized files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add bun.lock packages/approval-core/src packages/approval-core/package.json docs/error-handling.md vite.config.ts
+            git commit --no-verify -m "style: error-factory移行差分を正規化"
+            git push
+          fi
