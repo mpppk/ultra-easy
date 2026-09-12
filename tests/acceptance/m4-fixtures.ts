@@ -124,7 +124,11 @@ export function relationStep(
   };
 }
 
-export function plan(flow: MaterializedFlow, suffix: string, version = 1): MaterializedApprovalPlan {
+export function plan(
+  flow: MaterializedFlow,
+  suffix: string,
+  version = 1,
+): MaterializedApprovalPlan {
   const actionRequestId = branded<ActionRequestId>(`action-request:${suffix}`);
   const organizationId = branded<OrganizationId>("org:m4");
   return {

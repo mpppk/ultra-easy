@@ -19,8 +19,7 @@ import type {
 
 export class ApprovalRuntimeNotFoundError extends ErrorFactory({
   name: "ApprovalRuntimeNotFoundError",
-  message: ({ actionRequestId }) =>
-    `Approval Runtimeが見つかりません: ${String(actionRequestId)}`,
+  message: ({ actionRequestId }) => `Approval Runtimeが見つかりません: ${String(actionRequestId)}`,
   fields: ErrorFactory.fields<{
     code: "approval_runtime_not_found";
     actionRequestId: ActionRequestId;

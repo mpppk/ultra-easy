@@ -35,13 +35,17 @@ const firstRuntimeRow = Result.fn({
   try: async (statement: D1PreparedStatementLike): Promise<StoredRuntimeProjectionRow | null> =>
     statement.first<StoredRuntimeProjectionRow>(),
   catch: (error): ApprovalRuntimeProjectionRepositoryError =>
-    repositoryError(error instanceof Error ? error.message : "D1 runtime projectionの取得に失敗しました"),
+    repositoryError(
+      error instanceof Error ? error.message : "D1 runtime projectionの取得に失敗しました",
+    ),
 });
 
 const serializeJson = Result.fn({
   try: (value: unknown): string => JSON.stringify(value),
   catch: (error): ApprovalRuntimeProjectionRepositoryError =>
-    repositoryError(error instanceof Error ? error.message : "runtime projectionをserializeできません"),
+    repositoryError(
+      error instanceof Error ? error.message : "runtime projectionをserializeできません",
+    ),
 });
 
 const parseState = Result.fn({

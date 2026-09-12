@@ -89,12 +89,7 @@ export async function activateReadyNode(
       const childStatus = flowStatus(child, context.state);
       if (childStatus === "approved") continue;
       if (childStatus === "not_started" || childStatus === "pending") {
-        return activateReadyNode(
-          child,
-          `${path}.children[${index}]`,
-          distinctScopeId,
-          context,
-        );
+        return activateReadyNode(child, `${path}.children[${index}]`, distinctScopeId, context);
       }
       return Result.succeed(undefined);
     }

@@ -144,7 +144,9 @@ describe("D1ApprovalRuntimeProjectionRepository", () => {
   it("Decision後のstate/task projectionを更新する", async () => {
     const { repository, sqlite } = createRepository();
     assert(Result.isSuccess(await repository.replace({ organizationId, state: state() })));
-    assert(Result.isSuccess(await repository.replace({ organizationId, state: state("approved") })));
+    assert(
+      Result.isSuccess(await repository.replace({ organizationId, state: state("approved") })),
+    );
 
     const loaded = await repository.load({ organizationId, actionRequestId });
     assert(Result.isSuccess(loaded));

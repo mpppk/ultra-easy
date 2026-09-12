@@ -10,10 +10,7 @@ import type {
   OrganizationId,
   UserId,
 } from "../domain/brand.ts";
-import type {
-  MaterializedApprovalPlan,
-  ResolvedApproverTarget,
-} from "../materialization.ts";
+import type { MaterializedApprovalPlan, ResolvedApproverTarget } from "../materialization.ts";
 
 export type ApprovalDecisionValue = "approve" | "reject";
 export type ApprovalTaskRuntimeStatus =
@@ -78,7 +75,9 @@ export interface DurableRuntime<RuntimeFailure extends Error> {
     actionRequestId: ActionRequestId;
     now: string;
   }): Result.ResultAsync<ApprovalRuntimeState, RuntimeFailure>;
-  load(actionRequestId: ActionRequestId): Result.ResultAsync<ApprovalRuntimeState | null, RuntimeFailure>;
+  load(
+    actionRequestId: ActionRequestId,
+  ): Result.ResultAsync<ApprovalRuntimeState | null, RuntimeFailure>;
 }
 
 export class ApprovalRuntimeProjectionRepositoryError extends ErrorFactory({

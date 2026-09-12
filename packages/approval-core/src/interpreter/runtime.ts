@@ -1,15 +1,9 @@
 import { Result } from "@praha/byethrow";
 
-import {
-  ApproverResolverProviderError,
-  checkApproverTarget,
-} from "../approver-resolver.ts";
+import { ApproverResolverProviderError, checkApproverTarget } from "../approver-resolver.ts";
 import type { ApproverResolver } from "../approver-resolver.ts";
 import type { UserId } from "../domain/brand.ts";
-import type {
-  MaterializedApprovalPlan,
-  MaterializedApprovalStep,
-} from "../materialization.ts";
+import type { MaterializedApprovalPlan, MaterializedApprovalStep } from "../materialization.ts";
 import { activateReadyNode } from "./activation.ts";
 import {
   ApprovalCandidateRejectedError,

@@ -60,9 +60,7 @@ export function taskForStep(
   state: ApprovalRuntimeState,
   materializedStepId: MaterializedStepId,
 ): ApprovalTaskRuntimeState | undefined {
-  return state.tasks.find(
-    (task) => String(task.materializedStepId) === String(materializedStepId),
-  );
+  return state.tasks.find((task) => String(task.materializedStepId) === String(materializedStepId));
 }
 
 export function findStep(

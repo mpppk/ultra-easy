@@ -98,8 +98,7 @@ export class ApprovalDistinctApproverViolationError extends ErrorFactory({
 
 export class ApprovalCommentRequiredError extends ErrorFactory({
   name: "ApprovalCommentRequiredError",
-  message: ({ decision, taskId }) =>
-    `${decision} Decisionにはcommentが必要です: ${String(taskId)}`,
+  message: ({ decision, taskId }) => `${decision} Decisionにはcommentが必要です: ${String(taskId)}`,
   fields: ErrorFactory.fields<{
     code: "approval_comment_required";
     taskId: ApprovalTaskId;
