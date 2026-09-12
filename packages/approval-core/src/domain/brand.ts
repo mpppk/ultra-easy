@@ -31,6 +31,7 @@ export type ApprovalPolicyKey = Brand<string, "ApprovalPolicyKey">;
 export type ApprovalPolicyBindingId = Brand<string, "ApprovalPolicyBindingId">;
 export type ApprovalRuleKey = Brand<string, "ApprovalRuleKey">;
 export type ApprovalStepKey = Brand<string, "ApprovalStepKey">;
+export type ApprovalTaskId = Brand<string, "ApprovalTaskId">;
 export type MaterializedStepId = Brand<string, "MaterializedStepId">;
 export type SnapshotApproverCohortId = Brand<string, "SnapshotApproverCohortId">;
 

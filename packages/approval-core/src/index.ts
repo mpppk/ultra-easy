@@ -1,5 +1,7 @@
 export type * from "./domain/index.ts";
 export type * from "./action-definition.ts";
+export * from "./approver-resolver.ts";
+export * from "./authorization.ts";
 export * from "./builder.ts";
 export * from "./canonical-json.ts";
 export * from "./condition-evaluator.ts";
