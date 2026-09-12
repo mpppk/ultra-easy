@@ -26,7 +26,10 @@ function noApprovalPlan(): MaterializedApprovalPlan {
         key: "action:test" as MaterializedApprovalPlan["action"]["definition"]["key"],
         version: 1,
         actionType: "test" as MaterializedApprovalPlan["action"]["definition"]["actionType"],
-        inputSchema: { key: "schema:test", version: 1 },
+        inputSchema: {
+          key: "schema:test" as MaterializedApprovalPlan["action"]["definition"]["inputSchema"]["key"],
+          version: 1,
+        },
         executorKey:
           "executor:test" as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
       },
