@@ -7,20 +7,20 @@
     {
       "binding": "DB",
       "database_name": "ultra-easy-approval-runtime-test",
-      "database_id": "00000000-0000-0000-0000-000000000001"
-    }
+      "database_id": "00000000-0000-0000-0000-000000000001",
+    },
   ],
   "vars": {
     "OPENFGA_API_URL": "http://127.0.0.1:8080",
     "OPENFGA_STORE_ID": "unused-for-direct-user-tests",
     "OPENFGA_AUTHORIZATION_MODEL_ID": "unused-for-direct-user-tests",
-    "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false"
+    "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
   },
   "workflows": [
     {
       "binding": "ACTION_WORKFLOW",
       "name": "ultra-easy-action-workflow",
-      "class_name": "ActionWorkflow"
-    }
-  ]
+      "class_name": "ActionWorkflow",
+    },
+  ],
 }

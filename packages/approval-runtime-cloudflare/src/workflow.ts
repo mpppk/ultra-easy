@@ -89,9 +89,18 @@ function failed(error: Error): RuntimeTransition {
   return { type: "failed", code: errorCode(error), message: error.message };
 }
 
-function loadFailure(result: Exclude<Awaited<ReturnType<D1MaterializedPlanRepository["loadForWorkflow"]>>, { type: "found" }>): RuntimeTransition {
+function loadFailure(
+  result: Exclude<
+    Awaited<ReturnType<D1MaterializedPlanRepository["loadForWorkflow"]>>,
+    { type: "found" }
+  >,
+): RuntimeTransition {
   if (result.type === "not_found") {
-    return { type: "failed", code: "approval_plan_not_found", message: "Materialized Approval Planが見つかりません" };
+    return {
+      type: "failed",
+      code: "approval_plan_not_found",
+      message: "Materialized Approval Planが見つかりません",
+    };
   }
   if (result.type === "checksum_mismatch") {
     return {

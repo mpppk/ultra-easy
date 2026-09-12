@@ -25,7 +25,10 @@ import type {
   Sha256Digest,
   UserId,
 } from "@app/approval-core";
-import { D1ApprovalRuntimeProjectionRepository, D1MaterializedPlanRepository } from "@app/approval-d1";
+import {
+  D1ApprovalRuntimeProjectionRepository,
+  D1MaterializedPlanRepository,
+} from "@app/approval-d1";
 
 import type { ActionWorkflowEnv, ActionWorkflowParams } from "./workflow.ts";
 
@@ -134,7 +137,8 @@ async function validPlan(
       version: 1,
       actionType: "workflow" as MaterializedApprovalPlan["action"]["definition"]["actionType"],
       inputSchema: { key: "schema:workflow", version: 1 },
-      executorKey: "executor:workflow" as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
+      executorKey:
+        "executor:workflow" as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
     },
     type: "workflow" as MaterializedApprovalPlan["action"]["type"],
     resource: {
@@ -397,8 +401,12 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await env.ACTION_WORKFLOW.create({ id, params });
     await introspector.waitForStatus("complete");
     expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
-    const initialized = await introspector.waitForStepResult({ name: "initialize approval runtime" });
-    expect(new TextEncoder().encode(JSON.stringify(initialized)).byteLength).toBeLessThan(1024 * 1024);
+    const initialized = await introspector.waitForStepResult({
+      name: "initialize approval runtime",
+    });
+    expect(new TextEncoder().encode(JSON.stringify(initialized)).byteLength).toBeLessThan(
+      1024 * 1024,
+    );
     await introspector.dispose();
   });
 });
