@@ -1,3 +1,4 @@
+import { Result } from "@praha/byethrow";
 import { describe, expect, it } from "vite-plus/test";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
@@ -114,10 +115,12 @@ describe("M1 Policy Core", () => {
 
     const result = evaluatePolicy(policy, ticketContext());
 
-    expect(result.type).toBe("matched");
-    if (result.type !== "matched") return;
-    expect(String(result.ruleKey)).toBe("critical");
-    expect(result.flow).toEqual(managerFlow);
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isFailure(result)) return;
+    expect(result.value.type).toBe("matched");
+    if (result.value.type !== "matched") return;
+    expect(String(result.value.ruleKey)).toBe("critical");
+    expect(result.value.flow).toEqual(managerFlow);
   });
 
   it("AC-M1-002: Binding順で複数Policyを決定的にserial合成する", () => {
@@ -156,9 +159,9 @@ describe("M1 Policy Core", () => {
     });
 
     expect(first).toEqual(second);
-    expect(first.type).toBe("compiled");
-    if (first.type !== "compiled") return;
-    expect(first.flow).toEqual({
+    expect(Result.isSuccess(first)).toBe(true);
+    if (Result.isFailure(first)) return;
+    expect(first.value.flow).toEqual({
       type: "serial",
       children: [managerFlow, securityFlow],
       constraints: { distinctApprovers: true },
@@ -187,32 +190,35 @@ describe("M1 Policy Core", () => {
       bindings: [noApprovalBinding, managerBinding],
       policies: [noApprovalPolicy, managerPolicy],
     });
-    expect(mixed.type === "compiled" ? mixed.flow : mixed).toEqual(managerFlow);
+    expect(mixed).toMatchObject({ type: "Success", value: { flow: managerFlow } });
 
     const onlyNone = evaluateApprovalPlan({
       context: ticketContext(),
       bindings: [noApprovalBinding],
       policies: [noApprovalPolicy],
     });
-    expect(onlyNone.type === "compiled" ? onlyNone.flow : onlyNone).toEqual({ type: "none" });
+    expect(onlyNone).toMatchObject({
+      type: "Success",
+      value: { flow: { type: "none" } },
+    });
   });
 
   it("AC-M1-004: missing field・型不一致・unsafe integerはfail closedする", () => {
     const condition = gte(field("action.input.amountMinor"), literal(500_000));
 
     expect(evaluateCondition(condition, purchaseContext({ currency: "JPY" }))).toMatchObject({
-      type: "error",
-      code: "field_missing",
+      type: "Failure",
+      error: { code: "field_missing" },
     });
     expect(
       evaluateCondition(condition, purchaseContext({ amountMinor: "500000", currency: "JPY" })),
-    ).toMatchObject({ type: "error", code: "type_mismatch" });
+    ).toMatchObject({ type: "Failure", error: { code: "type_mismatch" } });
     expect(
       evaluateCondition(
         condition,
         purchaseContext({ amountMinor: Number.MAX_SAFE_INTEGER + 1, currency: "JPY" }),
       ),
-    ).toMatchObject({ type: "error", code: "invalid_number" });
+    ).toMatchObject({ type: "Failure", error: { code: "invalid_number" } });
   });
 
   it("AC-M1-005: minor-unit金額の境界とcurrency条件を正確に評価する", () => {
@@ -222,17 +228,17 @@ describe("M1 Policy Core", () => {
     );
 
     expect(
-      evaluateCondition(condition, purchaseContext({ amountMinor: 499_999, currency: "JPY" })).type,
-    ).toBe("not_matched");
+      evaluateCondition(condition, purchaseContext({ amountMinor: 499_999, currency: "JPY" })),
+    ).toMatchObject({ type: "Success", value: { type: "not_matched" } });
     expect(
-      evaluateCondition(condition, purchaseContext({ amountMinor: 500_000, currency: "JPY" })).type,
-    ).toBe("matched");
+      evaluateCondition(condition, purchaseContext({ amountMinor: 500_000, currency: "JPY" })),
+    ).toMatchObject({ type: "Success", value: { type: "matched" } });
     expect(
-      evaluateCondition(condition, purchaseContext({ amountMinor: 500_001, currency: "JPY" })).type,
-    ).toBe("matched");
+      evaluateCondition(condition, purchaseContext({ amountMinor: 500_001, currency: "JPY" })),
+    ).toMatchObject({ type: "Success", value: { type: "matched" } });
     expect(
-      evaluateCondition(condition, purchaseContext({ amountMinor: 500_001, currency: "USD" })).type,
-    ).toBe("not_matched");
+      evaluateCondition(condition, purchaseContext({ amountMinor: 500_001, currency: "USD" })),
+    ).toMatchObject({ type: "Success", value: { type: "not_matched" } });
 
     const fieldCatalog: PolicyFieldCatalog = [
       {
@@ -293,9 +299,9 @@ describe("M1 Policy Core", () => {
       context,
     );
 
-    expect(result.type).toBe("resolved");
-    if (result.type !== "resolved") return;
-    expect(result.bindings.map((binding) => String(binding.id))).toEqual([
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isFailure(result)) return;
+    expect(result.value.map((binding) => String(binding.id))).toEqual([
       "binding:exact",
       "binding:prefix",
     ]);
@@ -384,8 +390,8 @@ describe("M1 Policy Core", () => {
           eq(field("actor.type"), literal("user")),
         ),
         context,
-      ).type,
-    ).toBe("matched");
+      ),
+    ).toMatchObject({ type: "Success", value: { type: "matched" } });
   });
 
   it("Standard Schema validationはvendor固有APIを使わず成功/失敗を正規化する", async () => {
@@ -442,7 +448,10 @@ describe("M1 Policy Core", () => {
       policies: [policy],
     });
 
-    expect(critical.type === "compiled" ? critical.flow : critical).toEqual(managerFlow);
-    expect(normal.type === "compiled" ? normal.flow : normal).toEqual({ type: "none" });
+    expect(critical).toMatchObject({ type: "Success", value: { flow: managerFlow } });
+    expect(normal).toMatchObject({
+      type: "Success",
+      value: { flow: { type: "none" } },
+    });
   });
 });
