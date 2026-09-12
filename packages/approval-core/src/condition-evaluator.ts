@@ -232,9 +232,7 @@ export function evaluateCondition(
       const results = condition.conditions.map((child) => evaluateCondition(child, context));
       const error = results.find(Result.isFailure);
       if (error) return error;
-      return results.every(
-        (result) => Result.isSuccess(result) && result.value.type === "matched",
-      )
+      return results.every((result) => Result.isSuccess(result) && result.value.type === "matched")
         ? matched()
         : notMatched();
     }
@@ -242,9 +240,7 @@ export function evaluateCondition(
       const results = condition.conditions.map((child) => evaluateCondition(child, context));
       const error = results.find(Result.isFailure);
       if (error) return error;
-      return results.some(
-        (result) => Result.isSuccess(result) && result.value.type === "matched",
-      )
+      return results.some((result) => Result.isSuccess(result) && result.value.type === "matched")
         ? matched()
         : notMatched();
     }
