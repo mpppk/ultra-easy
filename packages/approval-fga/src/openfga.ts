@@ -201,16 +201,19 @@ export class OpenFgaClient {
     context?: Record<string, unknown>;
     consistency: AuthorizationConsistency;
   }): Result.ResultAsync<boolean, OpenFgaRequestError> {
-    const response = await this.postJsonObject(`/stores/${encodeURIComponent(this.storeId)}/check`, {
-      authorization_model_id: this.authorizationModelId,
-      tuple_key: {
-        user: input.user,
-        relation: input.relation,
-        object: input.object,
+    const response = await this.postJsonObject(
+      `/stores/${encodeURIComponent(this.storeId)}/check`,
+      {
+        authorization_model_id: this.authorizationModelId,
+        tuple_key: {
+          user: input.user,
+          relation: input.relation,
+          object: input.object,
+        },
+        ...(input.context ? { context: input.context } : {}),
+        consistency: consistencyValue(input.consistency),
       },
-      ...(input.context ? { context: input.context } : {}),
-      consistency: consistencyValue(input.consistency),
-    });
+    );
     if (Result.isFailure(response)) return response;
     if (!("allowed" in response.value) || typeof response.value.allowed !== "boolean") {
       return Result.fail(
