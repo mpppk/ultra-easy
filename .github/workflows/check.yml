@@ -2,34 +2,21 @@ name: check
 
 on:
   push:
-    branches: [refactor/policy-result-byethrow]
-
-permissions:
-  contents: write
+    branches: [main]
+  pull_request:
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: refactor/policy-result-byethrow
       - uses: voidzero-dev/setup-vp@v1.19.0
         with:
           node-version: "24"
           cache: true
       - name: Install dependencies
         run: vp install
-      - name: Apply Result migration
-        run: python3 scripts/migrate-policy-result.py
-      - name: Format
-        run: vp check --fix || true
-      - name: Commit migration
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet; then
-            git add packages/approval-core/src/materialization.ts tests/acceptance/m1-policy-core.test.ts
-            git commit --no-verify -m "refactor: Result契約へ呼び出し側を追従"
-            git push
-          fi
+      - name: Check
+        run: vp check
+      - name: Test
+        run: vp run -r test
