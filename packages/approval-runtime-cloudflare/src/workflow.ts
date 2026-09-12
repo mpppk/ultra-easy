@@ -52,6 +52,7 @@ export type ActionWorkflowEnv = {
 type RuntimeTransition =
   | { type: "advanced"; state: ApprovalRuntimeState }
   | { type: "failed"; code: string; message: string };
+type RuntimeFailure = Extract<RuntimeTransition, { type: "failed" }>;
 
 export class WorkflowEventWaitError extends ErrorFactory({
   name: "WorkflowEventWaitError",
@@ -85,7 +86,7 @@ function errorCode(error: Error): string {
   return typeof value === "string" ? value : error.name;
 }
 
-function failed(error: Error): RuntimeTransition {
+function failed(error: Error): RuntimeFailure {
   return { type: "failed", code: errorCode(error), message: error.message };
 }
 
@@ -94,7 +95,7 @@ function loadFailure(
     Awaited<ReturnType<D1MaterializedPlanRepository["loadForWorkflow"]>>,
     { type: "found" }
   >,
-): RuntimeTransition {
+): RuntimeFailure {
   if (result.type === "not_found") {
     return {
       type: "failed",
@@ -225,7 +226,7 @@ function timeoutUntil(now: string, expiresAt?: string): { timeout: string; secon
 
 function outputFromTransition(
   params: ActionWorkflowParams,
-  transition: Extract<RuntimeTransition, { type: "failed" }>,
+  transition: RuntimeFailure,
 ): ActionWorkflowOutput {
   return {
     type: "failed",
