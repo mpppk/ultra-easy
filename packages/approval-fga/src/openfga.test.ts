@@ -2,10 +2,10 @@ import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
 import type {
-  ActionType,
   AuthorizationObjectRef,
   RelationName,
   ResolvedApproverTarget,
+  UserId,
 } from "@app/approval-core";
 import { createHumanActionRequest } from "@app/approval-core/testing";
 
@@ -20,12 +20,23 @@ function branded<T extends string>(value: string): T {
   return value as T;
 }
 
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
+function requestBody(requests: Array<{ url: string; init?: RequestInit }>, index = 0) {
+  const body = requests[index]?.init?.body;
+  assert(typeof body === "string");
+  return JSON.parse(body) as Record<string, unknown>;
+}
+
 function responseFetch(
   body: unknown,
   requests: Array<{ url: string; init?: RequestInit }>,
 ): typeof globalThis.fetch {
   return async (input, init) => {
-    requests.push({ url: String(input), ...(init ? { init } : {}) });
+    requests.push({ url: requestUrl(input), ...(init ? { init } : {}) });
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -51,7 +62,7 @@ describe("OpenFGA adapters", () => {
       authorizationModelId: "model-1",
       fetch: responseFetch({ allowed: true }, requests),
     });
-    const authorizer = new OpenFgaActionAuthorizer(client, (_actionType: ActionType) =>
+    const authorizer = new OpenFgaActionAuthorizer(client, () =>
       branded<RelationName>("change_priority"),
     );
     const result = await authorizer.check({
@@ -63,8 +74,7 @@ describe("OpenFGA adapters", () => {
     assert(Result.isSuccess(result));
     expect(result.value.type).toBe("allow");
     expect(requests[0]?.url).toBe("https://fga.example/stores/store-1/check");
-    const body = JSON.parse(String(requests[0]?.init?.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({
+    expect(requestBody(requests)).toMatchObject({
       authorization_model_id: "model-1",
       tuple_key: {
         user: "user:alice",
@@ -120,14 +130,13 @@ describe("OpenFGA adapters", () => {
     );
     const result = await resolver.check({
       target: relationTarget(),
-      userId: branded("user:bob"),
+      userId: branded<UserId>("user:bob"),
       consistency: "higher_consistency",
     });
 
     assert(Result.isSuccess(result));
     expect(result.value).toBe(true);
-    const body = JSON.parse(String(requests[0]?.init?.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({
+    expect(requestBody(requests)).toMatchObject({
       tuple_key: { user: "user:bob", relation: "manager", object: "user:alice" },
       consistency: "HIGHER_CONSISTENCY",
     });
@@ -149,8 +158,7 @@ describe("OpenFGA adapters", () => {
 
     assert(Result.isSuccess(result));
     expect(requests[0]?.url).toBe("https://fga.example/stores/store-1/write");
-    const body = JSON.parse(String(requests[0]?.init?.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({
+    expect(requestBody(requests)).toMatchObject({
       authorization_model_id: "model-1",
       writes: {
         tuple_keys: [{ user: "user:bob", relation: "manager", object: "org_unit:sales" }],
