@@ -384,8 +384,12 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await env.ACTION_WORKFLOW.create({ id, params });
     await introspector.waitForStatus("complete");
     expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
-    const initialized = await introspector.waitForStepResult({ name: "initialize approval runtime" });
-    expect(new TextEncoder().encode(JSON.stringify(initialized)).byteLength).toBeLessThan(1024 * 1024);
+    const initialized = await introspector.waitForStepResult({
+      name: "initialize approval runtime",
+    });
+    expect(new TextEncoder().encode(JSON.stringify(initialized)).byteLength).toBeLessThan(
+      1024 * 1024,
+    );
     await introspector.dispose();
   });
 });
