@@ -89,7 +89,10 @@ const ApprovalPlanBindingEvaluationErrorBase = ErrorFactory({
 export class ApprovalPlanBindingEvaluationError extends ApprovalPlanBindingEvaluationErrorBase {
   declare readonly cause: PolicyBindingResolutionError;
 
-  constructor(options: { bindingId: ApprovalPolicyBindingId; cause: PolicyBindingResolutionError }) {
+  constructor(options: {
+    bindingId: ApprovalPolicyBindingId;
+    cause: PolicyBindingResolutionError;
+  }) {
     super({
       type: "binding_evaluation_failed",
       bindingId: options.bindingId,

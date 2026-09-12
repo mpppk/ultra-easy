@@ -2,10 +2,7 @@ import { Result } from "@praha/byethrow";
 import { describe, expect, it } from "vite-plus/test";
 
 import { field, gte, literal } from "./builder.ts";
-import {
-  PolicyFieldMissingError,
-  evaluateCondition,
-} from "./condition-evaluator.ts";
+import { PolicyFieldMissingError, evaluateCondition } from "./condition-evaluator.ts";
 import type {
   ActionType,
   ApprovalPolicyBindingId,
@@ -14,10 +11,7 @@ import type {
 } from "./domain/brand.ts";
 import type { ApprovalPolicyBinding } from "./domain/policy.ts";
 import type { PolicyEvaluationContext } from "./domain/evaluation.ts";
-import {
-  ApprovalPlanPolicyNotFoundError,
-  evaluateApprovalPlan,
-} from "./policy-evaluator.ts";
+import { ApprovalPlanPolicyNotFoundError, evaluateApprovalPlan } from "./policy-evaluator.ts";
 import { createPurchaseActionRequest, createTicketActionRequest } from "./testing/fixtures.ts";
 
 function branded<T extends string>(value: string): T {
