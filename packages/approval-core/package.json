@@ -11,7 +11,8 @@
     "test": "vp test"
   },
   "dependencies": {
-    "@praha/byethrow": "^0.12.0"
+    "@praha/byethrow": "^0.12.0",
+    "@praha/error-factory": "^1.4.1"
   },
   "devDependencies": {
     "@standard-schema/spec": "^1.1.0"
