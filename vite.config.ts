@@ -62,6 +62,7 @@ export default defineConfig({
                     "!../**",
                     "!@standard-schema/spec",
                     "!@praha/byethrow",
+                    "!@praha/error-factory",
                   ],
                   message:
                     "approval-coreのproduction codeから許可されていない外部packageへ直接依存しないでください。",
