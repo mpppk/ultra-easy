@@ -1,0 +1,23 @@
+{
+  "name": "@app/approval-runtime-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vp test --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@app/approval-core": "workspace:*",
+    "@app/approval-d1": "workspace:*",
+    "@app/approval-fga": "workspace:*",
+    "@praha/byethrow": "^0.12.0",
+    "@praha/error-factory": "^1.4.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.5",
+    "@cloudflare/workers-types": "^5.20260911.1"
+  }
+}
