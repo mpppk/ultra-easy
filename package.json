@@ -15,6 +15,7 @@
     "prepare": "vp config"
   },
   "devDependencies": {
+    "@praha/byethrow-docs": "^0.12.0",
     "@praha/byethrow-oxlint": "^0.12.0",
     "@types/node": "^22.10.2",
     "oxlint-plugin-eslint": "^1.82.0",
