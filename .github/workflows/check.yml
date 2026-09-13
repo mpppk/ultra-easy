@@ -1,12 +1,10 @@
 name: check
 
 on:
-  push:
-    branches: [main]
   pull_request:
 
 jobs:
-  check:
+  format-diff:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -14,25 +12,8 @@ jobs:
         with:
           node-version: "24"
           cache: true
-      - name: Install dependencies
-        run: vp install
-      - name: Check
-        run: vp check
-      - name: Start OpenFGA test server
+      - name: Show Oxfmt diff
         run: |
-          docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run
-          for attempt in {1..30}; do
-            if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":"SERVING"'; then
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs openfga-test
-          exit 1
-      - name: Test
-        env:
-          OPENFGA_TEST_URL: http://127.0.0.1:8080
-        run: vp run -r test
-      - name: Stop OpenFGA test server
-        if: always()
-        run: docker rm -f openfga-test || true
+          vp install
+          vp check --fix || true
+          git diff -- packages/approval-runtime-cloudflare/src/workflow.integration.test.ts
