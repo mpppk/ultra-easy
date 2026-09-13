@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { assert, beforeEach, describe, expect, it } from "vite-plus/test";
+import { assert, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { env } from "cloudflare:workers";
 import { introspectWorkflowInstance } from "cloudflare:test";
 
@@ -285,12 +285,25 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await savePlan(plan);
 
     const id = "cf-resume";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
     await createInstance(plan, id);
-    await introspector.waitForStatus("waiting");
+
+    const waitingInstance = await env.ACTION_WORKFLOW.get(id);
+    await vi.waitFor(
+      async () => {
+        expect((await waitingInstance.status()).status).toBe("waiting");
+      },
+      { timeout: 1_500 },
+    );
+
     const pausingInstance = await env.ACTION_WORKFLOW.get(id);
     await pausingInstance.pause();
-    await introspector.waitForStatus("paused");
+    await vi.waitFor(
+      async () => {
+        expect((await pausingInstance.status()).status).toBe("paused");
+      },
+      { timeout: 1_500 },
+    );
+
     const resumingInstance = await env.ACTION_WORKFLOW.get(id);
     await resumingInstance.resume();
     const eventInstance = await env.ACTION_WORKFLOW.get(id);
@@ -298,9 +311,16 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       type: "approval-decision",
       payload: decision(plan, approval, bob, "after-resume"),
     });
-    await introspector.waitForStatus("complete");
-    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
-    await introspector.dispose();
+
+    const completedInstance = await env.ACTION_WORKFLOW.get(id);
+    await vi.waitFor(
+      async () => {
+        const status = await completedInstance.status();
+        expect(status.status).toBe("complete");
+        expect(status.output).toMatchObject({ type: "completed", status: "approved" });
+      },
+      { timeout: 5_000 },
+    );
   });
 
   it("step.do retryでもTaskを二重生成しない", async () => {
