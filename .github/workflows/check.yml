@@ -1,55 +1,38 @@
 name: check
 
 on:
+  push:
+    branches: [main]
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
-  normalize:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
       - uses: voidzero-dev/setup-vp@v1.19.0
         with:
           node-version: "24"
           cache: true
-      - name: Align Cloudflare tests with supported Vitest
+      - name: Install dependencies
+        run: vp install
+      - name: Check
+        run: vp check
+      - name: Start OpenFGA test server
         run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          const rootPath = 'package.json';
-          const root = JSON.parse(fs.readFileSync(rootPath, 'utf8'));
-          if (root.overrides) delete root.overrides.vitest;
-          fs.writeFileSync(rootPath, `${JSON.stringify(root, null, 2)}\n`);
-
-          const packagePath = 'packages/approval-runtime-cloudflare/package.json';
-          const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-          pkg.scripts.test = 'vitest run --config vitest.config.ts';
-          pkg.devDependencies.vitest = '4.1.11';
-          fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
-
-          const testPath = 'packages/approval-runtime-cloudflare/src/workflow.integration.test.ts';
-          const test = fs.readFileSync(testPath, 'utf8').replace('from "vite-plus/test"', 'from "vitest"');
-          fs.writeFileSync(testPath, test);
-
-          const configPath = 'packages/approval-runtime-cloudflare/vitest.config.ts';
-          const config = fs.readFileSync(configPath, 'utf8').replace('from "vite-plus"', 'from "vitest/config"');
-          fs.writeFileSync(configPath, config);
-          NODE
-          vp install
-          vp check --fix || true
-      - name: Commit dependency alignment
-        run: |
-          if git diff --quiet; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit --no-verify -m "fix: CloudflareテストをVitest 4へ分離"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":"SERVING"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs openfga-test
+          exit 1
+      - name: Test
+        env:
+          OPENFGA_TEST_URL: http://127.0.0.1:8080
+        run: vp run -r test
+      - name: Stop OpenFGA test server
+        if: always()
+        run: docker rm -f openfga-test || true
