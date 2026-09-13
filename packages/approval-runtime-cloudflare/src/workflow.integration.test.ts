@@ -286,12 +286,15 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
 
     const id = "cf-resume";
     const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
-    const instance = await createInstance(plan, id);
+    await createInstance(plan, id);
     await introspector.waitForStatus("waiting");
-    await instance.pause();
+    const pausingInstance = await env.ACTION_WORKFLOW.get(id);
+    await pausingInstance.pause();
     await introspector.waitForStatus("paused");
-    await instance.resume();
-    await instance.sendEvent({
+    const resumingInstance = await env.ACTION_WORKFLOW.get(id);
+    await resumingInstance.resume();
+    const eventInstance = await env.ACTION_WORKFLOW.get(id);
+    await eventInstance.sendEvent({
       type: "approval-decision",
       payload: decision(plan, approval, bob, "after-resume"),
     });
