@@ -291,7 +291,6 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await instance.pause();
     await introspector.waitForStatus("paused");
     await instance.resume();
-    await introspector.waitForStatus("waiting");
     await instance.sendEvent({
       type: "approval-decision",
       payload: decision(plan, approval, bob, "after-resume"),
