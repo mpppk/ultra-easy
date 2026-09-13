@@ -44,7 +44,7 @@ beforeEach(async () => {
   await env.DB.exec("DROP TABLE IF EXISTS approval_tasks");
   await env.DB.exec("DROP TABLE IF EXISTS approval_runtime_projections");
   await env.DB.exec("DROP TABLE IF EXISTS action_requests");
-  await env.DB.exec(`CREATE TABLE action_requests (
+  await env.DB.prepare(`CREATE TABLE action_requests (
     id TEXT NOT NULL,
     organization_id TEXT NOT NULL,
     action_fingerprint TEXT NOT NULL,
@@ -57,8 +57,8 @@ beforeEach(async () => {
     interpreter_semantics_version INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (organization_id, id)
-  )`);
-  await env.DB.exec(`CREATE TABLE approval_runtime_projections (
+  )`).run();
+  await env.DB.prepare(`CREATE TABLE approval_runtime_projections (
     organization_id TEXT NOT NULL,
     action_request_id TEXT NOT NULL,
     approval_plan_checksum TEXT NOT NULL,
@@ -66,8 +66,8 @@ beforeEach(async () => {
     state_json TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (organization_id, action_request_id)
-  )`);
-  await env.DB.exec(`CREATE TABLE approval_tasks (
+  )`).run();
+  await env.DB.prepare(`CREATE TABLE approval_tasks (
     organization_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     action_request_id TEXT NOT NULL,
@@ -80,7 +80,7 @@ beforeEach(async () => {
     closed_at TEXT,
     distinct_scope_id TEXT,
     PRIMARY KEY (organization_id, task_id)
-  )`);
+  )`).run();
 });
 
 function source(path: string): MaterializedStepSource {

@@ -22,7 +22,7 @@
     "typescript": "^7.0.0",
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1",
     "vite-plus": "0.3.1",
-    "vitest": "5.0.0"
+    "vitest": "4.1.11"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1"
