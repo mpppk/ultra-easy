@@ -1,88 +1,38 @@
 name: check
 
 on:
+  push:
+    branches: [main]
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
-  patch:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
       - uses: voidzero-dev/setup-vp@v1.19.0
         with:
           node-version: "24"
           cache: true
-      - name: Move resume test off introspector
+      - name: Install dependencies
+        run: vp install
+      - name: Check
+        run: vp check
+      - name: Start OpenFGA test server
         run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const path = 'packages/approval-runtime-cloudflare/src/workflow.integration.test.ts';
-          let source = fs.readFileSync(path, 'utf8');
-          source = source.replace(
-            'import { assert, beforeEach, describe, expect, it } from "vite-plus/test";',
-            'import { assert, beforeEach, describe, expect, it, vi } from "vite-plus/test";',
-          );
-          const start = source.indexOf('  it("instance pause/resume後もDecision待機から再開できる"');
-          const end = source.indexOf('  it("step.do retryでもTaskを二重生成しない"', start);
-          if (start < 0 || end < 0) process.exit(2);
-          const replacement = `  it("instance pause/resume後もDecision待機から再開できる", async () => {
-    const approval = await directStep("resume", bob, "root");
-    const plan = await validPlan("cf-resume", approval);
-    await savePlan(plan);
-
-    const id = "cf-resume";
-    await createInstance(plan, id);
-
-    const waitingInstance = await env.ACTION_WORKFLOW.get(id);
-    await vi.waitFor(
-      async () => {
-        expect((await waitingInstance.status()).status).toBe("waiting");
-      },
-      { timeout: 1_500 },
-    );
-
-    const pausingInstance = await env.ACTION_WORKFLOW.get(id);
-    await pausingInstance.pause();
-    await vi.waitFor(
-      async () => {
-        expect((await pausingInstance.status()).status).toBe("paused");
-      },
-      { timeout: 1_500 },
-    );
-
-    const resumingInstance = await env.ACTION_WORKFLOW.get(id);
-    await resumingInstance.resume();
-    const eventInstance = await env.ACTION_WORKFLOW.get(id);
-    await eventInstance.sendEvent({
-      type: "approval-decision",
-      payload: decision(plan, approval, bob, "after-resume"),
-    });
-
-    const completedInstance = await env.ACTION_WORKFLOW.get(id);
-    await vi.waitFor(
-      async () => {
-        const status = await completedInstance.status();
-        expect(status.status).toBe("complete");
-        expect(status.output).toMatchObject({ type: "completed", status: "approved" });
-      },
-      { timeout: 5_000 },
-    );
-  });
-
-`;
-          source = source.slice(0, start) + replacement + source.slice(end);
-          fs.writeFileSync(path, source);
-          NODE
-          vp check --fix || true
-      - name: Commit fix
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/approval-runtime-cloudflare/src/workflow.integration.test.ts
-          git commit --no-verify -m "test: resume検証をWorkflow status APIへ分離"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":"SERVING"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs openfga-test
+          exit 1
+      - name: Test
+        env:
+          OPENFGA_TEST_URL: http://127.0.0.1:8080
+        run: vp run -r test
+      - name: Stop OpenFGA test server
+        if: always()
+        run: docker rm -f openfga-test || true
