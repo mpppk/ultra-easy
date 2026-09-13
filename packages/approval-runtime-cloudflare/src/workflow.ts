@@ -63,25 +63,36 @@ export class WorkflowEventWaitError extends ErrorFactory({
   }>(),
 }) {}
 
-const waitForDecision = Result.fn({
-  try: async (input: {
-    step: WorkflowStep;
-    name: string;
-    timeout: WorkflowSleepDuration;
-  }): Promise<ApprovalDecisionEvent> => {
-    const event = await input.step.waitForEvent<ApprovalDecisionEvent>(input.name, {
+function isWorkflowTimeoutError(error: unknown): error is Error {
+  return error instanceof Error && error.name === "WorkflowTimeoutError";
+}
+
+function workflowEventWaitError(error: unknown): WorkflowEventWaitError {
+  return new WorkflowEventWaitError({
+    code: "workflow_event_wait_failed",
+    detail: error instanceof Error ? error.message : "waitForEvent failed",
+    ...(error instanceof Error ? { cause: error } : {}),
+  });
+}
+
+async function waitForDecision(input: {
+  step: WorkflowStep;
+  name: string;
+  timeout: WorkflowSleepDuration;
+}): Promise<Result.Result<ApprovalDecisionEvent, WorkflowEventWaitError>> {
+  return input.step
+    .waitForEvent<ApprovalDecisionEvent>(input.name, {
       type: "approval-decision",
       timeout: input.timeout,
-    });
-    return event.payload;
-  },
-  catch: (error): WorkflowEventWaitError =>
-    new WorkflowEventWaitError({
-      code: "workflow_event_wait_failed",
-      detail: error instanceof Error ? error.message : "waitForEvent failed",
-      ...(error instanceof Error ? { cause: error } : {}),
-    }),
-});
+    })
+    .then(
+      (event) => Result.succeed(event.payload),
+      (error) =>
+        isWorkflowTimeoutError(error)
+          ? Result.fail(workflowEventWaitError(error))
+          : Promise.reject(error),
+    );
+}
 
 function errorCode(error: Error): string {
   const value = (error as Error & { code?: unknown }).code;
@@ -211,10 +222,6 @@ async function expireRuntime(
   return persistProjection(env, loaded.plan.organizationId, expired.value);
 }
 
-function isTimeout(error: WorkflowEventWaitError): boolean {
-  return /tim(?:e|ed)[ -]?out/i.test(error.detail);
-}
-
 function addSeconds(value: string, seconds: number): string {
   return new Date(Date.parse(value) + seconds * 1000).toISOString();
 }
@@ -275,9 +282,6 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         timeout: timeout.timeout,
       });
       if (Result.isFailure(decision)) {
-        if (!isTimeout(decision.error)) {
-          return outputFromTransition(params, failed(decision.error));
-        }
         if (nextExpiry) {
           const expired = await step.do(`expire approval runtime ${iteration}`, async () =>
             expireRuntime(this.env, params, state, nextExpiry),
