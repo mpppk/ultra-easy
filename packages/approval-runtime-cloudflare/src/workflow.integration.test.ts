@@ -287,9 +287,13 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const id = "cf-resume";
     await createInstance(plan, id);
 
-    const waitingIntrospector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
-    await waitingIntrospector.waitForStatus("waiting");
-    await waitingIntrospector.dispose();
+    const waitingInstance = await env.ACTION_WORKFLOW.get(id);
+    await vi.waitFor(
+      async () => {
+        expect((await waitingInstance.status()).status).toBe("waiting");
+      },
+      { timeout: 1_500 },
+    );
 
     const pausingInstance = await env.ACTION_WORKFLOW.get(id);
     await pausingInstance.pause();
