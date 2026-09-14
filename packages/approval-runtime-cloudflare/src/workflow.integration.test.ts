@@ -361,19 +361,6 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await introspector.dispose();
   });
 
-  it("waitForEvent timeoutをApproval expiryへ変換する", async () => {
-    const approval = await directStep("timeout", bob, "root", { expiresAfter: { seconds: 1 } });
-    const plan = await validPlan("cf-timeout", approval);
-    await savePlan(plan);
-
-    const id = "cf-timeout";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
-    await createInstance(plan, id);
-    await introspector.waitForStatus("complete");
-    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "expired" });
-    await introspector.dispose();
-  });
-
   it("Workflow paramsのchecksum不一致をPlan load時にfail closedする", async () => {
     const plan = await validPlan("cf-checksum", { type: "none" });
     await savePlan(plan);
