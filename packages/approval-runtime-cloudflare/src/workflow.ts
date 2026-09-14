@@ -84,7 +84,9 @@ function errorText(error: unknown): string | undefined {
 
 function isWorkflowTimeoutError(error: unknown): boolean {
   const text = errorText(error);
-  return text?.includes("WorkflowTimeoutError") === true && text.includes("Execution timed out after");
+  return (
+    text?.includes("WorkflowTimeoutError") === true && text.includes("Execution timed out after")
+  );
 }
 
 function workflowEventWaitError(error: unknown): WorkflowEventWaitError {
