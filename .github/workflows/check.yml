@@ -1,33 +1,38 @@
 name: check
 
 on:
+  push:
+    branches: [main]
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
-  patch-timeout-test:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: voidzero-dev/setup-vp@v1.19.0
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
-      - name: Remove unsupported timeout integration case
+          node-version: "24"
+          cache: true
+      - name: Install dependencies
+        run: vp install
+      - name: Check
+        run: vp check
+      - name: Start OpenFGA test server
         run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const path = 'packages/approval-runtime-cloudflare/src/workflow.integration.test.ts';
-          let source = fs.readFileSync(path, 'utf8');
-          const block = `  it("waitForEvent timeoutをApproval expiryへ変換する", async () => {\n    const approval = await directStep("timeout", bob, "root", { expiresAfter: { seconds: 1 } });\n    const plan = await validPlan("cf-timeout", approval);\n    await savePlan(plan);\n\n    const id = "cf-timeout";\n    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);\n    await createInstance(plan, id);\n    await introspector.waitForStatus("complete");\n    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "expired" });\n    await introspector.dispose();\n  });\n\n`;
-          if (!source.includes(block)) process.exit(2);
-          source = source.replace(block, '');
-          fs.writeFileSync(path, source);
-          NODE
-      - name: Commit test change
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/approval-runtime-cloudflare/src/workflow.integration.test.ts
-          git commit --no-verify -m "test: timeout expiryはCore Acceptanceで検証"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/healthz | grep -q '"status":"SERVING"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs openfga-test
+          exit 1
+      - name: Test
+        env:
+          OPENFGA_TEST_URL: http://127.0.0.1:8080
+        run: vp run -r test
+      - name: Stop OpenFGA test server
+        if: always()
+        run: docker rm -f openfga-test || true
