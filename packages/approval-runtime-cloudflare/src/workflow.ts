@@ -85,23 +85,33 @@ function workflowEventWaitError(error: unknown): WorkflowEventWaitError {
   });
 }
 
+const waitForDecisionEvent = Result.fn({
+  try: async (input: {
+    step: WorkflowStep;
+    name: string;
+    timeout: WorkflowSleepDuration;
+  }): Promise<ApprovalDecisionEvent> => {
+    const event = await input.step.waitForEvent<ApprovalDecisionEvent>(input.name, {
+      type: "approval-decision",
+      timeout: input.timeout,
+    });
+    return event.payload;
+  },
+  catch: (error): unknown => error,
+});
+
 function waitForDecision(input: {
   step: WorkflowStep;
   name: string;
   timeout: WorkflowSleepDuration;
 }): Result.ResultAsync<ApprovalDecisionEvent, WorkflowEventWaitError> {
-  return input.step
-    .waitForEvent<ApprovalDecisionEvent>(input.name, {
-      type: "approval-decision",
-      timeout: input.timeout,
-    })
-    .then(
-      (event) => Result.succeed(event.payload),
-      (error) =>
-        isWorkflowTimeoutError(error)
-          ? Result.fail(workflowEventWaitError(error))
-          : Promise.reject(error),
-    );
+  return waitForDecisionEvent(input).then((decision) => {
+    if (Result.isSuccess(decision)) return decision;
+    if (isWorkflowTimeoutError(decision.error)) {
+      return Result.fail(workflowEventWaitError(decision.error));
+    }
+    return Promise.reject(decision.error);
+  });
 }
 
 function errorCode(error: Error): string {
