@@ -287,10 +287,16 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const id = "cf-resume";
     await createInstance(plan, id);
 
-    const waitingInstance = await env.ACTION_WORKFLOW.get(id);
+    const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(env.DB);
     await vi.waitFor(
       async () => {
-        expect((await waitingInstance.status()).status).toBe("waiting");
+        const projection = await runtimeRepository.load({
+          organizationId,
+          actionRequestId: plan.actionRequestId,
+        });
+        assert(Result.isSuccess(projection));
+        expect(projection.value?.status).toBe("pending");
+        expect(projection.value?.tasks).toHaveLength(1);
       },
       { timeout: 1_500 },
     );
