@@ -63,20 +63,24 @@ export class WorkflowEventWaitError extends ErrorFactory({
   }>(),
 }) {}
 
-function errorProperty(error: unknown, property: "name" | "message"): string | undefined {
-  if (typeof error !== "object" || error === null || !(property in error)) return undefined;
-  const value = error[property];
-  return typeof value === "string" ? value : undefined;
+function errorName(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("name" in error)) return undefined;
+  return typeof error.name === "string" ? error.name : undefined;
+}
+
+function errorMessage(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("message" in error)) return undefined;
+  return typeof error.message === "string" ? error.message : undefined;
 }
 
 function isWorkflowTimeoutError(error: unknown): boolean {
-  return errorProperty(error, "name") === "WorkflowTimeoutError";
+  return errorName(error) === "WorkflowTimeoutError";
 }
 
 function workflowEventWaitError(error: unknown): WorkflowEventWaitError {
   return new WorkflowEventWaitError({
     code: "workflow_event_wait_failed",
-    detail: errorProperty(error, "message") ?? "waitForEvent failed",
+    detail: errorMessage(error) ?? "waitForEvent failed",
     ...(error instanceof Error ? { cause: error } : {}),
   });
 }
