@@ -75,11 +75,11 @@ function workflowEventWaitError(error: unknown): WorkflowEventWaitError {
   });
 }
 
-async function waitForDecision(input: {
+function waitForDecision(input: {
   step: WorkflowStep;
   name: string;
   timeout: WorkflowSleepDuration;
-}): Promise<Result.Result<ApprovalDecisionEvent, WorkflowEventWaitError>> {
+}): Result.ResultAsync<ApprovalDecisionEvent, WorkflowEventWaitError> {
   return input.step
     .waitForEvent<ApprovalDecisionEvent>(input.name, {
       type: "approval-decision",
