@@ -312,6 +312,12 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
 
     const resumingInstance = await env.ACTION_WORKFLOW.get(id);
     await resumingInstance.resume();
+    await vi.waitFor(
+      async () => {
+        expect((await resumingInstance.status()).status).toBe("running");
+      },
+      { timeout: 1_500 },
+    );
     const eventInstance = await env.ACTION_WORKFLOW.get(id);
     await eventInstance.sendEvent({
       type: "approval-decision",
