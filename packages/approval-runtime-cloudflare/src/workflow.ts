@@ -69,18 +69,22 @@ function errorName(error: unknown): string | undefined {
 }
 
 function errorMessage(error: unknown): string | undefined {
+  if (typeof error === "string") return error;
   if (typeof error !== "object" || error === null || !("message" in error)) return undefined;
   return typeof error.message === "string" ? error.message : undefined;
 }
 
-function isWorkflowTimeoutError(error: unknown): boolean {
+function errorText(error: unknown): string | undefined {
+  if (typeof error === "string") return error;
   const name = errorName(error);
   const message = errorMessage(error);
-  return (
-    name === "WorkflowTimeoutError" ||
-    (name === "Error" &&
-      message?.startsWith("WorkflowTimeoutError: Execution timed out after ") === true)
-  );
+  if (name && message) return `${name}: ${message}`;
+  return message ?? name;
+}
+
+function isWorkflowTimeoutError(error: unknown): boolean {
+  const text = errorText(error);
+  return text?.startsWith("WorkflowTimeoutError: Execution timed out after ") === true;
 }
 
 function workflowEventWaitError(error: unknown): WorkflowEventWaitError {
