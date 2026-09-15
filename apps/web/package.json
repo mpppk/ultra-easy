@@ -10,9 +10,11 @@
     "dev": "vp dev --port 3000",
     "test": "vp test",
     "build": "vp build",
+    "build:preview": "CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=./wrangler.preview.jsonc vp build",
     "preview": "vp preview",
     "generate-routes": "tsr generate",
-    "deploy": "vp build && wrangler deploy"
+    "deploy": "vp build && wrangler deploy",
+    "deploy:preview": "CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=./wrangler.preview.jsonc vp build && wrangler versions upload"
   },
   "dependencies": {
     "@tanstack/react-router": "latest",
@@ -22,6 +24,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.26.0",
+    "@cloudflare/workers-types": "^5.20260911.1",
     "@tanstack/router-cli": "^1.132.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
