@@ -1,6 +1,9 @@
 import { Result } from "@praha/byethrow";
 
-import { ApproverResolverProviderError, checkApproverTarget } from "../approver-resolver.ts";
+import {
+  ApproverResolverProviderError,
+  checkApprovalDecisionCandidate,
+} from "../approver-resolver.ts";
 import type { ApproverResolver } from "../approver-resolver.ts";
 import type { UserId } from "../domain/brand.ts";
 import type { MaterializedApprovalPlan, MaterializedApprovalStep } from "../materialization.ts";
@@ -124,14 +127,13 @@ async function validateDecisionCandidate(input: {
   const isProjected = input.task.candidateUserIds.some(
     (candidate) => String(candidate) === String(input.userId),
   );
-  if ((input.step.resolution ?? "dynamic") !== "dynamic" || input.task.target.type === "user") {
+  if ((input.step.resolution ?? "dynamic") !== "dynamic") {
     return Result.succeed(isProjected);
   }
-  return checkApproverTarget({
+  return checkApprovalDecisionCandidate({
     resolver: input.resolver,
     target: input.task.target,
     userId: input.userId,
-    consistency: "higher_consistency",
   });
 }
 
