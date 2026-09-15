@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { isPreviewScenario } from "../preview/approval-runtime.ts";
+import { isPreviewScenario } from "../preview/scenarios.ts";
 import {
   isPreviewHarnessEnabled,
   json,
@@ -20,7 +20,7 @@ export const Route = createFileRoute("/api/preview/approval-runs")({
           return json({ error: "invalid preview scenario" }, { status: 400 });
         }
 
-        return json(await startPreviewRun(scenario), { status: 201 });
+        return startPreviewRun(scenario);
       },
     },
   },
