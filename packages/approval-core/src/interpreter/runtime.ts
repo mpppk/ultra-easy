@@ -84,7 +84,7 @@ async function validateDecisionCandidate(input: {
   const isProjected = input.task.candidateUserIds.some(
     (candidate) => String(candidate) === String(input.userId),
   );
-  if (input.step.resolution !== "dynamic" || input.task.target.type === "user") {
+  if ((input.step.resolution ?? "dynamic") !== "dynamic" || input.task.target.type === "user") {
     return Result.succeed(isProjected);
   }
   return checkApproverTarget({
@@ -95,13 +95,18 @@ async function validateDecisionCandidate(input: {
   });
 }
 
-export async function applyApprovalDecision(input: {
+/**
+ * Decisionそのものをstateへ記録する。後続Stepのactivationは行わない。
+ * durable runtimeはこのstateを先に永続化してからadvanceApprovalRuntimeを呼ぶことで、
+ * activation側の一時障害やfail-closedで受理済みDecisionを失わない。
+ */
+export async function recordApprovalDecision(input: {
   plan: MaterializedApprovalPlan;
   resolver: ApproverResolver;
   state: ApprovalRuntimeState;
   event: ApprovalDecisionEvent;
 }): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
-  const state = structuredClone(input.state);
+  const state = cloneState(input.state);
   if (state.processedDecisionKeys.includes(input.event.idempotencyKey)) {
     return Result.succeed({ state, duplicate: true });
   }
@@ -121,6 +126,17 @@ export async function applyApprovalDecision(input: {
         code: "approval_task_closed",
         taskId: task.id,
         status: task.status,
+      }),
+    );
+  }
+
+  const decidedAt = parseTimestamp(input.event.decidedAt);
+  const activatedAt = parseTimestamp(task.activatedAt);
+  if (decidedAt === null || activatedAt === null || decidedAt < activatedAt) {
+    return Result.fail(
+      new InvalidRuntimeTimestampError({
+        code: "invalid_runtime_timestamp",
+        value: input.event.decidedAt,
       }),
     );
   }
@@ -198,16 +214,54 @@ export async function applyApprovalDecision(input: {
   state.processedDecisionKeys.push(input.event.idempotencyKey);
   task.status = completionForStep(step, task);
   if (task.status !== "pending") task.closedAt = input.event.decidedAt;
+  updateRootStatus(input.plan, state, input.event.decidedAt);
+  return Result.succeed({ state, duplicate: false });
+}
+
+/** 現在のstateから新たにactivate可能なStepを進める。 */
+export async function advanceApprovalRuntime(input: {
+  plan: MaterializedApprovalPlan;
+  resolver: ApproverResolver;
+  state: ApprovalRuntimeState;
+  now: string;
+}): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
+  if (parseTimestamp(input.now) === null) {
+    return Result.fail(
+      new InvalidRuntimeTimestampError({ code: "invalid_runtime_timestamp", value: input.now }),
+    );
+  }
+
+  const state = cloneState(input.state);
+  if (state.status !== "pending") return Result.succeed(state);
 
   const activated = await activateReadyNode(input.plan.flow, "root", undefined, {
     plan: input.plan,
     resolver: input.resolver,
     state,
-    now: input.event.decidedAt,
+    now: input.now,
   });
   if (Result.isFailure(activated)) return activated;
-  updateRootStatus(input.plan, state, input.event.decidedAt);
-  return Result.succeed({ state, duplicate: false });
+  updateRootStatus(input.plan, state, input.now);
+  return Result.succeed(state);
+}
+
+export async function applyApprovalDecision(input: {
+  plan: MaterializedApprovalPlan;
+  resolver: ApproverResolver;
+  state: ApprovalRuntimeState;
+  event: ApprovalDecisionEvent;
+}): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
+  const recorded = await recordApprovalDecision(input);
+  if (Result.isFailure(recorded)) return recorded;
+
+  const advanced = await advanceApprovalRuntime({
+    plan: input.plan,
+    resolver: input.resolver,
+    state: recorded.value.state,
+    now: input.event.decidedAt,
+  });
+  if (Result.isFailure(advanced)) return advanced;
+  return Result.succeed({ state: advanced.value, duplicate: recorded.value.duplicate });
 }
 
 export function nextApprovalRuntimeExpiry(state: ApprovalRuntimeState): string | undefined {
