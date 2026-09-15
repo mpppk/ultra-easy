@@ -5,9 +5,11 @@ import type { WorkflowEvent, WorkflowSleepDuration, WorkflowStep } from "cloudfl
 import type { D1Database } from "@cloudflare/workers-types";
 
 import {
-  applyApprovalDecision,
+  advanceApprovalRuntime,
+  ApproverResolverProviderError,
   expireApprovalRuntime,
   nextApprovalRuntimeExpiry,
+  recordApprovalDecision,
   startApprovalRuntime,
 } from "@app/approval-core";
 import type {
@@ -82,10 +84,13 @@ function errorText(error: unknown): string | undefined {
   return message ?? name;
 }
 
-function isWorkflowTimeoutError(error: unknown): boolean {
+export function isWorkflowTimeoutError(error: unknown): boolean {
+  const name = errorName(error);
   const text = errorText(error);
   return (
-    text?.includes("WorkflowTimeoutError") === true && text.includes("Execution timed out after")
+    name === "WorkflowTimeoutError" ||
+    text?.includes("WorkflowTimeoutError") === true ||
+    text?.includes("Execution timed out after") === true
   );
 }
 
@@ -107,7 +112,10 @@ async function waitForDecision(input: {
       type: "approval-decision",
       timeout: input.timeout,
     });
-    return Result.succeed(event.payload);
+    return Result.succeed({
+      ...event.payload,
+      decidedAt: event.timestamp.toISOString(),
+    });
   } catch (error) {
     if (isWorkflowTimeoutError(error)) {
       return Result.fail(workflowEventWaitError(error));
@@ -125,12 +133,20 @@ function failed(error: Error): RuntimeFailure {
   return { type: "failed", code: errorCode(error), message: error.message };
 }
 
+function interpreterFailure(error: Error): RuntimeFailure {
+  if (error instanceof ApproverResolverProviderError && error.retriable) throw error;
+  return failed(error);
+}
+
 function loadFailure(
   result: Exclude<
     Awaited<ReturnType<D1MaterializedPlanRepository["loadForWorkflow"]>>,
     { type: "found" }
   >,
 ): RuntimeFailure {
+  if (result.type === "repository_error") {
+    throw new Error(`Materialized Approval Plan repository error: ${result.message}`);
+  }
   if (result.type === "not_found") {
     return {
       type: "failed",
@@ -174,7 +190,8 @@ async function persistProjection(
     organizationId,
     state,
   });
-  return Result.isFailure(stored) ? failed(stored.error) : { type: "advanced", state };
+  if (Result.isFailure(stored)) throw stored.error;
+  return { type: "advanced", state };
 }
 
 async function initializeRuntime(
@@ -194,11 +211,11 @@ async function initializeRuntime(
     resolver: resolverFor(env),
     startedAt,
   });
-  if (Result.isFailure(started)) return failed(started.error);
+  if (Result.isFailure(started)) return interpreterFailure(started.error);
   return persistProjection(env, loaded.plan.organizationId, started.value);
 }
 
-async function applyDecision(
+async function recordDecision(
   env: ActionWorkflowEnv,
   params: ActionWorkflowParams,
   state: ApprovalRuntimeState,
@@ -211,14 +228,37 @@ async function applyDecision(
   });
   if (loaded.type !== "found") return loadFailure(loaded);
 
-  const decided = await applyApprovalDecision({
+  const recorded = await recordApprovalDecision({
     plan: loaded.plan,
     resolver: resolverFor(env),
     state,
     event,
   });
-  if (Result.isFailure(decided)) return failed(decided.error);
-  return persistProjection(env, loaded.plan.organizationId, decided.value.state);
+  if (Result.isFailure(recorded)) return interpreterFailure(recorded.error);
+  return persistProjection(env, loaded.plan.organizationId, recorded.value.state);
+}
+
+async function advanceRuntime(
+  env: ActionWorkflowEnv,
+  params: ActionWorkflowParams,
+  state: ApprovalRuntimeState,
+  now: string,
+): Promise<RuntimeTransition> {
+  const repository = new D1MaterializedPlanRepository(env.DB);
+  const loaded = await repository.loadForWorkflow({
+    actionRequestId: params.actionRequestId,
+    expectedApprovalPlanChecksum: params.approvalPlanChecksum,
+  });
+  if (loaded.type !== "found") return loadFailure(loaded);
+
+  const advanced = await advanceApprovalRuntime({
+    plan: loaded.plan,
+    resolver: resolverFor(env),
+    state,
+    now,
+  });
+  if (Result.isFailure(advanced)) return interpreterFailure(advanced.error);
+  return persistProjection(env, loaded.plan.organizationId, advanced.value);
 }
 
 async function expireRuntime(
@@ -240,7 +280,7 @@ async function expireRuntime(
     state,
     now,
   });
-  if (Result.isFailure(expired)) return failed(expired.error);
+  if (Result.isFailure(expired)) return interpreterFailure(expired.error);
   return persistProjection(env, loaded.plan.organizationId, expired.value);
 }
 
@@ -276,6 +316,16 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     step: WorkflowStep,
   ): Promise<ActionWorkflowOutput> {
     const params = event.payload;
+
+    if (event.instanceId !== String(params.actionRequestId)) {
+      return {
+        type: "failed",
+        actionRequestId: params.actionRequestId,
+        code: "workflow_instance_id_mismatch",
+        message: `Workflow instance idはactionRequestIdと一致する必要があります: ${event.instanceId}`,
+      };
+    }
+
     let logicalNow = event.timestamp.toISOString();
     const initialized = await step.do("initialize approval runtime", async () =>
       initializeRuntime(this.env, params, logicalNow),
@@ -318,12 +368,18 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         continue;
       }
 
-      const advanced = await step.do(`apply approval decision ${iteration}`, async () =>
-        applyDecision(this.env, params, state, decision.value),
+      const recorded = await step.do(`record approval decision ${iteration}`, async () =>
+        recordDecision(this.env, params, state, decision.value),
+      );
+      if (recorded.type === "failed") return outputFromTransition(params, recorded);
+      state = recorded.state;
+      logicalNow = decision.value.decidedAt;
+
+      const advanced = await step.do(`activate approval runtime ${iteration}`, async () =>
+        advanceRuntime(this.env, params, state, logicalNow),
       );
       if (advanced.type === "failed") return outputFromTransition(params, advanced);
       state = advanced.state;
-      logicalNow = decision.value.decidedAt;
       iteration += 1;
     }
 
