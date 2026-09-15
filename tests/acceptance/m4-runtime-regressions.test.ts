@@ -5,6 +5,7 @@ import {
   ApprovalCandidateRejectedError,
   ApproverResolverProviderError,
   InvalidRuntimeTimestampError,
+  UnsupportedInterpreterSemanticsVersionError,
 } from "@app/approval-core";
 
 import {
@@ -61,6 +62,14 @@ describe("M4 Durable Approval Runtime / regressions", () => {
     assert(Result.isSuccess(loaded));
     expect(loaded.value?.processedDecisionKeys).toEqual([]);
     expect(loaded.value?.tasks[0]?.decisions).toEqual([]);
+  });
+
+  it("allow-listに含まれていても実装のないinterpreter semantics versionは実行しない", async () => {
+    const { runtime: memory } = runtime(new MutableResolver(), [1, 2]);
+    const v2 = plan(directStep("future", alice), "unimplemented-v2", 2);
+    const started = await memory.start({ plan: v2, startedAt });
+    assert(Result.isFailure(started));
+    expect(started.error).toBeInstanceOf(UnsupportedInterpreterSemanticsVersionError);
   });
 
   it("activationの一時失敗でも受理済みDecisionを保持し、同一event再送で続行する", async () => {
