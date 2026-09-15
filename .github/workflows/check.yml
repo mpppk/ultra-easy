@@ -17,7 +17,10 @@ jobs:
       - name: Install dependencies
         run: vp install
       - name: Check
-        run: vp check
+        run: |
+          vp fmt packages/approval-runtime-cloudflare/src/workflow.ts
+          git diff -- packages/approval-runtime-cloudflare/src/workflow.ts
+          exit 1
       - name: Start OpenFGA test server
         run: |
           docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run
