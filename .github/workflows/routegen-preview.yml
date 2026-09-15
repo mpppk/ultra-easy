@@ -1,0 +1,20 @@
+name: routegen-preview
+
+on:
+  push:
+    branches: [preview/approval-runtime-harness]
+
+jobs:
+  routegen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: voidzero-dev/setup-vp@v1.19.0
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - run: vp -C apps/web run generate-routes
+      - run: |
+          git diff -- apps/web/src/routeTree.gen.ts
+          exit 1
