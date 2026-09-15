@@ -133,7 +133,7 @@ export type ResolvedApproverCandidates = ApproverCandidateList & {
 };
 
 function requiresCompleteCandidateSet(step: MaterializedApprovalStep): boolean {
-  if (step.resolution === "snapshot") return true;
+  if ((step.resolution ?? "dynamic") === "snapshot") return true;
   return step.candidateCompletion === "all" || typeof step.candidateCompletion === "object";
 }
 
