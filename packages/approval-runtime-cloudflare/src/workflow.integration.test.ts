@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
-import { assert, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { assert, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { env } from "cloudflare:workers";
-import { introspectWorkflowInstance } from "cloudflare:test";
+import { applyD1Migrations, introspectWorkflowInstance } from "cloudflare:test";
 
 import {
   computeActionFingerprint,
@@ -33,6 +33,9 @@ import {
 
 import type { ActionWorkflowParams } from "./workflow.ts";
 
+const testEnv = env as typeof env & {
+  TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
+};
 const organizationId = "organization:workflow-test" as OrganizationId;
 const bindingId = "binding:workflow-test" as ApprovalPolicyBindingId;
 const policyKey = "policy:workflow-test" as ApprovalPolicyKey;
@@ -40,47 +43,17 @@ const alice = "user:alice" as UserId;
 const bob = "user:bob" as UserId;
 const carol = "user:carol" as UserId;
 
+beforeAll(async () => {
+  await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
+});
+
 beforeEach(async () => {
-  await env.DB.exec("DROP TABLE IF EXISTS approval_tasks");
-  await env.DB.exec("DROP TABLE IF EXISTS approval_runtime_projections");
-  await env.DB.exec("DROP TABLE IF EXISTS action_requests");
-  await env.DB.prepare(`CREATE TABLE action_requests (
-    id TEXT NOT NULL,
-    organization_id TEXT NOT NULL,
-    action_fingerprint TEXT NOT NULL,
-    evaluation_snapshot TEXT NOT NULL,
-    evaluation_snapshot_checksum TEXT NOT NULL,
-    policy_binding_snapshots TEXT NOT NULL,
-    materialized_plan TEXT NOT NULL,
-    approval_plan_checksum TEXT NOT NULL,
-    approval_binding_fingerprint TEXT NOT NULL,
-    interpreter_semantics_version INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (organization_id, id)
-  )`).run();
-  await env.DB.prepare(`CREATE TABLE approval_runtime_projections (
-    organization_id TEXT NOT NULL,
-    action_request_id TEXT NOT NULL,
-    approval_plan_checksum TEXT NOT NULL,
-    status TEXT NOT NULL,
-    state_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (organization_id, action_request_id)
-  )`).run();
-  await env.DB.prepare(`CREATE TABLE approval_tasks (
-    organization_id TEXT NOT NULL,
-    task_id TEXT NOT NULL,
-    action_request_id TEXT NOT NULL,
-    materialized_step_id TEXT NOT NULL,
-    status TEXT NOT NULL,
-    candidate_user_ids TEXT NOT NULL,
-    decisions TEXT NOT NULL,
-    activated_at TEXT NOT NULL,
-    expires_at TEXT,
-    closed_at TEXT,
-    distinct_scope_id TEXT,
-    PRIMARY KEY (organization_id, task_id)
-  )`).run();
+  await testEnv.DB.batch([
+    testEnv.DB.prepare("DELETE FROM approval_tasks"),
+    testEnv.DB.prepare("DELETE FROM approval_runtime_projections"),
+    testEnv.DB.prepare("DELETE FROM approval_task_candidate_projections"),
+    testEnv.DB.prepare("DELETE FROM action_requests"),
+  ]);
 });
 
 function source(path: string): MaterializedStepSource {
@@ -183,7 +156,7 @@ async function validPlan(
 }
 
 async function savePlan(plan: MaterializedApprovalPlan): Promise<void> {
-  const saved = await new D1MaterializedPlanRepository(env.DB).save(plan);
+  const saved = await new D1MaterializedPlanRepository(testEnv.DB).save(plan);
   expect(saved.type === "created" || saved.type === "existing").toBe(true);
 }
 
@@ -208,7 +181,7 @@ function decision(
 }
 
 async function createInstance(plan: MaterializedApprovalPlan, id: string) {
-  return env.ACTION_WORKFLOW.create({
+  return testEnv.ACTION_WORKFLOW.create({
     id,
     params: {
       actionRequestId: plan.actionRequestId,
@@ -218,7 +191,7 @@ async function createInstance(plan: MaterializedApprovalPlan, id: string) {
 }
 
 async function expectCompleted(instanceId: string, status: string) {
-  const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, instanceId);
+  const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, instanceId);
   await introspector.waitForStatus("complete");
   expect(await introspector.getOutput()).toMatchObject({ type: "completed", status });
   await introspector.dispose();
@@ -246,7 +219,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     });
 
     await expectCompleted(id, "approved");
-    const projection = await new D1ApprovalRuntimeProjectionRepository(env.DB).load({
+    const projection = await new D1ApprovalRuntimeProjectionRepository(testEnv.DB).load({
       organizationId,
       actionRequestId: plan.actionRequestId,
     });
@@ -287,7 +260,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const id = "cf-resume";
     await createInstance(plan, id);
 
-    const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(env.DB);
+    const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(testEnv.DB);
     await vi.waitFor(
       async () => {
         const projection = await runtimeRepository.load({
@@ -301,7 +274,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       { timeout: 1_500 },
     );
 
-    const pausingInstance = await env.ACTION_WORKFLOW.get(id);
+    const pausingInstance = await testEnv.ACTION_WORKFLOW.get(id);
     await pausingInstance.pause();
     await vi.waitFor(
       async () => {
@@ -310,7 +283,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       { timeout: 1_500 },
     );
 
-    const resumingInstance = await env.ACTION_WORKFLOW.get(id);
+    const resumingInstance = await testEnv.ACTION_WORKFLOW.get(id);
     await resumingInstance.resume();
     await vi.waitFor(
       async () => {
@@ -318,13 +291,13 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       },
       { timeout: 1_500 },
     );
-    const eventInstance = await env.ACTION_WORKFLOW.get(id);
+    const eventInstance = await testEnv.ACTION_WORKFLOW.get(id);
     await eventInstance.sendEvent({
       type: "approval-decision",
       payload: decision(plan, approval, bob, "after-resume"),
     });
 
-    const completedInstance = await env.ACTION_WORKFLOW.get(id);
+    const completedInstance = await testEnv.ACTION_WORKFLOW.get(id);
     await vi.waitFor(
       async () => {
         const status = await completedInstance.status();
@@ -341,7 +314,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await savePlan(plan);
 
     const id = "cf-retry";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
       await modifier.mockStepError(
@@ -357,7 +330,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await createInstance(plan, id);
     await introspector.waitForStatus("complete");
 
-    const projection = await new D1ApprovalRuntimeProjectionRepository(env.DB).load({
+    const projection = await new D1ApprovalRuntimeProjectionRepository(testEnv.DB).load({
       organizationId,
       actionRequestId: plan.actionRequestId,
     });
@@ -372,14 +345,14 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await savePlan(plan);
 
     const id = "cf-checksum";
-    await env.ACTION_WORKFLOW.create({
+    await testEnv.ACTION_WORKFLOW.create({
       id,
       params: {
         actionRequestId: plan.actionRequestId,
         approvalPlanChecksum: `sha256:${"f".repeat(64)}` as ApprovalPlanChecksum,
       },
     });
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.waitForStatus("complete");
     expect(await introspector.getOutput()).toMatchObject({
       type: "failed",
@@ -398,8 +371,8 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     expect(new TextEncoder().encode(JSON.stringify(params)).byteLength).toBeLessThan(1024);
 
     const id = "cf-payload";
-    const introspector = await introspectWorkflowInstance(env.ACTION_WORKFLOW, id);
-    await env.ACTION_WORKFLOW.create({ id, params });
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    await testEnv.ACTION_WORKFLOW.create({ id, params });
     await introspector.waitForStatus("complete");
     expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
     const initialized = await introspector.waitForStepResult({
