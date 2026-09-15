@@ -1,34 +1,24 @@
 import { env } from "cloudflare:workers";
-import { Result } from "@praha/byethrow";
-import type { D1Database } from "@cloudflare/workers-types";
 
-import type {
-  ActionRequestId,
-  ApprovalDecisionEvent,
-  ApprovalPlanChecksum,
-  ApprovalTaskId,
-  UserId,
-} from "@app/approval-core";
-import {
-  D1ApprovalRuntimeProjectionRepository,
-  D1MaterializedPlanRepository,
-} from "@app/approval-d1";
+import type { PreviewScenario } from "./scenarios.ts";
 
-import { createPreviewPlan, type PreviewScenario } from "./approval-runtime.ts";
-
-type WorkflowParams = {
-  actionRequestId: ActionRequestId;
-  approvalPlanChecksum: ApprovalPlanChecksum;
+type RuntimeService = {
+  fetch(request: Request): Promise<Response>;
 };
 
 type PreviewEnv = {
-  DB: D1Database;
-  ACTION_WORKFLOW: Workflow<WorkflowParams>;
+  APPROVAL_RUNTIME_PREVIEW: RuntimeService;
   PREVIEW_HARNESS_ENABLED?: string;
 };
 
 function previewEnv(): PreviewEnv {
   return env as unknown as PreviewEnv;
+}
+
+function runtimeRequest(path: string, init?: RequestInit): Promise<Response> {
+  return previewEnv().APPROVAL_RUNTIME_PREVIEW.fetch(
+    new Request(`https://approval-runtime.internal${path}`, init),
+  );
 }
 
 export function previewNotFound(): Response {
@@ -43,71 +33,34 @@ export function json(data: unknown, init?: ResponseInit): Response {
   return Response.json(data, init);
 }
 
-export async function startPreviewRun(scenario: PreviewScenario) {
-  const bindings = previewEnv();
-  const plan = await createPreviewPlan(scenario);
-  const saved = await new D1MaterializedPlanRepository(bindings.DB).save(plan);
-  if (saved.type !== "created" && saved.type !== "existing") {
-    return Promise.reject(new Error(`failed to save preview plan: ${saved.type}`));
-  }
-
-  await bindings.ACTION_WORKFLOW.create({
-    id: String(plan.actionRequestId),
-    params: {
-      actionRequestId: plan.actionRequestId,
-      approvalPlanChecksum: plan.approvalPlanChecksum,
-    },
+export function startPreviewRun(scenario: PreviewScenario): Promise<Response> {
+  return runtimeRequest("/preview/approval-runs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scenario }),
   });
-
-  return {
-    scenario,
-    actionRequestId: plan.actionRequestId,
-    workflowInstanceId: String(plan.actionRequestId),
-  };
 }
 
-export async function getPreviewRun(actionRequestId: ActionRequestId) {
-  const bindings = previewEnv();
-  const workflow = await bindings.ACTION_WORKFLOW.get(String(actionRequestId));
-  const workflowStatus = await workflow.status();
-
-  const rows = await bindings.DB.prepare(
-    "SELECT organization_id FROM action_requests WHERE id = ? LIMIT 1",
-  )
-    .bind(actionRequestId)
-    .first<{ organization_id: string }>();
-  if (!rows) return null;
-
-  const projection = await new D1ApprovalRuntimeProjectionRepository(bindings.DB).load({
-    organizationId: rows.organization_id as Parameters<
-      D1ApprovalRuntimeProjectionRepository["load"]
-    >[0]["organizationId"],
-    actionRequestId,
-  });
-  if (Result.isFailure(projection)) return Promise.reject(projection.error);
-
-  return {
-    actionRequestId,
-    workflow: workflowStatus,
-    runtime: projection.value,
-  };
+export function getPreviewRun(actionRequestId: string): Promise<Response> {
+  return runtimeRequest(`/preview/approval-runs/${encodeURIComponent(actionRequestId)}`);
 }
 
-export async function sendPreviewDecision(input: {
-  actionRequestId: ActionRequestId;
-  taskId: ApprovalTaskId;
-  userId: UserId;
+export function sendPreviewDecision(input: {
+  actionRequestId: string;
+  taskId: string;
+  userId: string;
   decision: "approve" | "reject";
-}) {
-  const bindings = previewEnv();
-  const workflow = await bindings.ACTION_WORKFLOW.get(String(input.actionRequestId));
-  const event: ApprovalDecisionEvent = {
-    idempotencyKey: crypto.randomUUID(),
-    taskId: input.taskId,
-    userId: input.userId,
-    decision: input.decision,
-    decidedAt: new Date().toISOString(),
-  };
-  await workflow.sendEvent({ type: "approval-decision", payload: event });
-  return { accepted: true, idempotencyKey: event.idempotencyKey };
+}): Promise<Response> {
+  return runtimeRequest(
+    `/preview/approval-runs/${encodeURIComponent(input.actionRequestId)}/decisions`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskId: input.taskId,
+        userId: input.userId,
+        decision: input.decision,
+      }),
+    },
+  );
 }
