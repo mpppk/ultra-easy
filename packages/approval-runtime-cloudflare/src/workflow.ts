@@ -1,5 +1,4 @@
 import { Result } from "@praha/byethrow";
-import { ErrorFactory } from "@praha/error-factory";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowSleepDuration, WorkflowStep } from "cloudflare:workers";
 import type { D1Database } from "@cloudflare/workers-types";
@@ -53,17 +52,15 @@ export type ActionWorkflowEnv = {
 
 type RuntimeTransition =
   | { type: "advanced"; state: ApprovalRuntimeState }
-  | { type: "failed"; code: string; message: string };
+  | { type: "failed"; code: string; message: string }
+  | { type: "retry"; error: Error };
 type RuntimeFailure = Extract<RuntimeTransition, { type: "failed" }>;
+type RuntimeStepResult = Exclude<RuntimeTransition, { type: "retry" }>;
 
-export class WorkflowEventWaitError extends ErrorFactory({
-  name: "WorkflowEventWaitError",
-  message: ({ detail }) => `Approval Decision eventの待機に失敗しました: ${detail}`,
-  fields: ErrorFactory.fields<{
-    code: "workflow_event_wait_failed";
-    detail: string;
-  }>(),
-}) {}
+type DecisionWaitResult =
+  | { type: "decision"; event: ApprovalDecisionEvent }
+  | { type: "timeout" }
+  | { type: "control_flow"; error: unknown };
 
 function errorName(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("name" in error)) return undefined;
@@ -94,33 +91,26 @@ export function isWorkflowTimeoutError(error: unknown): boolean {
   );
 }
 
-function workflowEventWaitError(error: unknown): WorkflowEventWaitError {
-  return new WorkflowEventWaitError({
-    code: "workflow_event_wait_failed",
-    detail: errorMessage(error) ?? "waitForEvent failed",
-    ...(error instanceof Error ? { cause: error } : {}),
-  });
-}
-
 async function waitForDecision(input: {
   step: WorkflowStep;
   name: string;
   timeout: WorkflowSleepDuration;
-}): Result.ResultAsync<ApprovalDecisionEvent, WorkflowEventWaitError> {
+}): Promise<DecisionWaitResult> {
   try {
     const event = await input.step.waitForEvent<ApprovalDecisionEvent>(input.name, {
       type: "approval-decision",
       timeout: input.timeout,
     });
-    return Result.succeed({
-      ...event.payload,
-      decidedAt: event.timestamp.toISOString(),
-    });
+    return {
+      type: "decision",
+      event: {
+        ...event.payload,
+        decidedAt: event.timestamp.toISOString(),
+      },
+    };
   } catch (error) {
-    if (isWorkflowTimeoutError(error)) {
-      return Result.fail(workflowEventWaitError(error));
-    }
-    return Promise.reject(error);
+    if (isWorkflowTimeoutError(error)) return { type: "timeout" };
+    return { type: "control_flow", error };
   }
 }
 
@@ -133,8 +123,12 @@ function failed(error: Error): RuntimeFailure {
   return { type: "failed", code: errorCode(error), message: error.message };
 }
 
-function interpreterFailure(error: Error): RuntimeFailure {
-  if (error instanceof ApproverResolverProviderError && error.retriable) throw error;
+function retry(error: Error): Extract<RuntimeTransition, { type: "retry" }> {
+  return { type: "retry", error };
+}
+
+function interpreterFailure(error: Error): RuntimeFailure | Extract<RuntimeTransition, { type: "retry" }> {
+  if (error instanceof ApproverResolverProviderError && error.retriable) return retry(error);
   return failed(error);
 }
 
@@ -143,9 +137,9 @@ function loadFailure(
     Awaited<ReturnType<D1MaterializedPlanRepository["loadForWorkflow"]>>,
     { type: "found" }
   >,
-): RuntimeFailure {
+): RuntimeFailure | Extract<RuntimeTransition, { type: "retry" }> {
   if (result.type === "repository_error") {
-    throw new Error(`Materialized Approval Plan repository error: ${result.message}`);
+    return retry(new Error(`Materialized Approval Plan repository error: ${result.message}`));
   }
   if (result.type === "not_found") {
     return {
@@ -190,8 +184,7 @@ async function persistProjection(
     organizationId,
     state,
   });
-  if (Result.isFailure(stored)) throw stored.error;
-  return { type: "advanced", state };
+  return Result.isFailure(stored) ? retry(stored.error) : { type: "advanced", state };
 }
 
 async function initializeRuntime(
@@ -284,6 +277,18 @@ async function expireRuntime(
   return persistProjection(env, loaded.plan.organizationId, expired.value);
 }
 
+async function runRuntimeStep(
+  step: WorkflowStep,
+  name: string,
+  callback: () => Promise<RuntimeTransition>,
+): Promise<RuntimeStepResult> {
+  return step.do(name, async () => {
+    const transition = await callback();
+    if (transition.type === "retry") return Promise.reject(transition.error);
+    return transition;
+  });
+}
+
 function addSeconds(value: string, seconds: number): string {
   return new Date(Date.parse(value) + seconds * 1000).toISOString();
 }
@@ -327,7 +332,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     }
 
     let logicalNow = event.timestamp.toISOString();
-    const initialized = await step.do("initialize approval runtime", async () =>
+    const initialized = await runRuntimeStep(step, "initialize approval runtime", () =>
       initializeRuntime(this.env, params, logicalNow),
     );
     if (initialized.type === "failed") return outputFromTransition(params, initialized);
@@ -337,7 +342,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     while (state.status === "pending") {
       const nextExpiry = nextApprovalRuntimeExpiry(state);
       if (nextExpiry && Date.parse(nextExpiry) <= Date.parse(logicalNow)) {
-        const expired = await step.do(`expire approval runtime ${iteration}`, async () =>
+        const expired = await runRuntimeStep(step, `expire approval runtime ${iteration}`, () =>
           expireRuntime(this.env, params, state, nextExpiry),
         );
         if (expired.type === "failed") return outputFromTransition(params, expired);
@@ -353,9 +358,10 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         name: `wait for approval decision ${iteration}`,
         timeout: timeout.timeout,
       });
-      if (Result.isFailure(decision)) {
+      if (decision.type === "control_flow") return Promise.reject(decision.error);
+      if (decision.type === "timeout") {
         if (nextExpiry) {
-          const expired = await step.do(`expire approval runtime ${iteration}`, async () =>
+          const expired = await runRuntimeStep(step, `expire approval runtime ${iteration}`, () =>
             expireRuntime(this.env, params, state, nextExpiry),
           );
           if (expired.type === "failed") return outputFromTransition(params, expired);
@@ -368,14 +374,14 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         continue;
       }
 
-      const recorded = await step.do(`record approval decision ${iteration}`, async () =>
-        recordDecision(this.env, params, state, decision.value),
+      const recorded = await runRuntimeStep(step, `record approval decision ${iteration}`, () =>
+        recordDecision(this.env, params, state, decision.event),
       );
       if (recorded.type === "failed") return outputFromTransition(params, recorded);
       state = recorded.state;
-      logicalNow = decision.value.decidedAt;
+      logicalNow = decision.event.decidedAt;
 
-      const advanced = await step.do(`activate approval runtime ${iteration}`, async () =>
+      const advanced = await runRuntimeStep(step, `activate approval runtime ${iteration}`, () =>
         advanceRuntime(this.env, params, state, logicalNow),
       );
       if (advanced.type === "failed") return outputFromTransition(params, advanced);
