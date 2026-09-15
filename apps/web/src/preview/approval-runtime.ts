@@ -38,8 +38,8 @@ const alice = "user:alice" as UserId;
 const bob = "user:bob" as UserId;
 const carol = "user:carol" as UserId;
 
-function assertSuccess<T>(result: Result.Result<T, Error>): T {
-  if (Result.isFailure(result)) return Promise.reject(result.error) as never;
+async function unwrap<T>(result: Result.Result<T, Error>): Promise<T> {
+  if (Result.isFailure(result)) return Promise.reject(result.error);
   return result.value;
 }
 
@@ -53,7 +53,7 @@ async function directStep(
   path: string,
 ): Promise<MaterializedApprovalStep> {
   const stepSource = source(path);
-  const materializedStepId = assertSuccess(await createMaterializedStepId(stepSource));
+  const materializedStepId = await unwrap(await createMaterializedStepId(stepSource));
   return {
     type: "approval",
     materializedStepId,
@@ -154,18 +154,18 @@ export async function createPreviewPlan(
     },
   ];
 
-  const actionFingerprint = assertSuccess(await computeActionFingerprint(action));
-  const evaluationSnapshotChecksum = assertSuccess(
+  const actionFingerprint = await unwrap(await computeActionFingerprint(action));
+  const evaluationSnapshotChecksum = await unwrap(
     await computeEvaluationSnapshotChecksum(evaluationSnapshot),
   );
-  const approvalPlanChecksum = assertSuccess(
+  const approvalPlanChecksum = await unwrap(
     await computeApprovalPlanChecksum({
       policyBindingSnapshots,
       flow,
       interpreterSemanticsVersion: 1,
     }),
   );
-  const approvalBindingFingerprint = assertSuccess(
+  const approvalBindingFingerprint = await unwrap(
     await computeApprovalBindingFingerprint({
       actionFingerprint,
       evaluationSnapshotChecksum,
