@@ -113,7 +113,7 @@ async function validPlan(
   flow: MaterializedFlow,
   input: Record<string, unknown> = {},
 ): Promise<MaterializedApprovalPlan> {
-  const actionRequestId = `action-request:${name}` as ActionRequestId;
+  const actionRequestId = name as ActionRequestId;
   const action: MaterializedApprovalPlan["action"] = {
     definition: {
       key: "action:workflow" as MaterializedApprovalPlan["action"]["definition"]["key"],
