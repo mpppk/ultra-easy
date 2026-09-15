@@ -2,8 +2,9 @@ import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
 import {
-  applyApprovalDecision,
+  advanceApprovalRuntime,
   expireApprovalRuntime,
+  recordApprovalDecision,
   startApprovalRuntime,
 } from "@app/approval-core";
 import type {
@@ -95,15 +96,28 @@ export class InMemoryApprovalRuntime implements DurableRuntime<InMemoryApprovalR
         }),
       );
     }
-    const decided = await applyApprovalDecision({
+
+    const recorded = await recordApprovalDecision({
       plan: record.plan,
       resolver: this.resolver,
       state: record.state,
       event: input.event,
     });
-    if (Result.isFailure(decided)) return decided;
-    record.state = clone(decided.value.state);
-    return Result.succeed({ state: clone(record.state), duplicate: decided.value.duplicate });
+    if (Result.isFailure(recorded)) return recorded;
+
+    // Decisionとidempotency keyは後続activationより先にcommitする。
+    record.state = clone(recorded.value.state);
+
+    const advanced = await advanceApprovalRuntime({
+      plan: record.plan,
+      resolver: this.resolver,
+      state: record.state,
+      now: input.event.decidedAt,
+    });
+    if (Result.isFailure(advanced)) return advanced;
+
+    record.state = clone(advanced.value);
+    return Result.succeed({ state: clone(record.state), duplicate: recorded.value.duplicate });
   }
 
   async advanceTime(input: {
