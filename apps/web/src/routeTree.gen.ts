@@ -10,33 +10,89 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as PreviewApprovalRuntimeRouteImport } from './routes/preview.approval-runtime'
+import { Route as ApiPreviewApprovalRunsRouteImport } from './routes/api.preview.approval-runs'
+import { Route as ApiPreviewApprovalRunsIdRouteImport } from './routes/api.preview.approval-runs.$id'
+import { Route as ApiPreviewApprovalRunsIdDecisionsRouteImport } from './routes/api.preview.approval-runs.$id.decisions'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PreviewApprovalRuntimeRoute = PreviewApprovalRuntimeRouteImport.update({
+  id: '/preview/approval-runtime',
+  path: '/preview/approval-runtime',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPreviewApprovalRunsRoute = ApiPreviewApprovalRunsRouteImport.update({
+  id: '/api/preview/approval-runs',
+  path: '/api/preview/approval-runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPreviewApprovalRunsIdRoute =
+  ApiPreviewApprovalRunsIdRouteImport.update({
+    id: '/$id',
+    path: '/$id',
+    getParentRoute: () => ApiPreviewApprovalRunsRoute,
+  } as any)
+const ApiPreviewApprovalRunsIdDecisionsRoute =
+  ApiPreviewApprovalRunsIdDecisionsRouteImport.update({
+    id: '/decisions',
+    path: '/decisions',
+    getParentRoute: () => ApiPreviewApprovalRunsIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
+  '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
+  '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
+  '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
+  '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
+  '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
+  '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
+  '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
+  '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
+  '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/preview/approval-runtime'
+    | '/api/preview/approval-runs'
+    | '/api/preview/approval-runs/$id'
+    | '/api/preview/approval-runs/$id/decisions'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/preview/approval-runtime'
+    | '/api/preview/approval-runs'
+    | '/api/preview/approval-runs/$id'
+    | '/api/preview/approval-runs/$id/decisions'
+  id:
+    | '__root__'
+    | '/'
+    | '/preview/approval-runtime'
+    | '/api/preview/approval-runs'
+    | '/api/preview/approval-runs/$id'
+    | '/api/preview/approval-runs/$id/decisions'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PreviewApprovalRuntimeRoute: typeof PreviewApprovalRuntimeRoute
+  ApiPreviewApprovalRunsRoute: typeof ApiPreviewApprovalRunsRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +104,70 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/preview/approval-runtime': {
+      id: '/preview/approval-runtime'
+      path: '/preview/approval-runtime'
+      fullPath: '/preview/approval-runtime'
+      preLoaderRoute: typeof PreviewApprovalRuntimeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/preview/approval-runs': {
+      id: '/api/preview/approval-runs'
+      path: '/api/preview/approval-runs'
+      fullPath: '/api/preview/approval-runs'
+      preLoaderRoute: typeof ApiPreviewApprovalRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/preview/approval-runs/$id': {
+      id: '/api/preview/approval-runs/$id'
+      path: '/$id'
+      fullPath: '/api/preview/approval-runs/$id'
+      preLoaderRoute: typeof ApiPreviewApprovalRunsIdRouteImport
+      parentRoute: typeof ApiPreviewApprovalRunsRoute
+    }
+    '/api/preview/approval-runs/$id/decisions': {
+      id: '/api/preview/approval-runs/$id/decisions'
+      path: '/decisions'
+      fullPath: '/api/preview/approval-runs/$id/decisions'
+      preLoaderRoute: typeof ApiPreviewApprovalRunsIdDecisionsRouteImport
+      parentRoute: typeof ApiPreviewApprovalRunsIdRoute
+    }
   }
 }
 
+interface ApiPreviewApprovalRunsIdRouteChildren {
+  ApiPreviewApprovalRunsIdDecisionsRoute: typeof ApiPreviewApprovalRunsIdDecisionsRoute
+}
+
+const ApiPreviewApprovalRunsIdRouteChildren: ApiPreviewApprovalRunsIdRouteChildren =
+  {
+    ApiPreviewApprovalRunsIdDecisionsRoute:
+      ApiPreviewApprovalRunsIdDecisionsRoute,
+  }
+
+const ApiPreviewApprovalRunsIdRouteWithChildren =
+  ApiPreviewApprovalRunsIdRoute._addFileChildren(
+    ApiPreviewApprovalRunsIdRouteChildren,
+  )
+
+interface ApiPreviewApprovalRunsRouteChildren {
+  ApiPreviewApprovalRunsIdRoute: typeof ApiPreviewApprovalRunsIdRouteWithChildren
+}
+
+const ApiPreviewApprovalRunsRouteChildren: ApiPreviewApprovalRunsRouteChildren =
+  {
+    ApiPreviewApprovalRunsIdRoute: ApiPreviewApprovalRunsIdRouteWithChildren,
+  }
+
+const ApiPreviewApprovalRunsRouteWithChildren =
+  ApiPreviewApprovalRunsRoute._addFileChildren(
+    ApiPreviewApprovalRunsRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PreviewApprovalRuntimeRoute: PreviewApprovalRuntimeRoute,
+  ApiPreviewApprovalRunsRoute: ApiPreviewApprovalRunsRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
