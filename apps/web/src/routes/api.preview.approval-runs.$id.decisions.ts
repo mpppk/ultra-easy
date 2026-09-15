@@ -1,7 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import type { ActionRequestId, ApprovalTaskId, UserId } from "@app/approval-core";
-
 import {
   isPreviewHarnessEnabled,
   json,
@@ -30,15 +28,12 @@ export const Route = createFileRoute("/api/preview/approval-runs/$id/decisions")
           return json({ error: "invalid decision payload" }, { status: 400 });
         }
 
-        return json(
-          await sendPreviewDecision({
-            actionRequestId: params.id as ActionRequestId,
-            taskId: taskId as ApprovalTaskId,
-            userId: userId as UserId,
-            decision,
-          }),
-          { status: 202 },
-        );
+        return sendPreviewDecision({
+          actionRequestId: params.id,
+          taskId,
+          userId,
+          decision,
+        });
       },
     },
   },
