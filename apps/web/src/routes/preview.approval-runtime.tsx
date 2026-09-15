@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { previewScenarios, type PreviewScenario } from "../preview/approval-runtime.ts";
+import { previewScenarios, type PreviewScenario } from "../preview/scenarios.ts";
 
 type RuntimeTask = {
   id: string;
