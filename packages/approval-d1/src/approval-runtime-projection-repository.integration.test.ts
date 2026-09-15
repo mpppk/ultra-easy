@@ -59,6 +59,19 @@ class SqliteD1Database implements D1DatabaseLike {
     };
     return prepared;
   }
+
+  async batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]> {
+    this.db.exec("BEGIN");
+    try {
+      const results: D1RunResultLike[] = [];
+      for (const statement of statements) results.push(await statement.run());
+      this.db.exec("COMMIT");
+      return results;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
 }
 
 function branded<T extends string>(value: string): T {
