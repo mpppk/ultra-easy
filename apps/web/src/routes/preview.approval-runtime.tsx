@@ -86,7 +86,10 @@ function PreviewApprovalRuntime() {
       <p>Cloudflare Workflows + D1 のPreview E2E確認用ハーネスです。</p>
 
       <section style={{ display: "flex", gap: 12, alignItems: "center", marginBlock: 24 }}>
-        <select value={scenario} onChange={(event) => setScenario(event.target.value as PreviewScenario)}>
+        <select
+          value={scenario}
+          onChange={(event) => setScenario(event.target.value as PreviewScenario)}
+        >
           {previewScenarios.map((value) => (
             <option key={value} value={value}>
               {value}
@@ -107,7 +110,9 @@ function PreviewApprovalRuntime() {
         <section>
           <dl>
             <dt>Action request</dt>
-            <dd><code>{status.actionRequestId}</code></dd>
+            <dd>
+              <code>{status.actionRequestId}</code>
+            </dd>
             <dt>Workflow</dt>
             <dd>{status.workflow.status}</dd>
             <dt>Runtime</dt>
@@ -116,18 +121,31 @@ function PreviewApprovalRuntime() {
 
           <h2>Tasks</h2>
           {status.runtime?.tasks.map((task) => (
-            <article key={task.id} style={{ border: "1px solid currentColor", padding: 16, marginBlock: 12 }}>
-              <div><code>{task.id}</code></div>
+            <article
+              key={task.id}
+              style={{ border: "1px solid currentColor", padding: 16, marginBlock: 12 }}
+            >
+              <div>
+                <code>{task.id}</code>
+              </div>
               <div>Status: {task.status}</div>
               <div>Candidates: {task.candidateUserIds.join(", ") || "none"}</div>
               {task.status === "pending" ? (
                 <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                   {task.candidateUserIds.map((userId) => (
                     <span key={userId} style={{ display: "inline-flex", gap: 4 }}>
-                      <button type="button" disabled={busy} onClick={() => void decide(task, userId, "approve")}>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void decide(task, userId, "approve")}
+                      >
                         Approve as {userId}
                       </button>
-                      <button type="button" disabled={busy} onClick={() => void decide(task, userId, "reject")}>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void decide(task, userId, "reject")}
+                      >
                         Reject as {userId}
                       </button>
                     </span>
