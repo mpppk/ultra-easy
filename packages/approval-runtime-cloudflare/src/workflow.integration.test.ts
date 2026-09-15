@@ -322,15 +322,30 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
         new Error("transient initialization failure"),
         1,
       );
-      await modifier.mockEvent({
-        type: "approval-decision",
-        payload: decision(plan, approval, bob, "retry-decision"),
-      });
     });
-    await createInstance(plan, id);
-    await introspector.waitForStatus("complete");
+    const instance = await createInstance(plan, id);
+    const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(testEnv.DB);
+    await vi.waitFor(
+      async () => {
+        const projection = await runtimeRepository.load({
+          organizationId,
+          actionRequestId: plan.actionRequestId,
+        });
+        assert(Result.isSuccess(projection));
+        expect(projection.value?.status).toBe("pending");
+        expect(projection.value?.tasks).toHaveLength(1);
+      },
+      { timeout: 1_500 },
+    );
 
-    const projection = await new D1ApprovalRuntimeProjectionRepository(testEnv.DB).load({
+    await instance.sendEvent({
+      type: "approval-decision",
+      payload: decision(plan, approval, bob, "retry-decision"),
+    });
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
+
+    const projection = await runtimeRepository.load({
       organizationId,
       actionRequestId: plan.actionRequestId,
     });
