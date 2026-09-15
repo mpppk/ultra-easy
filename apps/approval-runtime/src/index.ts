@@ -35,7 +35,8 @@ function errorMessage(error: unknown): string {
 
 async function startRun(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
   const body = await request.json().catch(() => null);
-  const scenario = body && typeof body === "object" && "scenario" in body ? body.scenario : undefined;
+  const scenario =
+    body && typeof body === "object" && "scenario" in body ? body.scenario : undefined;
   if (!isPreviewScenario(scenario)) {
     return json({ error: "invalid preview scenario" }, { status: 400 });
   }
@@ -65,7 +66,9 @@ async function startRun(request: Request, env: PreviewRuntimeEnv): Promise<Respo
 }
 
 async function getRun(actionRequestId: ActionRequestId, env: PreviewRuntimeEnv): Promise<Response> {
-  const row = await env.DB.prepare("SELECT organization_id FROM action_requests WHERE id = ? LIMIT 1")
+  const row = await env.DB.prepare(
+    "SELECT organization_id FROM action_requests WHERE id = ? LIMIT 1",
+  )
     .bind(actionRequestId)
     .first<{ organization_id: string }>();
   if (!row) return json({ error: "preview run not found" }, { status: 404 });
@@ -128,11 +131,7 @@ async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response
 
   const decisionMatch = /^\/preview\/approval-runs\/([^/]+)\/decisions$/.exec(url.pathname);
   if (request.method === "POST" && decisionMatch?.[1]) {
-    return sendDecision(
-      request,
-      decodeURIComponent(decisionMatch[1]) as ActionRequestId,
-      env,
-    );
+    return sendDecision(request, decodeURIComponent(decisionMatch[1]) as ActionRequestId, env);
   }
 
   const statusMatch = /^\/preview\/approval-runs\/([^/]+)$/.exec(url.pathname);
