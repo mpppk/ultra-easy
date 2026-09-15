@@ -69,7 +69,7 @@ class SqliteD1Database implements D1DatabaseLike {
       return results;
     } catch (error) {
       this.db.exec("ROLLBACK");
-      throw error;
+      return Promise.reject(error);
     }
   }
 }
