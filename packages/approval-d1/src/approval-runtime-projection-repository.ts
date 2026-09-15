@@ -18,18 +18,16 @@ type StoredRuntimeProjectionRow = {
   state_json: string;
 };
 
+type D1BatchDatabaseLike = D1DatabaseLike & {
+  batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]>;
+};
+
 function repositoryError(detail: string): ApprovalRuntimeProjectionRepositoryError {
   return new ApprovalRuntimeProjectionRepositoryError({
     code: "approval_runtime_projection_repository_error",
     detail,
   });
 }
-
-const runStatement = Result.fn({
-  try: async (statement: D1PreparedStatementLike): Promise<D1RunResultLike> => statement.run(),
-  catch: (error): ApprovalRuntimeProjectionRepositoryError =>
-    repositoryError(error instanceof Error ? error.message : "D1 statementの実行に失敗しました"),
-});
 
 const firstRuntimeRow = Result.fn({
   try: async (statement: D1PreparedStatementLike): Promise<StoredRuntimeProjectionRow | null> =>
@@ -38,6 +36,15 @@ const firstRuntimeRow = Result.fn({
     repositoryError(
       error instanceof Error ? error.message : "D1 runtime projectionの取得に失敗しました",
     ),
+});
+
+const runBatch = Result.fn({
+  try: async (input: {
+    db: D1BatchDatabaseLike;
+    statements: D1PreparedStatementLike[];
+  }): Promise<D1RunResultLike[]> => input.db.batch(input.statements),
+  catch: (error): ApprovalRuntimeProjectionRepositoryError =>
+    repositoryError(error instanceof Error ? error.message : "D1 batchの実行に失敗しました"),
 });
 
 const serializeJson = Result.fn({
@@ -64,7 +71,13 @@ function latestRuntimeTimestamp(state: ApprovalRuntimeState): string {
       ...task.decisions.map((decision) => decision.decidedAt),
     ]),
   ];
-  return timestamps.sort().at(-1) ?? state.startedAt;
+  const latest = Math.max(...timestamps.map((value) => Date.parse(value)).filter(Number.isFinite));
+  return Number.isFinite(latest) ? new Date(latest).toISOString() : state.startedAt;
+}
+
+function asBatchDatabase(db: D1DatabaseLike): D1BatchDatabaseLike | null {
+  const candidate = db as Partial<D1BatchDatabaseLike>;
+  return typeof candidate.batch === "function" ? (db as D1BatchDatabaseLike) : null;
 }
 
 export class D1ApprovalRuntimeProjectionRepository implements ApprovalRuntimeProjectionRepository {
@@ -74,10 +87,15 @@ export class D1ApprovalRuntimeProjectionRepository implements ApprovalRuntimePro
     organizationId: OrganizationId;
     state: ApprovalRuntimeState;
   }): Result.ResultAsync<void, ApprovalRuntimeProjectionRepositoryError> {
+    const batchDb = asBatchDatabase(this.db);
+    if (!batchDb) {
+      return Result.fail(repositoryError("D1 batch()が利用できないためatomicにprojectionを保存できません"));
+    }
+
     const stateJson = serializeJson(input.state);
     if (Result.isFailure(stateJson)) return stateJson;
 
-    const runtimeSaved = await runStatement(
+    const statements: D1PreparedStatementLike[] = [
       this.db
         .prepare(
           `INSERT INTO approval_runtime_projections (
@@ -98,20 +116,14 @@ export class D1ApprovalRuntimeProjectionRepository implements ApprovalRuntimePro
           stateJson.value,
           latestRuntimeTimestamp(input.state),
         ),
-    );
-    if (Result.isFailure(runtimeSaved)) return runtimeSaved;
-    if (!runtimeSaved.value.success) {
-      return Result.fail(
-        repositoryError(runtimeSaved.value.error ?? "runtime projectionの保存に失敗しました"),
-      );
-    }
+    ];
 
     for (const task of input.state.tasks) {
       const candidates = serializeJson(task.candidateUserIds);
       if (Result.isFailure(candidates)) return candidates;
       const decisions = serializeJson(task.decisions);
       if (Result.isFailure(decisions)) return decisions;
-      const taskSaved = await runStatement(
+      statements.push(
         this.db
           .prepare(
             `INSERT INTO approval_tasks (
@@ -141,12 +153,15 @@ export class D1ApprovalRuntimeProjectionRepository implements ApprovalRuntimePro
             task.distinctScopeId ?? null,
           ),
       );
-      if (Result.isFailure(taskSaved)) return taskSaved;
-      if (!taskSaved.value.success) {
-        return Result.fail(
-          repositoryError(taskSaved.value.error ?? "approval task projectionの保存に失敗しました"),
-        );
-      }
+    }
+
+    const saved = await runBatch({ db: batchDb, statements });
+    if (Result.isFailure(saved)) return saved;
+    const failed = saved.value.find((result) => !result.success);
+    if (failed) {
+      return Result.fail(
+        repositoryError(failed.error ?? "runtime/task projectionのatomic保存に失敗しました"),
+      );
     }
 
     return Result.succeed(undefined);
