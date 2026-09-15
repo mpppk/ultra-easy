@@ -38,7 +38,7 @@ const alice = "user:alice" as UserId;
 const bob = "user:bob" as UserId;
 const carol = "user:carol" as UserId;
 
-async function unwrap<T>(result: Result.Result<T, Error>): Promise<T> {
+async function unwrap<T, E extends Error>(result: Result.Result<T, E>): Promise<T> {
   if (Result.isFailure(result)) return Promise.reject(result.error);
   return result.value;
 }
@@ -131,7 +131,7 @@ export async function createPreviewPlan(
     type: "preview" as MaterializedApprovalPlan["action"]["type"],
     resource: {
       type: "preview" as MaterializedApprovalPlan["action"]["resource"]["type"],
-      id: actionRequestId as MaterializedApprovalPlan["action"]["resource"]["id"],
+      id: actionRequestId as unknown as MaterializedApprovalPlan["action"]["resource"]["id"],
     },
     input: { scenario } as MaterializedApprovalPlan["action"]["input"],
   };
