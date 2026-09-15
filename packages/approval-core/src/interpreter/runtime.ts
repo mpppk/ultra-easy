@@ -39,21 +39,61 @@ import type {
 
 export { createInitialApprovalRuntimeState } from "./state.ts";
 
-export async function startApprovalRuntime(input: {
+type StartApprovalRuntimeInput = {
   plan: MaterializedApprovalPlan;
   resolver: ApproverResolver;
   startedAt: string;
   supportedInterpreterSemanticsVersions?: readonly number[];
-}): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
-  const supported = input.supportedInterpreterSemanticsVersions ?? [1];
-  if (!supported.includes(input.plan.interpreterSemanticsVersion)) {
-    return Result.fail(
-      new UnsupportedInterpreterSemanticsVersionError({
-        code: "unsupported_interpreter_semantics_version",
-        version: input.plan.interpreterSemanticsVersion,
-      }),
-    );
+};
+
+type ApprovalDecisionInput = {
+  plan: MaterializedApprovalPlan;
+  resolver: ApproverResolver;
+  state: ApprovalRuntimeState;
+  event: ApprovalDecisionEvent;
+};
+
+type AdvanceApprovalRuntimeInput = {
+  plan: MaterializedApprovalPlan;
+  resolver: ApproverResolver;
+  state: ApprovalRuntimeState;
+  now: string;
+};
+
+function unsupportedInterpreterSemanticsVersion(
+  version: number,
+): UnsupportedInterpreterSemanticsVersionError {
+  return new UnsupportedInterpreterSemanticsVersionError({
+    code: "unsupported_interpreter_semantics_version",
+    version,
+  });
+}
+
+/**
+ * Planへ固定されたsemantics versionを、対応する実装へdispatchする。
+ * supportedInterpreterSemanticsVersionsはdeployment側のallow-listであり、
+ * 実装が存在しないversionを有効化するものではない。
+ */
+export async function startApprovalRuntime(
+  input: StartApprovalRuntimeInput,
+): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
+  const version = input.plan.interpreterSemanticsVersion;
+  const configured = input.supportedInterpreterSemanticsVersions;
+  if (configured && !configured.includes(version)) {
+    return Result.fail(unsupportedInterpreterSemanticsVersion(version));
   }
+
+  switch (version) {
+    case 1:
+      return startApprovalRuntimeV1(input);
+    default:
+      return Result.fail(unsupportedInterpreterSemanticsVersion(version));
+  }
+}
+
+async function startApprovalRuntimeV1(
+  input: StartApprovalRuntimeInput,
+): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
   if (parseTimestamp(input.startedAt) === null) {
     return Result.fail(
       new InvalidRuntimeTimestampError({
@@ -100,12 +140,22 @@ async function validateDecisionCandidate(input: {
  * durable runtimeはこのstateを先に永続化してからadvanceApprovalRuntimeを呼ぶことで、
  * activation側の一時障害やfail-closedで受理済みDecisionを失わない。
  */
-export async function recordApprovalDecision(input: {
-  plan: MaterializedApprovalPlan;
-  resolver: ApproverResolver;
-  state: ApprovalRuntimeState;
-  event: ApprovalDecisionEvent;
-}): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
+export async function recordApprovalDecision(
+  input: ApprovalDecisionInput,
+): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
+  switch (input.plan.interpreterSemanticsVersion) {
+    case 1:
+      return recordApprovalDecisionV1(input);
+    default:
+      return Result.fail(
+        unsupportedInterpreterSemanticsVersion(input.plan.interpreterSemanticsVersion),
+      );
+  }
+}
+
+async function recordApprovalDecisionV1(
+  input: ApprovalDecisionInput,
+): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
   const state = cloneState(input.state);
   if (state.processedDecisionKeys.includes(input.event.idempotencyKey)) {
     return Result.succeed({ state, duplicate: true });
@@ -219,12 +269,22 @@ export async function recordApprovalDecision(input: {
 }
 
 /** 現在のstateから新たにactivate可能なStepを進める。 */
-export async function advanceApprovalRuntime(input: {
-  plan: MaterializedApprovalPlan;
-  resolver: ApproverResolver;
-  state: ApprovalRuntimeState;
-  now: string;
-}): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
+export async function advanceApprovalRuntime(
+  input: AdvanceApprovalRuntimeInput,
+): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
+  switch (input.plan.interpreterSemanticsVersion) {
+    case 1:
+      return advanceApprovalRuntimeV1(input);
+    default:
+      return Result.fail(
+        unsupportedInterpreterSemanticsVersion(input.plan.interpreterSemanticsVersion),
+      );
+  }
+}
+
+async function advanceApprovalRuntimeV1(
+  input: AdvanceApprovalRuntimeInput,
+): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
   if (parseTimestamp(input.now) === null) {
     return Result.fail(
       new InvalidRuntimeTimestampError({ code: "invalid_runtime_timestamp", value: input.now }),
@@ -245,12 +305,9 @@ export async function advanceApprovalRuntime(input: {
   return Result.succeed(state);
 }
 
-export async function applyApprovalDecision(input: {
-  plan: MaterializedApprovalPlan;
-  resolver: ApproverResolver;
-  state: ApprovalRuntimeState;
-  event: ApprovalDecisionEvent;
-}): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
+export async function applyApprovalDecision(
+  input: ApprovalDecisionInput,
+): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
   const recorded = await recordApprovalDecision(input);
   if (Result.isFailure(recorded)) return recorded;
 
@@ -271,12 +328,22 @@ export function nextApprovalRuntimeExpiry(state: ApprovalRuntimeState): string |
     .sort(compareStrings)[0];
 }
 
-export async function expireApprovalRuntime(input: {
-  plan: MaterializedApprovalPlan;
-  resolver: ApproverResolver;
-  state: ApprovalRuntimeState;
-  now: string;
-}): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
+export async function expireApprovalRuntime(
+  input: AdvanceApprovalRuntimeInput,
+): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
+  switch (input.plan.interpreterSemanticsVersion) {
+    case 1:
+      return expireApprovalRuntimeV1(input);
+    default:
+      return Result.fail(
+        unsupportedInterpreterSemanticsVersion(input.plan.interpreterSemanticsVersion),
+      );
+  }
+}
+
+async function expireApprovalRuntimeV1(
+  input: AdvanceApprovalRuntimeInput,
+): Result.ResultAsync<ApprovalRuntimeState, ApprovalInterpreterError> {
   const nowTimestamp = parseTimestamp(input.now);
   if (nowTimestamp === null) {
     return Result.fail(
