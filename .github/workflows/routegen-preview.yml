@@ -14,8 +14,6 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
-      - run: vp fmt apps/approval-runtime/src/index.ts
-      - name: Show formatter diff
-        run: |
-          git diff -- apps/approval-runtime/src/index.ts
-          exit 1
+      - run: vp check
+      - run: vp -C apps/web run build:preview
+      - run: vp -C apps/approval-runtime run deploy:dry-run
