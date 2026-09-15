@@ -1,12 +1,22 @@
+import { fileURLToPath } from "node:url";
+
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { readD1Migrations } from "@cloudflare/vitest-plugin/config";
 import { defineConfig } from "vite-plus";
+
+const migrationsPath = fileURLToPath(new URL("../approval-d1/migrations", import.meta.url));
 
 export default defineConfig({
   plugins: [
-    cloudflareTest({
+    cloudflareTest(async () => ({
       wrangler: {
         configPath: "./wrangler.jsonc",
       },
-    }),
+      miniflare: {
+        bindings: {
+          TEST_MIGRATIONS: await readD1Migrations(migrationsPath),
+        },
+      },
+    })),
   ],
 });
