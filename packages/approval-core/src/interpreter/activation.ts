@@ -1,9 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import {
-  NoApproverCandidatesError,
-  resolveApproverCandidates,
-} from "../approver-resolver.ts";
+import { NoApproverCandidatesError, resolveApproverCandidates } from "../approver-resolver.ts";
 import type { MaterializedApprovalStep, MaterializedFlow } from "../materialization.ts";
 import { NoEligibleApproverCandidatesError } from "./errors.ts";
 import type { ApprovalInterpreterError } from "./errors.ts";
