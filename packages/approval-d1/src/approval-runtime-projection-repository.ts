@@ -71,9 +71,7 @@ function latestRuntimeTimestamp(state: ApprovalRuntimeState): string {
       ...task.decisions.map((decision) => decision.decidedAt),
     ]),
   ];
-  const latest = Math.max(
-    ...timestamps.map((value) => Date.parse(value)).filter(Number.isFinite),
-  );
+  const latest = Math.max(...timestamps.map((value) => Date.parse(value)).filter(Number.isFinite));
   return Number.isFinite(latest) ? new Date(latest).toISOString() : state.startedAt;
 }
 
