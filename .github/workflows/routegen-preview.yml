@@ -15,6 +15,6 @@ jobs:
           cache: true
       - run: vp install
       - run: vp -C apps/web run generate-routes
-      - run: |
-          git diff -- apps/web/src/routeTree.gen.ts
-          exit 1
+      - name: Show generated diffs
+        run: git diff -- bun.lock apps/web/src/routeTree.gen.ts
+      - run: vp check
