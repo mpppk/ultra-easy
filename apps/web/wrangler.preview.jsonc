@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ultra-easy",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    "PREVIEW_HARNESS_ENABLED": "true",
+  },
+  "services": [
+    {
+      "binding": "APPROVAL_RUNTIME_PREVIEW",
+      "service": "ultra-easy-approval-runtime-preview",
+    },
+  ],
+}
