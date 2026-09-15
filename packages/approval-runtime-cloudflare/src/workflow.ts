@@ -127,7 +127,9 @@ function retry(error: Error): Extract<RuntimeTransition, { type: "retry" }> {
   return { type: "retry", error };
 }
 
-function interpreterFailure(error: Error): RuntimeFailure | Extract<RuntimeTransition, { type: "retry" }> {
+function interpreterFailure(
+  error: Error,
+): RuntimeFailure | Extract<RuntimeTransition, { type: "retry" }> {
   if (error instanceof ApproverResolverProviderError && error.retriable) return retry(error);
   return failed(error);
 }
