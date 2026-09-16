@@ -117,7 +117,7 @@ export function isPreviewScenario(value: unknown): value is PreviewScenario {
 export async function createPreviewPlan(
   scenario: PreviewScenario,
 ): Promise<MaterializedApprovalPlan> {
-  const actionRequestId = `preview:${scenario}:${crypto.randomUUID()}` as ActionRequestId;
+  const actionRequestId = `preview-${scenario}-${crypto.randomUUID()}` as ActionRequestId;
   const flow = await flowForScenario(scenario);
   const action: MaterializedApprovalPlan["action"] = {
     definition: {
