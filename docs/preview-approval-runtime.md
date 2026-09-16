@@ -1,0 +1,113 @@
+# Approval Runtime Preview Environment
+
+## Architecture
+
+```text
+Web branch preview (`ultra-easy` version)
+  /preview/approval-runtime
+  /api/preview/approval-runs/*
+          |
+          | Service Binding: APPROVAL_RUNTIME_PREVIEW
+          v
+Private stable Worker: ultra-easy-approval-runtime-preview
+          |
+          +-- D1: DB
+          +-- Workflow: ACTION_WORKFLOW / ActionWorkflow
+```
+
+The Web preview does not bind D1 or Workflows directly. The stable runtime Worker owns both resources and exposes a private HTTP gateway that is only reachable through a Cloudflare Service Binding.
+
+Production `apps/web/wrangler.jsonc` is unchanged. The harness is enabled only by `apps/web/wrangler.preview.jsonc`, where `PREVIEW_HARNESS_ENABLED=true`.
+
+## 1. Deploy the stable preview runtime
+
+Create a Worker in Cloudflare Workers Builds connected to this repository with the Worker name:
+
+```text
+ultra-easy-approval-runtime-preview
+```
+
+Use `main` as the production branch and disable non-production branch builds for this Worker. From the repository root, use the following deploy command:
+
+```bash
+vp -C apps/approval-runtime run deploy:preview
+```
+
+The runtime Wrangler configuration declares a draft D1 binding (`DB`) without an account-specific resource ID. Wrangler automatic provisioning creates and links the D1 database on the first deploy. The deploy script then applies `packages/approval-d1/migrations` to the remote database.
+
+The Worker has `workers_dev=false`, so it is not intended to expose a public `workers.dev` endpoint. It is consumed by the Web Worker through a Service Binding.
+
+The first Preview scenarios use direct user targets only. The OpenFGA variables in this Worker are therefore inert placeholders; dynamic OpenFGA scenarios are intentionally deferred.
+
+## 2. Configure Web branch previews
+
+Keep the existing `ultra-easy` Worker and its production configuration, and enable non-production branch builds.
+
+No custom build environment variable is required. Workers Builds injects `WORKERS_CI_BRANCH`; `apps/web/vite.config.ts` selects `wrangler.preview.jsonc` automatically when the branch is not `main`. The production branch continues to use `wrangler.jsonc`.
+
+The regular build command can remain unchanged. During a preview build, the Cloudflare Vite plugin reads `wrangler.preview.jsonc` and generates the deployment configuration containing:
+
+- `PREVIEW_HARNESS_ENABLED=true`
+- Service Binding `APPROVAL_RUNTIME_PREVIEW -> ultra-easy-approval-runtime-preview`
+
+Use the normal non-production deploy command:
+
+```bash
+npx wrangler versions upload
+```
+
+The generated Wrangler configuration from the Vite build is automatically used by `wrangler versions upload`.
+
+For local/CI verification, the equivalent commands are:
+
+```bash
+vp -C apps/web run build:preview
+vp -C apps/approval-runtime run deploy:dry-run
+```
+
+## 3. Protect Preview URLs
+
+Worker version Preview URLs are public unless protected. Before using the approval harness with real data, protect Preview URLs with Cloudflare Access.
+
+The application also fails closed in production: `/api/preview/approval-runs/*` returns 404 unless `PREVIEW_HARNESS_ENABLED` is exactly `true`.
+
+Do not add `PREVIEW_HARNESS_ENABLED=true` to the production Wrangler configuration.
+
+## 4. Smoke test
+
+Open the branch Preview URL at:
+
+```text
+/preview/approval-runtime
+```
+
+Start with `serial-two-users`.
+
+Expected progression:
+
+```text
+start
+  -> Workflow running/waiting
+  -> Runtime pending
+  -> manager task pending (user:alice)
+
+Approve as user:alice
+  -> manager approved
+  -> finance task pending (user:bob)
+
+Approve as user:bob
+  -> Workflow complete
+  -> Runtime approved
+```
+
+Then verify:
+
+- `parallel-all`
+- `parallel-quorum`
+- `distinct-approvers`
+
+The status endpoint intentionally returns both the Cloudflare Workflow status and the D1 runtime projection so mismatches between durable execution and the read projection are visible.
+
+## Follow-up
+
+After the direct-user Preview path is stable, add a Preview OpenFGA environment and cover dynamic approvers, self-approval constraints, and resolver failure/retry behavior.

@@ -1,0 +1,21 @@
+{
+  "name": "@app/approval-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vp test --passWithNoTests",
+    "deploy:preview": "wrangler deploy && wrangler d1 migrations apply DB --remote",
+    "deploy:dry-run": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "@app/approval-core": "workspace:*",
+    "@app/approval-d1": "workspace:*",
+    "@app/approval-runtime-cloudflare": "workspace:*",
+    "@praha/byethrow": "^0.12.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260911.1",
+    "wrangler": "^4.70.0"
+  }
+}
