@@ -15,6 +15,20 @@
         "vitest": "4.1.11",
       },
     },
+    "apps/approval-runtime": {
+      "name": "@app/approval-runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@app/approval-core": "workspace:*",
+        "@app/approval-d1": "workspace:*",
+        "@app/approval-runtime-cloudflare": "workspace:*",
+        "@praha/byethrow": "^0.12.0",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20260911.1",
+        "wrangler": "^4.70.0",
+      },
+    },
     "apps/web": {
       "name": "@app/web",
       "version": "0.0.0",
@@ -26,6 +40,7 @@
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "^1.26.0",
+        "@cloudflare/workers-types": "^5.20260911.1",
         "@tanstack/router-cli": "^1.132.0",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
@@ -109,6 +124,8 @@
     "@app/approval-d1": ["@app/approval-d1@workspace:packages/approval-d1"],
 
     "@app/approval-fga": ["@app/approval-fga@workspace:packages/approval-fga"],
+
+    "@app/approval-runtime": ["@app/approval-runtime@workspace:apps/approval-runtime"],
 
     "@app/approval-runtime-cloudflare": ["@app/approval-runtime-cloudflare@workspace:packages/approval-runtime-cloudflare"],
 

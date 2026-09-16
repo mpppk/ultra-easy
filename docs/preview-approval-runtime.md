@@ -41,15 +41,9 @@ The first Preview scenarios use direct user targets only. The OpenFGA variables 
 
 ## 2. Configure Web branch previews
 
-Keep the existing `ultra-easy` Worker and its production configuration.
+Keep the existing `ultra-easy` Worker and its production configuration, and enable non-production branch builds.
 
-Enable non-production branch builds. For the preview build trigger, set this build environment variable:
-
-```text
-CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=./wrangler.preview.jsonc
-```
-
-The production trigger must not set this value.
+No custom build environment variable is required. Workers Builds injects `WORKERS_CI_BRANCH`; `apps/web/vite.config.ts` selects `wrangler.preview.jsonc` automatically when the branch is not `main`. The production branch continues to use `wrangler.jsonc`.
 
 The regular build command can remain unchanged. During a preview build, the Cloudflare Vite plugin reads `wrangler.preview.jsonc` and generates the deployment configuration containing:
 
