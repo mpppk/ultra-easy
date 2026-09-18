@@ -120,7 +120,10 @@ export async function reauthorizeActionForExecution(input: {
   authorizer: ActionAuthorizer;
   request: ActionRequest;
   evaluatedAt: string;
-}): Result.ResultAsync<ActionReauthorizationOutcome, ActionAuthorizationCheckFailedError> {
+}): Result.ResultAsync<
+  ActionReauthorizationOutcome,
+  ActionAuthorizationCheckFailedError
+> {
   const authorization = await reauthorizeActionRequest(input);
   if (Result.isFailure(authorization)) {
     return Result.fail(new ActionAuthorizationCheckFailedError(authorization.error));
