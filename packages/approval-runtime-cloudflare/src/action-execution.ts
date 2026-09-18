@@ -7,7 +7,6 @@ import {
   reauthorizeActionForExecution,
   validateApprovalBindingForExecution,
   type ActionExecutionGuaranteeLevel,
-  type ActionExecutionResult,
   type ActionRequest,
   type ActionRequestId,
   type ApprovalPlanChecksum,
@@ -40,7 +39,7 @@ export type ActionExecutionWorkflowResult =
       status: ActionExecutionTerminalStatus;
       guaranteeLevel?: ActionExecutionGuaranteeLevel;
       idempotencyKey?: string;
-      result?: ActionExecutionResult;
+      resultJson?: string;
       code?: string;
       message?: string;
     }
@@ -103,7 +102,7 @@ type ExecutionTransition =
       type: "executed";
       guaranteeLevel: ActionExecutionGuaranteeLevel;
       idempotencyKey: string;
-      result: ActionExecutionResult;
+      resultJson: string;
     }
   | TerminalTransition
   | FailedTransition
@@ -356,7 +355,7 @@ async function executeStep(input: {
     type: "executed",
     guaranteeLevel: result.value.guaranteeLevel,
     idempotencyKey: result.value.idempotencyKey,
-    result: result.value.result,
+    resultJson: JSON.stringify(result.value.result),
   };
 }
 
@@ -434,6 +433,6 @@ export async function runActionExecution(input: {
     status: "executed",
     guaranteeLevel: execution.guaranteeLevel,
     idempotencyKey: execution.idempotencyKey,
-    result: execution.result,
+    resultJson: execution.resultJson,
   };
 }
