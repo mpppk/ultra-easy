@@ -168,11 +168,7 @@ describe("M5 Safe Action Execution", () => {
     assert(Result.isSuccess(first));
     assert(Result.isSuccess(second));
     expect(executor.requests).toHaveLength(2);
-    expect(executor.requests[0]?.idempotencyKey).toBe(
-      "action-request:m5:sha256:action-m5",
-    );
-    expect(executor.requests[1]?.idempotencyKey).toBe(
-      executor.requests[0]?.idempotencyKey,
-    );
+    expect(executor.requests[0]?.idempotencyKey).toBe("action-request:m5:sha256:action-m5");
+    expect(executor.requests[1]?.idempotencyKey).toBe(executor.requests[0]?.idempotencyKey);
   });
 });
