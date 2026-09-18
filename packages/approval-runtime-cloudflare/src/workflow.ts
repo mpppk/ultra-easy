@@ -45,7 +45,6 @@ export type ActionWorkflowOutput =
       status: ApprovalRuntimeState["status"] | ActionExecutionTerminalStatus;
       guaranteeLevel?: ActionExecutionGuaranteeLevel;
       idempotencyKey?: string;
-      result?: ActionExecutionResult;
       code?: string;
       message?: string;
     }
@@ -338,15 +337,21 @@ async function projectActionResult(input: {
   workflowInstanceId: string;
   execution: Extract<Awaited<ReturnType<typeof runActionExecution>>, { type: "completed" }>;
   completedAt: string;
-}): Promise<void> {
+}): Result.ResultAsync<void, Error> {
   const loaded = await new D1MaterializedPlanRepository(input.env.DB).loadForWorkflow({
     actionRequestId: input.params.actionRequestId,
     expectedApprovalPlanChecksum: input.params.approvalPlanChecksum,
   });
   if (loaded.type !== "found") {
-    throw new Error(`Action result projection用Planを取得できませんでした: ${loaded.type}`);
+    return Result.fail(
+      new Error(`Action result projection用Planを取得できませんでした: ${loaded.type}`),
+    );
   }
 
+  const result =
+    input.execution.resultJson === undefined
+      ? undefined
+      : (JSON.parse(input.execution.resultJson) as ActionExecutionResult);
   const saved = await new D1ActionResultProjectionRepository(input.env.DB).save({
     organizationId: loaded.plan.organizationId,
     actionRequestId: loaded.plan.actionRequestId,
@@ -358,12 +363,13 @@ async function projectActionResult(input: {
     ...(input.execution.idempotencyKey !== undefined
       ? { idempotencyKey: input.execution.idempotencyKey }
       : {}),
-    ...(input.execution.result !== undefined ? { result: input.execution.result } : {}),
+    ...(result !== undefined ? { result } : {}),
     ...(input.execution.code !== undefined ? { code: input.execution.code } : {}),
     ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
     completedAt: input.completedAt,
   });
-  if (Result.isFailure(saved)) throw saved.error;
+  if (Result.isFailure(saved)) return Result.fail(saved.error);
+  return Result.succeed(undefined);
 }
 
 export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, ActionWorkflowParams> {
@@ -464,15 +470,17 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     }
 
     try {
-      await step.do("project action result", () =>
-        projectActionResult({
+      await step.do("project action result", async () => {
+        const projected = await projectActionResult({
           env: this.env,
           params,
           workflowInstanceId: event.instanceId,
           execution,
           completedAt: logicalNow,
-        }),
-      );
+        });
+        if (Result.isFailure(projected)) return Promise.reject(projected.error);
+        return { type: "projected" } as const;
+      });
     } catch (error) {
       return {
         type: "failed",
@@ -492,7 +500,6 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       ...(execution.idempotencyKey !== undefined
         ? { idempotencyKey: execution.idempotencyKey }
         : {}),
-      ...(execution.result !== undefined ? { result: execution.result } : {}),
       ...(execution.code ? { code: execution.code } : {}),
       ...(execution.message ? { message: execution.message } : {}),
     };
