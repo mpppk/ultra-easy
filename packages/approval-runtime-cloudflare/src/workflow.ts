@@ -24,6 +24,12 @@ import {
 } from "@app/approval-d1";
 import { OpenFgaApproverResolver, OpenFgaClient } from "@app/approval-fga";
 
+import {
+  runActionExecution,
+  type ActionExecutionTerminalStatus,
+  type ActionExecutionWorkflowEnv,
+} from "./action-execution.ts";
+
 export type ActionWorkflowParams = {
   actionRequestId: ActionRequestId;
   approvalPlanChecksum: ApprovalPlanChecksum;
@@ -33,7 +39,9 @@ export type ActionWorkflowOutput =
   | {
       type: "completed";
       actionRequestId: ActionRequestId;
-      status: ApprovalRuntimeState["status"];
+      status: ApprovalRuntimeState["status"] | ActionExecutionTerminalStatus;
+      code?: string;
+      message?: string;
     }
   | {
       type: "failed";
@@ -42,8 +50,9 @@ export type ActionWorkflowOutput =
       message: string;
     };
 
-export type ActionWorkflowEnv = {
+export type ActionWorkflowEnv = ActionExecutionWorkflowEnv & {
   DB: D1Database;
+  ACTION_EXECUTION_MODE?: "execute" | "approval_only";
   OPENFGA_API_URL: string;
   OPENFGA_STORE_ID: string;
   OPENFGA_AUTHORIZATION_MODEL_ID: string;
@@ -391,10 +400,34 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       iteration += 1;
     }
 
+    if (state.status !== "approved" || this.env.ACTION_EXECUTION_MODE === "approval_only") {
+      return {
+        type: "completed",
+        actionRequestId: params.actionRequestId,
+        status: state.status,
+      };
+    }
+
+    const execution = await runActionExecution({
+      env: this.env,
+      params,
+      step,
+      evaluatedAt: logicalNow,
+    });
+    if (execution.type === "failed") {
+      return {
+        type: "failed",
+        actionRequestId: params.actionRequestId,
+        code: execution.code,
+        message: execution.message,
+      };
+    }
     return {
       type: "completed",
       actionRequestId: params.actionRequestId,
-      status: state.status,
+      status: execution.status,
+      ...(execution.code ? { code: execution.code } : {}),
+      ...(execution.message ? { message: execution.message } : {}),
     };
   }
 }
