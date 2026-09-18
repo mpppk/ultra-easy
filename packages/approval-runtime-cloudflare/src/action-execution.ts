@@ -168,11 +168,7 @@ function requestFromPlan(plan: MaterializedApprovalPlan): ActionRequest {
 async function loadPlan(
   env: ActionExecutionWorkflowEnv,
   params: ActionExecutionWorkflowParams,
-): Promise<
-  | { type: "found"; plan: MaterializedApprovalPlan }
-  | FailedTransition
-  | RetryTransition
-> {
+): Promise<{ type: "found"; plan: MaterializedApprovalPlan } | FailedTransition | RetryTransition> {
   const loaded = await new D1MaterializedPlanRepository(env.DB).loadForWorkflow({
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
