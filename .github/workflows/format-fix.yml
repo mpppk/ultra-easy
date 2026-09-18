@@ -1,0 +1,34 @@
+name: format-fix
+
+on:
+  push:
+    branches:
+      - m5/cloudflare-action-execution
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: m5/cloudflare-action-execution
+      - uses: voidzero-dev/setup-vp@v1.19.0
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Apply formatter
+        run: vp check --fix || true
+      - name: Commit formatter changes
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "style: apply vp check fixes"
+          git push origin HEAD:m5/cloudflare-action-execution
