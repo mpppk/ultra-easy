@@ -11,6 +11,7 @@
     },
   ],
   "vars": {
+    "ACTION_EXECUTION_MODE": "approval_only",
     "OPENFGA_API_URL": "https://openfga.invalid",
     "OPENFGA_STORE_ID": "unused-for-direct-user-preview",
     "OPENFGA_AUTHORIZATION_MODEL_ID": "unused-for-direct-user-preview",
