@@ -386,7 +386,9 @@ async function projectActionResult(input: {
     completedAt: input.completedAt,
   });
   if (Result.isFailure(saved)) {
-    return Result.fail(new ActionResultProjectionError(saved.error.message, { cause: saved.error }));
+    return Result.fail(
+      new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
+    );
   }
   return Result.succeed(undefined);
 }
