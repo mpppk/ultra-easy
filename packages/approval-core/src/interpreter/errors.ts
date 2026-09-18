@@ -1,7 +1,12 @@
 import { ErrorFactory } from "@praha/error-factory";
 
 import type { ApproverResolutionError } from "../approver-resolver.ts";
-import type { ApprovalTaskId, MaterializedStepId, UserId } from "../domain/brand.ts";
+import type {
+  ApprovalBindingFingerprint,
+  ApprovalTaskId,
+  MaterializedStepId,
+  UserId,
+} from "../domain/brand.ts";
 import type { ApprovalDecisionValue, ApprovalTaskRuntimeStatus } from "./types.ts";
 
 export class UnsupportedInterpreterSemanticsVersionError extends ErrorFactory({
@@ -96,6 +101,17 @@ export class ApprovalDistinctApproverViolationError extends ErrorFactory({
   }>(),
 }) {}
 
+export class ApprovalDecisionBindingMismatchError extends ErrorFactory({
+  name: "ApprovalDecisionBindingMismatchError",
+  message: ({ expected, actual }) =>
+    `DecisionのApproval bindingが現在のPlanと一致しません: expected=${String(expected)}, actual=${String(actual)}`,
+  fields: ErrorFactory.fields<{
+    code: "approval_decision_binding_mismatch";
+    expected: ApprovalBindingFingerprint;
+    actual: ApprovalBindingFingerprint;
+  }>(),
+}) {}
+
 export class ApprovalCommentRequiredError extends ErrorFactory({
   name: "ApprovalCommentRequiredError",
   message: ({ decision, taskId }) => `${decision} Decisionにはcommentが必要です: ${String(taskId)}`,
@@ -116,5 +132,6 @@ export type ApprovalInterpreterError =
   | ApprovalUserAlreadyDecidedError
   | ApprovalSelfApprovalDeniedError
   | ApprovalDistinctApproverViolationError
+  | ApprovalDecisionBindingMismatchError
   | ApprovalCommentRequiredError
   | ApproverResolutionError;
