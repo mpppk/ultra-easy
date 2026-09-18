@@ -5,6 +5,9 @@ import type { D1Database } from "@cloudflare/workers-types";
 import {
   executeAuthorizedAction,
   reauthorizeActionForExecution,
+  validateApprovalBindingForExecution,
+  type ActionExecutionGuaranteeLevel,
+  type ActionExecutionResult,
   type ActionRequest,
   type ActionRequestId,
   type ApprovalPlanChecksum,
@@ -14,7 +17,10 @@ import {
   type DelegationGrantId,
   type MaterializedApprovalPlan,
 } from "@app/approval-core";
-import { D1MaterializedPlanRepository } from "@app/approval-d1";
+import {
+  D1ApprovalRuntimeProjectionRepository,
+  D1MaterializedPlanRepository,
+} from "@app/approval-d1";
 
 import {
   ServiceBindingActionAuthorizer,
@@ -32,6 +38,9 @@ export type ActionExecutionWorkflowResult =
   | {
       type: "completed";
       status: ActionExecutionTerminalStatus;
+      guaranteeLevel?: ActionExecutionGuaranteeLevel;
+      idempotencyKey?: string;
+      result?: ActionExecutionResult;
       code?: string;
       message?: string;
     }
@@ -55,6 +64,7 @@ type ActionExecutionWorkflowParams = {
 type TerminalTransition = {
   type: "terminal";
   status: ActionExecutionTerminalStatus;
+  guaranteeLevel?: ActionExecutionGuaranteeLevel;
   code: string;
   message: string;
 };
@@ -89,7 +99,12 @@ type ReauthorizationTransition =
 type ReauthorizationStepResult = Exclude<ReauthorizationTransition, RetryTransition>;
 
 type ExecutionTransition =
-  | { type: "executed" }
+  | {
+      type: "executed";
+      guaranteeLevel: ActionExecutionGuaranteeLevel;
+      idempotencyKey: string;
+      result: ActionExecutionResult;
+    }
   | TerminalTransition
   | FailedTransition
   | RetryTransition;
@@ -197,6 +212,37 @@ async function loadPlan(
   return { type: "failed", code: loaded.type, message: loaded.message };
 }
 
+async function validateApprovalBinding(
+  env: ActionExecutionWorkflowEnv,
+  plan: MaterializedApprovalPlan,
+): Promise<FailedTransition | RetryTransition | null> {
+  if (plan.flow.type === "none") return null;
+
+  const projection = await new D1ApprovalRuntimeProjectionRepository(env.DB).load({
+    organizationId: plan.organizationId,
+    actionRequestId: plan.actionRequestId,
+  });
+  if (Result.isFailure(projection)) {
+    return {
+      type: "retry",
+      error: new Error(`Approval runtime projection error: ${projection.error.message}`),
+    };
+  }
+
+  const binding = validateApprovalBindingForExecution({
+    plan,
+    state: projection.value,
+  });
+  if (Result.isFailure(binding)) {
+    return {
+      type: "failed",
+      code: binding.error.code,
+      message: binding.error.message,
+    };
+  }
+  return null;
+}
+
 async function reauthorizeStep(input: {
   env: ActionExecutionWorkflowEnv;
   params: ActionExecutionWorkflowParams;
@@ -204,6 +250,8 @@ async function reauthorizeStep(input: {
 }): Promise<ReauthorizationTransition> {
   const loaded = await loadPlan(input.env, input.params);
   if (loaded.type !== "found") return loaded;
+  const invalidBinding = await validateApprovalBinding(input.env, loaded.plan);
+  if (invalidBinding) return invalidBinding;
   if (!input.env.ACTION_AUTHORIZER) {
     return {
       type: "terminal",
@@ -271,6 +319,8 @@ async function executeStep(input: {
 }): Promise<ExecutionTransition> {
   const loaded = await loadPlan(input.env, input.params);
   if (loaded.type !== "found") return loaded;
+  const invalidBinding = await validateApprovalBinding(input.env, loaded.plan);
+  if (invalidBinding) return invalidBinding;
   if (!input.env.ACTION_EXECUTOR) {
     return {
       type: "terminal",
@@ -280,11 +330,12 @@ async function executeStep(input: {
     };
   }
 
+  const executor = new ServiceBindingActionExecutor(
+    input.env.ACTION_EXECUTOR,
+    loaded.plan.action.definition.executorKey,
+  );
   const result = await executeAuthorizedAction({
-    executor: new ServiceBindingActionExecutor(
-      input.env.ACTION_EXECUTOR,
-      loaded.plan.action.definition.executorKey,
-    ),
+    executor,
     actionRequestId: loaded.plan.actionRequestId,
     actionFingerprint: loaded.plan.actionFingerprint,
     action: loaded.plan.action,
@@ -296,11 +347,17 @@ async function executeStep(input: {
       : {
           type: "terminal",
           status: "execution_failed",
+          guaranteeLevel: executor.guaranteeLevel,
           code: result.error.code,
           message: result.error.message,
         };
   }
-  return { type: "executed" };
+  return {
+    type: "executed",
+    guaranteeLevel: result.value.guaranteeLevel,
+    idempotencyKey: result.value.idempotencyKey,
+    result: result.value.result,
+  };
 }
 
 async function runExecutionStep(input: {
@@ -333,6 +390,9 @@ function terminalResult(transition: TerminalTransition): ActionExecutionWorkflow
   return {
     type: "completed",
     status: transition.status,
+    ...(transition.guaranteeLevel !== undefined
+      ? { guaranteeLevel: transition.guaranteeLevel }
+      : {}),
     code: transition.code,
     message: transition.message,
   };
@@ -369,5 +429,11 @@ export async function runActionExecution(input: {
   }
   if (execution.type === "terminal") return terminalResult(execution);
 
-  return { type: "completed", status: "executed" };
+  return {
+    type: "completed",
+    status: "executed",
+    guaranteeLevel: execution.guaranteeLevel,
+    idempotencyKey: execution.idempotencyKey,
+    result: execution.result,
+  };
 }
