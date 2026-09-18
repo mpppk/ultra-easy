@@ -17,11 +17,7 @@ jobs:
       - name: Install dependencies
         run: vp install
       - name: Check
-        run: |
-          vp check --fix
-          git diff --check
-          git diff
-          git diff --exit-code
+        run: vp check
       - name: Start OpenFGA test server
         run: |
           docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run
