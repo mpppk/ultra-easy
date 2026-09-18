@@ -128,7 +128,11 @@ export class ServiceBindingActionAuthorizer implements ActionAuthorizer {
     }
 
     const value = parsed.value as Record<string, unknown>;
-    if (value.type === "deny" && typeof value.code === "string" && typeof value.reason === "string") {
+    if (
+      value.type === "deny" &&
+      typeof value.code === "string" &&
+      typeof value.reason === "string"
+    ) {
       return Result.succeed({ type: "deny", code: value.code, reason: value.reason });
     }
     if (value.type === "allow") {
@@ -243,7 +247,8 @@ export class ServiceBindingActionExecutor implements ActionExecutor {
       );
     }
 
-    const output = "output" in parsed.value ? (parsed.value.output as JsonValue) : undefined;
+    const output =
+      "output" in parsed.value ? (parsed.value.output as JsonValue) : undefined;
     return Result.succeed({
       status: "succeeded",
       ...(output !== undefined ? { output } : {}),
