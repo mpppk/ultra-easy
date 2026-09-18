@@ -88,6 +88,17 @@ export class ActionAuthorizationCheckFailedError extends ActionAuthorizationChec
 
 export type ActionExecutionFailure = ActionAuthorizationCheckFailedError | ActionExecutorError;
 
+export type ActionReauthorizationOutcome =
+  | {
+      type: "authorized";
+      authorizationEvidence: AuthorizationEvidence;
+    }
+  | {
+      type: "authorization_revoked";
+      code: string;
+      reason: string;
+    };
+
 export type ActionExecutionOutcome =
   | {
       type: "executed";
@@ -95,11 +106,7 @@ export type ActionExecutionOutcome =
       authorizationEvidence: AuthorizationEvidence;
       result: ActionExecutionResult;
     }
-  | {
-      type: "authorization_revoked";
-      code: string;
-      reason: string;
-    };
+  | Extract<ActionReauthorizationOutcome, { type: "authorization_revoked" }>;
 
 export function createActionExecutionIdempotencyKey(
   actionRequestId: ActionRequestId,
@@ -108,11 +115,66 @@ export function createActionExecutionIdempotencyKey(
   return `${String(actionRequestId)}:${String(actionFingerprint)}`;
 }
 
+/** Durable runtimeからRe-Authorizationを独立stepとして実行できるphase。 */
+export async function reauthorizeActionForExecution(input: {
+  authorizer: ActionAuthorizer;
+  request: ActionRequest;
+  evaluatedAt: string;
+}): Result.ResultAsync<ActionReauthorizationOutcome, ActionAuthorizationCheckFailedError> {
+  const authorization = await reauthorizeActionRequest(input);
+  if (Result.isFailure(authorization)) {
+    return Result.fail(new ActionAuthorizationCheckFailedError(authorization.error));
+  }
+  if (authorization.value.type === "deny") {
+    return Result.succeed({
+      type: "authorization_revoked",
+      code: authorization.value.code,
+      reason: authorization.value.reason,
+    });
+  }
+  return Result.succeed({
+    type: "authorized",
+    authorizationEvidence: authorization.value.evidence,
+  });
+}
+
+/** Durable runtimeから外部side effectを独立stepとしてretryできるphase。 */
+export async function executeAuthorizedAction(input: {
+  executor: ActionExecutor;
+  actionRequestId: ActionRequestId;
+  actionFingerprint: ActionFingerprint;
+  action: MaterializedActionSnapshot;
+  authorizationEvidence: AuthorizationEvidence;
+}): Result.ResultAsync<
+  Extract<ActionExecutionOutcome, { type: "executed" }>,
+  ActionExecutorError
+> {
+  const idempotencyKey = createActionExecutionIdempotencyKey(
+    input.actionRequestId,
+    input.actionFingerprint,
+  );
+  const executed = await input.executor.execute({
+    actionRequestId: input.actionRequestId,
+    actionFingerprint: input.actionFingerprint,
+    idempotencyKey,
+    action: input.action,
+    authorizationEvidence: input.authorizationEvidence,
+  });
+  if (Result.isFailure(executed)) return Result.fail(executed.error);
+
+  return Result.succeed({
+    type: "executed",
+    idempotencyKey,
+    authorizationEvidence: input.authorizationEvidence,
+    result: executed.value,
+  });
+}
+
 /**
  * Approval有無に依存しない最終Action実行経路。
  *
- * 実行直前に必ずhigher consistencyで再認可し、denyならExecutorを呼ばない。
- * Authorization provider failureとExecutor failureはFailure値として区別する。
+ * Durable runtimeはphase単位でretry境界を持てるよう、
+ * reauthorizeActionForExecution / executeAuthorizedActionを直接利用できる。
  */
 export async function executeActionRequest(input: {
   authorizer: ActionAuthorizer;
@@ -123,40 +185,21 @@ export async function executeActionRequest(input: {
   action: MaterializedActionSnapshot;
   evaluatedAt: string;
 }): Result.ResultAsync<ActionExecutionOutcome, ActionExecutionFailure> {
-  const authorization = await reauthorizeActionRequest({
+  const authorization = await reauthorizeActionForExecution({
     authorizer: input.authorizer,
     request: input.request,
     evaluatedAt: input.evaluatedAt,
   });
-  if (Result.isFailure(authorization)) {
-    return Result.fail(new ActionAuthorizationCheckFailedError(authorization.error));
+  if (Result.isFailure(authorization)) return authorization;
+  if (authorization.value.type === "authorization_revoked") {
+    return Result.succeed(authorization.value);
   }
 
-  if (authorization.value.type === "deny") {
-    return Result.succeed({
-      type: "authorization_revoked",
-      code: authorization.value.code,
-      reason: authorization.value.reason,
-    });
-  }
-
-  const idempotencyKey = createActionExecutionIdempotencyKey(
-    input.actionRequestId,
-    input.actionFingerprint,
-  );
-  const executed = await input.executor.execute({
+  return executeAuthorizedAction({
+    executor: input.executor,
     actionRequestId: input.actionRequestId,
     actionFingerprint: input.actionFingerprint,
-    idempotencyKey,
     action: input.action,
-    authorizationEvidence: authorization.value.evidence,
-  });
-  if (Result.isFailure(executed)) return Result.fail(executed.error);
-
-  return Result.succeed({
-    type: "executed",
-    idempotencyKey,
-    authorizationEvidence: authorization.value.evidence,
-    result: executed.value,
+    authorizationEvidence: authorization.value.authorizationEvidence,
   });
 }
