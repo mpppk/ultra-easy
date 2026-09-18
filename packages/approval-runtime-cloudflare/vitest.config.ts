@@ -65,7 +65,7 @@ export default defineConfig({
                 { status: 503 },
               );
             }
-            if (scenario === "non-retriable") {
+            if (scenario === "non-retriable" && attempt === 1) {
               return Response.json(
                 {
                   code: "business_validation_failed",
