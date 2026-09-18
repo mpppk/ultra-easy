@@ -218,7 +218,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       payload: decision(plan, finance, bob, "finance-approved"),
     });
 
-    await expectCompleted(id, "approved");
+    await expectCompleted(id, "executed");
     const projection = await new D1ApprovalRuntimeProjectionRepository(testEnv.DB).load({
       organizationId,
       actionRequestId: plan.actionRequestId,
@@ -248,7 +248,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
         type: "approval-decision",
         payload: decision(plan, second, bob, `${scenario}-second`),
       });
-      await expectCompleted(`cf-${scenario}`, "approved");
+      await expectCompleted(`cf-${scenario}`, "executed");
     }
   });
 
@@ -302,7 +302,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       async () => {
         const status = await completedInstance.status();
         expect(status.status).toBe("complete");
-        expect(status.output).toMatchObject({ type: "completed", status: "approved" });
+        expect(status.output).toMatchObject({ type: "completed", status: "executed" });
       },
       { timeout: 5_000 },
     );
@@ -343,7 +343,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       payload: decision(plan, approval, bob, "retry-decision"),
     });
     await introspector.waitForStatus("complete");
-    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
+    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "executed" });
 
     const projection = await runtimeRepository.load({
       organizationId,
@@ -389,7 +389,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await testEnv.ACTION_WORKFLOW.create({ id, params });
     await introspector.waitForStatus("complete");
-    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "approved" });
+    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "executed" });
     const initialized = await introspector.waitForStepResult({
       name: "initialize approval runtime",
     });
@@ -398,4 +398,52 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     );
     await introspector.dispose();
   });
+
+  it("AC-M5-005: retriable Executor failureをstep.doでretryし同じidempotency keyで成功する", async () => {
+    const plan = await validPlan(
+      "cf-execution-retry",
+      { type: "none" },
+      { executorScenario: "retry-once" },
+    );
+    await savePlan(plan);
+
+    const id = "cf-execution-retry";
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    await introspector.modify(async (modifier) => {
+      await modifier.disableRetryDelays();
+    });
+    await createInstance(plan, id);
+
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({
+      type: "completed",
+      status: "executed",
+    });
+    await introspector.dispose();
+  });
+
+  it("AC-M5-006: non-retriable Executor failureをretryせずexecution_failedでterminal化する", async () => {
+    const plan = await validPlan(
+      "cf-execution-terminal",
+      { type: "none" },
+      { executorScenario: "non-retriable" },
+    );
+    await savePlan(plan);
+
+    const id = "cf-execution-terminal";
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    await introspector.modify(async (modifier) => {
+      await modifier.disableRetryDelays();
+    });
+    await createInstance(plan, id);
+
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({
+      type: "completed",
+      status: "execution_failed",
+      code: "business_validation_failed",
+    });
+    await introspector.dispose();
+  });
+
 });
