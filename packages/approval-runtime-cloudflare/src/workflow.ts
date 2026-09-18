@@ -319,6 +319,18 @@ function timeoutUntil(
   return { timeout: `${seconds} seconds`, seconds };
 }
 
+class ActionResultProjectionError extends Error {
+  readonly name = "ActionResultProjectionError";
+}
+
+const parseActionExecutionResult = Result.fn({
+  try: (value: string): ActionExecutionResult => JSON.parse(value) as ActionExecutionResult,
+  catch: (error): ActionResultProjectionError =>
+    new ActionResultProjectionError(
+      error instanceof Error ? error.message : "Action execution resultをparseできません",
+    ),
+});
+
 function outputFromTransition(
   params: ActionWorkflowParams,
   transition: RuntimeFailure,
@@ -337,21 +349,26 @@ async function projectActionResult(input: {
   workflowInstanceId: string;
   execution: Extract<Awaited<ReturnType<typeof runActionExecution>>, { type: "completed" }>;
   completedAt: string;
-}): Result.ResultAsync<void, Error> {
+}): Result.ResultAsync<void, ActionResultProjectionError> {
   const loaded = await new D1MaterializedPlanRepository(input.env.DB).loadForWorkflow({
     actionRequestId: input.params.actionRequestId,
     expectedApprovalPlanChecksum: input.params.approvalPlanChecksum,
   });
   if (loaded.type !== "found") {
     return Result.fail(
-      new Error(`Action result projection用Planを取得できませんでした: ${loaded.type}`),
+      new ActionResultProjectionError(
+        `Action result projection用Planを取得できませんでした: ${loaded.type}`,
+      ),
     );
   }
 
-  const result =
-    input.execution.resultJson === undefined
-      ? undefined
-      : (JSON.parse(input.execution.resultJson) as ActionExecutionResult);
+  let result: ActionExecutionResult | undefined;
+  if (input.execution.resultJson !== undefined) {
+    const parsed = parseActionExecutionResult(input.execution.resultJson);
+    if (Result.isFailure(parsed)) return parsed;
+    result = parsed.value;
+  }
+
   const saved = await new D1ActionResultProjectionRepository(input.env.DB).save({
     organizationId: loaded.plan.organizationId,
     actionRequestId: loaded.plan.actionRequestId,
@@ -368,7 +385,9 @@ async function projectActionResult(input: {
     ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
     completedAt: input.completedAt,
   });
-  if (Result.isFailure(saved)) return Result.fail(saved.error);
+  if (Result.isFailure(saved)) {
+    return Result.fail(new ActionResultProjectionError(saved.error.message, { cause: saved.error }));
+  }
   return Result.succeed(undefined);
 }
 
