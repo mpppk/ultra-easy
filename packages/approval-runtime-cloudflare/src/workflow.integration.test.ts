@@ -399,9 +399,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await introspector.dispose();
   });
 
-  it(
-    "AC-M5-005: retriable Executor failureをstep.doでretryし同じidempotency keyで成功する",
-    async () => {
+  it("AC-M5-005: retriable Executor failureをstep.doでretryし同じidempotency keyで成功する", async () => {
     const plan = await validPlan(
       "cf-execution-retry",
       { type: "none" },
@@ -421,13 +419,10 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       type: "completed",
       status: "executed",
     });
-      await introspector.dispose();
-    },
-  );
+    await introspector.dispose();
+  });
 
-  it(
-    "AC-M5-006: non-retriable Executor failureをretryせずexecution_failedでterminal化する",
-    async () => {
+  it("AC-M5-006: non-retriable Executor failureをretryせずexecution_failedでterminal化する", async () => {
     const plan = await validPlan(
       "cf-execution-terminal",
       { type: "none" },
@@ -448,7 +443,6 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       status: "execution_failed",
       code: "business_validation_failed",
     });
-      await introspector.dispose();
-    },
-  );
+    await introspector.dispose();
+  });
 });

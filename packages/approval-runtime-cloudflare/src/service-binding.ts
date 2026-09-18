@@ -247,8 +247,7 @@ export class ServiceBindingActionExecutor implements ActionExecutor {
       );
     }
 
-    const output =
-      "output" in parsed.value ? (parsed.value.output as JsonValue) : undefined;
+    const output = "output" in parsed.value ? (parsed.value.output as JsonValue) : undefined;
     return Result.succeed({
       status: "succeeded",
       ...(output !== undefined ? { output } : {}),
