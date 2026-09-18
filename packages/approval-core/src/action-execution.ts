@@ -2,11 +2,7 @@ import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
 import type { ActionRequest } from "./domain/action.ts";
-import type {
-  ActionFingerprint,
-  ActionRequestId,
-  ApprovalBindingFingerprint,
-} from "./domain/brand.ts";
+import type { ActionFingerprint, ActionRequestId } from "./domain/brand.ts";
 import type { JsonValue } from "./domain/json.ts";
 import type { ApprovalRuntimeState } from "./interpreter/types.ts";
 import type { MaterializedActionSnapshot, MaterializedApprovalPlan } from "./materialization.ts";
@@ -31,6 +27,12 @@ export type ActionExecutionResult = {
 };
 
 export type ActionExecutionGuaranteeLevel = "idempotent" | "best_effort_at_most_once";
+
+export type ActionExecutionTerminalStatus =
+  | "executed"
+  | "authorization_revoked"
+  | "authorization_check_failed"
+  | "execution_failed";
 
 const ActionExecutorErrorBase = ErrorFactory({
   name: "ActionExecutorError",
