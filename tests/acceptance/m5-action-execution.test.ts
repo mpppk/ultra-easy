@@ -149,7 +149,7 @@ describe("M5 Safe Action Execution", () => {
     const result = await executeActionRequest(executionInput(authorizer, executor));
 
     assert(Result.isFailure(result));
-    expect(result.error).toBeInstanceOf(ActionAuthorizationCheckFailedError);
+    assert(result.error instanceof ActionAuthorizationCheckFailedError);
     expect(result.error.name).toBe("ActionAuthorizationCheckFailedError");
     expect(result.error.code).toBe("authorization_check_failed");
     expect(result.error.retriable).toBe(true);
