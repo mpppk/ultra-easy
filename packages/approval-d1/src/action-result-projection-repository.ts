@@ -159,9 +159,7 @@ export class D1ActionResultProjectionRepository {
       actionRequestId: row.value.action_request_id as ActionRequestId,
       workflowInstanceId: row.value.workflow_instance_id,
       status: row.value.status,
-      ...(row.value.guarantee_level !== null
-        ? { guaranteeLevel: row.value.guarantee_level }
-        : {}),
+      ...(row.value.guarantee_level !== null ? { guaranteeLevel: row.value.guarantee_level } : {}),
       ...(row.value.idempotency_key !== null ? { idempotencyKey: row.value.idempotency_key } : {}),
       ...(result !== undefined ? { result } : {}),
       ...(row.value.code !== null ? { code: row.value.code } : {}),
