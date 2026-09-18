@@ -6,10 +6,13 @@ import {
   executeAuthorizedAction,
   reauthorizeActionForExecution,
   type ActionRequest,
-  type ApprovalPlanChecksum,
-  type AuthorizationEvidence,
-  type MaterializedApprovalPlan,
   type ActionRequestId,
+  type ApprovalPlanChecksum,
+  type AuthorityMode,
+  type AuthorizationConsistency,
+  type AuthorizationEvidence,
+  type DelegationGrantId,
+  type MaterializedApprovalPlan,
 } from "@app/approval-core";
 import { D1MaterializedPlanRepository } from "@app/approval-d1";
 
@@ -49,13 +52,49 @@ type ActionExecutionWorkflowParams = {
   approvalPlanChecksum: ApprovalPlanChecksum;
 };
 
-type StepTransition<T> =
-  | { type: "success"; value: T }
-  | { type: "terminal"; status: ActionExecutionTerminalStatus; code: string; message: string }
-  | { type: "failed"; code: string; message: string }
-  | { type: "retry"; error: Error };
+type TerminalTransition = {
+  type: "terminal";
+  status: ActionExecutionTerminalStatus;
+  code: string;
+  message: string;
+};
 
-type PersistedStepTransition<T> = Exclude<StepTransition<T>, { type: "retry" }>;
+type FailedTransition = {
+  type: "failed";
+  code: string;
+  message: string;
+};
+
+type RetryTransition = {
+  type: "retry";
+  error: Error;
+};
+
+type PersistedAuthorizationEvidence = {
+  evaluatedAt: string;
+  provider?: string;
+  contextChecksum?: string;
+  authorizationModelId?: string;
+  consistency: AuthorizationConsistency;
+  authorityMode?: AuthorityMode;
+  delegationGrantIds?: string[];
+};
+
+type ReauthorizationTransition =
+  | { type: "authorized"; evidence: PersistedAuthorizationEvidence }
+  | TerminalTransition
+  | FailedTransition
+  | RetryTransition;
+
+type ReauthorizationStepResult = Exclude<ReauthorizationTransition, RetryTransition>;
+
+type ExecutionTransition =
+  | { type: "executed" }
+  | TerminalTransition
+  | FailedTransition
+  | RetryTransition;
+
+type ExecutionStepResult = Exclude<ExecutionTransition, RetryTransition>;
 
 function errorCode(error: unknown): string {
   if (typeof error === "object" && error !== null && "code" in error) {
@@ -67,6 +106,50 @@ function errorCode(error: unknown): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function persistAuthorizationEvidence(
+  evidence: AuthorizationEvidence,
+): PersistedAuthorizationEvidence {
+  return {
+    evaluatedAt: evidence.evaluatedAt,
+    consistency: evidence.consistency,
+    ...(evidence.provider !== undefined ? { provider: evidence.provider } : {}),
+    ...(evidence.contextChecksum !== undefined
+      ? { contextChecksum: evidence.contextChecksum }
+      : {}),
+    ...(evidence.authorizationModelId !== undefined
+      ? { authorizationModelId: evidence.authorizationModelId }
+      : {}),
+    ...(evidence.authorityMode !== undefined ? { authorityMode: evidence.authorityMode } : {}),
+    ...(evidence.delegationGrantIds !== undefined
+      ? { delegationGrantIds: evidence.delegationGrantIds.map(String) }
+      : {}),
+  };
+}
+
+function restoreAuthorizationEvidence(
+  evidence: PersistedAuthorizationEvidence,
+): AuthorizationEvidence {
+  return {
+    evaluatedAt: evidence.evaluatedAt,
+    consistency: evidence.consistency,
+    ...(evidence.provider !== undefined ? { provider: evidence.provider } : {}),
+    ...(evidence.contextChecksum !== undefined
+      ? { contextChecksum: evidence.contextChecksum }
+      : {}),
+    ...(evidence.authorizationModelId !== undefined
+      ? { authorizationModelId: evidence.authorizationModelId }
+      : {}),
+    ...(evidence.authorityMode !== undefined ? { authorityMode: evidence.authorityMode } : {}),
+    ...(evidence.delegationGrantIds !== undefined
+      ? {
+          delegationGrantIds: evidence.delegationGrantIds.map(
+            (grantId) => grantId as DelegationGrantId,
+          ),
+        }
+      : {}),
+  };
 }
 
 function requestFromPlan(plan: MaterializedApprovalPlan): ActionRequest {
@@ -87,7 +170,8 @@ async function loadPlan(
   params: ActionExecutionWorkflowParams,
 ): Promise<
   | { type: "found"; plan: MaterializedApprovalPlan }
-  | Extract<StepTransition<never>, { type: "failed" | "retry" }>
+  | FailedTransition
+  | RetryTransition
 > {
   const loaded = await new D1MaterializedPlanRepository(env.DB).loadForWorkflow({
     actionRequestId: params.actionRequestId,
@@ -117,36 +201,11 @@ async function loadPlan(
   return { type: "failed", code: loaded.type, message: loaded.message };
 }
 
-async function runRetryingStep<T>(
-  step: WorkflowStep,
-  name: string,
-  exhaustedStatus: Extract<
-    ActionExecutionTerminalStatus,
-    "authorization_check_failed" | "execution_failed"
-  >,
-  callback: () => Promise<StepTransition<T>>,
-): Promise<PersistedStepTransition<T>> {
-  try {
-    return await step.do(name, async () => {
-      const transition = await callback();
-      if (transition.type === "retry") return Promise.reject(transition.error);
-      return transition;
-    });
-  } catch (error) {
-    return {
-      type: "terminal",
-      status: exhaustedStatus,
-      code: errorCode(error),
-      message: errorMessage(error),
-    };
-  }
-}
-
 async function reauthorizeStep(input: {
   env: ActionExecutionWorkflowEnv;
   params: ActionExecutionWorkflowParams;
   evaluatedAt: string;
-}): Promise<StepTransition<AuthorizationEvidence>> {
+}): Promise<ReauthorizationTransition> {
   const loaded = await loadPlan(input.env, input.params);
   if (loaded.type !== "found") return loaded;
   if (!input.env.ACTION_AUTHORIZER) {
@@ -181,14 +240,39 @@ async function reauthorizeStep(input: {
       message: result.value.reason,
     };
   }
-  return { type: "success", value: result.value.authorizationEvidence };
+  return {
+    type: "authorized",
+    evidence: persistAuthorizationEvidence(result.value.authorizationEvidence),
+  };
+}
+
+async function runReauthorizationStep(input: {
+  env: ActionExecutionWorkflowEnv;
+  params: ActionExecutionWorkflowParams;
+  step: WorkflowStep;
+  evaluatedAt: string;
+}): Promise<ReauthorizationStepResult> {
+  try {
+    return await input.step.do<ReauthorizationStepResult>("reauthorize action", async () => {
+      const transition = await reauthorizeStep(input);
+      if (transition.type === "retry") return Promise.reject(transition.error);
+      return transition;
+    });
+  } catch (error) {
+    return {
+      type: "terminal",
+      status: "authorization_check_failed",
+      code: errorCode(error),
+      message: errorMessage(error),
+    };
+  }
 }
 
 async function executeStep(input: {
   env: ActionExecutionWorkflowEnv;
   params: ActionExecutionWorkflowParams;
   authorizationEvidence: AuthorizationEvidence;
-}): Promise<StepTransition<Extract<ActionExecutionTerminalStatus, "executed">>> {
+}): Promise<ExecutionTransition> {
   const loaded = await loadPlan(input.env, input.params);
   if (loaded.type !== "found") return loaded;
   if (!input.env.ACTION_EXECUTOR) {
@@ -220,24 +304,42 @@ async function executeStep(input: {
           message: result.error.message,
         };
   }
-  return { type: "success", value: "executed" };
+  return { type: "executed" };
 }
 
-function asWorkflowResult<T>(
-  transition: PersistedStepTransition<T>,
-): ActionExecutionWorkflowResult | null {
-  if (transition.type === "failed") {
-    return { type: "failed", code: transition.code, message: transition.message };
-  }
-  if (transition.type === "terminal") {
+async function runExecutionStep(input: {
+  env: ActionExecutionWorkflowEnv;
+  params: ActionExecutionWorkflowParams;
+  step: WorkflowStep;
+  authorizationEvidence: PersistedAuthorizationEvidence;
+}): Promise<ExecutionStepResult> {
+  try {
+    return await input.step.do<ExecutionStepResult>("execute action", async () => {
+      const transition = await executeStep({
+        env: input.env,
+        params: input.params,
+        authorizationEvidence: restoreAuthorizationEvidence(input.authorizationEvidence),
+      });
+      if (transition.type === "retry") return Promise.reject(transition.error);
+      return transition;
+    });
+  } catch (error) {
     return {
-      type: "completed",
-      status: transition.status,
-      code: transition.code,
-      message: transition.message,
+      type: "terminal",
+      status: "execution_failed",
+      code: errorCode(error),
+      message: errorMessage(error),
     };
   }
-  return null;
+}
+
+function terminalResult(transition: TerminalTransition): ActionExecutionWorkflowResult {
+  return {
+    type: "completed",
+    status: transition.status,
+    code: transition.code,
+    message: transition.message,
+  };
 }
 
 export async function runActionExecution(input: {
@@ -246,29 +348,30 @@ export async function runActionExecution(input: {
   step: WorkflowStep;
   evaluatedAt: string;
 }): Promise<ActionExecutionWorkflowResult> {
-  const reauthorization = await runRetryingStep(
-    input.step,
-    "reauthorize action",
-    "authorization_check_failed",
-    () =>
-      reauthorizeStep({
-        env: input.env,
-        params: input.params,
-        evaluatedAt: input.evaluatedAt,
-      }),
-  );
-  const reauthorizationResult = asWorkflowResult(reauthorization);
-  if (reauthorizationResult) return reauthorizationResult;
+  const reauthorization = await runReauthorizationStep(input);
+  if (reauthorization.type === "failed") {
+    return {
+      type: "failed",
+      code: reauthorization.code,
+      message: reauthorization.message,
+    };
+  }
+  if (reauthorization.type === "terminal") return terminalResult(reauthorization);
 
-  const execution = await runRetryingStep(input.step, "execute action", "execution_failed", () =>
-    executeStep({
-      env: input.env,
-      params: input.params,
-      authorizationEvidence: reauthorization.value,
-    }),
-  );
-  const executionResult = asWorkflowResult(execution);
-  if (executionResult) return executionResult;
+  const execution = await runExecutionStep({
+    env: input.env,
+    params: input.params,
+    step: input.step,
+    authorizationEvidence: reauthorization.evidence,
+  });
+  if (execution.type === "failed") {
+    return {
+      type: "failed",
+      code: execution.code,
+      message: execution.message,
+    };
+  }
+  if (execution.type === "terminal") return terminalResult(execution);
 
-  return { type: "completed", status: execution.value };
+  return { type: "completed", status: "executed" };
 }
