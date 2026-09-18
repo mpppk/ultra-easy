@@ -162,8 +162,7 @@ async function recordApprovalDecisionV1(
   const state = cloneState(input.state);
   if (
     input.event.approvalBindingFingerprint !== undefined &&
-    String(input.event.approvalBindingFingerprint) !==
-    String(input.plan.approvalBindingFingerprint)
+    String(input.event.approvalBindingFingerprint) !== String(input.plan.approvalBindingFingerprint)
   ) {
     return Result.fail(
       new ApprovalDecisionBindingMismatchError({
