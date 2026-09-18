@@ -41,7 +41,10 @@ export class D1ActionResultProjectionRepositoryError extends Error {
   readonly code = "action_result_projection_repository_error";
 }
 
-function repositoryError(error: unknown, fallback: string): D1ActionResultProjectionRepositoryError {
+function repositoryError(
+  error: unknown,
+  fallback: string,
+): D1ActionResultProjectionRepositoryError {
   return new D1ActionResultProjectionRepositoryError(
     error instanceof Error ? error.message : fallback,
   );
