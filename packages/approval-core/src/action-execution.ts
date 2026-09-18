@@ -2,9 +2,14 @@ import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
 import type { ActionRequest } from "./domain/action.ts";
-import type { ActionFingerprint, ActionRequestId } from "./domain/brand.ts";
+import type {
+  ActionFingerprint,
+  ActionRequestId,
+  ApprovalBindingFingerprint,
+} from "./domain/brand.ts";
 import type { JsonValue } from "./domain/json.ts";
-import type { MaterializedActionSnapshot } from "./materialization.ts";
+import type { ApprovalRuntimeState } from "./interpreter/types.ts";
+import type { MaterializedActionSnapshot, MaterializedApprovalPlan } from "./materialization.ts";
 import {
   reauthorizeActionRequest,
   type ActionAuthorizer,
@@ -24,6 +29,8 @@ export type ActionExecutionResult = {
   status: "succeeded";
   output?: JsonValue;
 };
+
+export type ActionExecutionGuaranteeLevel = "idempotent" | "best_effort_at_most_once";
 
 const ActionExecutorErrorBase = ErrorFactory({
   name: "ActionExecutorError",
@@ -55,6 +62,12 @@ export class ActionExecutorError extends ActionExecutorErrorBase {
 }
 
 export interface ActionExecutor {
+  /**
+   * 外部side effectが提供する再実行保証。
+   * local projectionの存在だけでexactly-onceへ昇格させてはならない。
+   */
+  readonly guaranteeLevel: ActionExecutionGuaranteeLevel;
+
   execute(
     request: ActionExecutionRequest,
   ): Result.ResultAsync<ActionExecutionResult, ActionExecutorError>;
@@ -88,6 +101,70 @@ export class ActionAuthorizationCheckFailedError extends ActionAuthorizationChec
 
 export type ActionExecutionFailure = ActionAuthorizationCheckFailedError | ActionExecutorError;
 
+const ActionApprovalBindingMismatchErrorBase = ErrorFactory({
+  name: "ActionApprovalBindingMismatchError",
+  message: ({ expected, actual }) =>
+    `Approval bindingが実行対象と一致しません: expected=${expected}, actual=${actual}`,
+  fields: ErrorFactory.fields<{
+    code: "approval_binding_mismatch";
+    expected: string;
+    actual: string;
+  }>(),
+});
+
+export class ActionApprovalBindingMismatchError extends ActionApprovalBindingMismatchErrorBase {}
+
+export function validateApprovalBindingForExecution(input: {
+  plan: MaterializedApprovalPlan;
+  state: ApprovalRuntimeState | null;
+}): Result.Result<void, ActionApprovalBindingMismatchError> {
+  if (input.plan.flow.type === "none") return Result.succeed(undefined);
+
+  if (!input.state) {
+    return Result.fail(
+      new ActionApprovalBindingMismatchError({
+        code: "approval_binding_mismatch",
+        expected: String(input.plan.approvalBindingFingerprint),
+        actual: "missing_runtime_projection",
+      }),
+    );
+  }
+
+  if (
+    String(input.state.actionRequestId) !== String(input.plan.actionRequestId) ||
+    String(input.state.approvalPlanChecksum) !== String(input.plan.approvalPlanChecksum) ||
+    input.state.status !== "approved"
+  ) {
+    return Result.fail(
+      new ActionApprovalBindingMismatchError({
+        code: "approval_binding_mismatch",
+        expected: String(input.plan.approvalBindingFingerprint),
+        actual: "runtime_projection_not_approved_for_plan",
+      }),
+    );
+  }
+
+  for (const task of input.state.tasks) {
+    for (const decision of task.decisions) {
+      const actual = decision.approvalBindingFingerprint;
+      if (
+        actual === undefined ||
+        String(actual) !== String(input.plan.approvalBindingFingerprint)
+      ) {
+        return Result.fail(
+          new ActionApprovalBindingMismatchError({
+            code: "approval_binding_mismatch",
+            expected: String(input.plan.approvalBindingFingerprint),
+            actual: actual === undefined ? "missing_decision_binding" : String(actual),
+          }),
+        );
+      }
+    }
+  }
+
+  return Result.succeed(undefined);
+}
+
 export type ActionReauthorizationOutcome =
   | {
       type: "authorized";
@@ -103,6 +180,7 @@ export type ActionExecutionOutcome =
   | {
       type: "executed";
       idempotencyKey: string;
+      guaranteeLevel: ActionExecutionGuaranteeLevel;
       authorizationEvidence: AuthorizationEvidence;
       result: ActionExecutionResult;
     }
@@ -162,6 +240,7 @@ export async function executeAuthorizedAction(input: {
   return Result.succeed({
     type: "executed",
     idempotencyKey,
+    guaranteeLevel: input.executor.guaranteeLevel,
     authorizationEvidence: input.authorizationEvidence,
     result: executed.value,
   });
