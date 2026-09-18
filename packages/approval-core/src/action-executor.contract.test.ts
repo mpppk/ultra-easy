@@ -1,10 +1,7 @@
 import { Result } from "@praha/byethrow";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  ActionExecutorError,
-  createActionExecutionIdempotencyKey,
-} from "./action-execution.ts";
+import { ActionExecutorError, createActionExecutionIdempotencyKey } from "./action-execution.ts";
 import type { ActionFingerprint, ActionRequestId } from "./domain/brand.ts";
 
 function branded<T extends string>(value: string): T {
