@@ -2,6 +2,7 @@ import { Result } from "@praha/byethrow";
 
 import {
   authorizeActionRequest,
+  evaluateApprovalPlan,
   executeActionRequest,
   materializeApprovalPlan,
   validateActionInput,
@@ -9,6 +10,7 @@ import {
 import type {
   Action,
   ActionAuthorizer,
+  ApprovalPlanEvaluation,
   ActionDefinition,
   ActionDefinitionResolver,
   ActionExecutor,
@@ -21,6 +23,7 @@ import type {
   PolicyEvaluationOrganization,
   PrincipalRef,
   SchemaResolver,
+  VersionedApprovalPolicyBinding,
 } from "@app/approval-core";
 
 import type {
@@ -86,6 +89,24 @@ export type ActionRequestView = {
   completedAt?: string;
 };
 
+export type ActionRequestEvaluation =
+  | {
+      type: "evaluated";
+      actionRequestId: ActionRequestId;
+      request: ActionRequest;
+      context: PolicyEvaluationContext;
+      actionDefinition: ActionDefinition;
+      bindings: readonly VersionedApprovalPolicyBinding[];
+      policyEvaluation: ApprovalPlanEvaluation;
+      plan: MaterializedApprovalPlan;
+    }
+  | {
+      type: "authorization_denied";
+      actionRequestId: ActionRequestId;
+      code: string;
+      reason: string;
+    };
+
 export type ActionRequestSubmitResult =
   | {
       type: "accepted";
@@ -109,6 +130,7 @@ export type ActionRequestApplicationErrorCode =
   | "action_input_not_object"
   | "authorization_provider_failed"
   | "policy_binding_resolution_failed"
+  | "policy_evaluation_failed"
   | "materialization_failed"
   | "plan_persistence_failed"
   | "action_request_already_exists"
@@ -234,12 +256,10 @@ function requestView(input: {
 export class ActionRequestApplicationService {
   constructor(private readonly dependencies: ActionRequestApplicationServiceDependencies) {}
 
-  async submit(input: {
+  async evaluate(input: {
     action: Action;
     trustedContext: TrustedActionRequestContext;
-    idempotencyKey?: string;
-    clientReference?: string;
-  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
+  }): Result.ResultAsync<ActionRequestEvaluation, ActionRequestApplicationError> {
     const actionRequestId = this.dependencies.idGenerator.next();
 
     const definition = await resolveActionDefinition({
@@ -324,6 +344,21 @@ export class ActionRequestApplicationService {
       return Result.fail(mapDependencyError(bindings.error, "policy_binding_resolution_failed"));
     }
 
+    const policyEvaluation = evaluateApprovalPlan({
+      context,
+      bindings: bindings.value.map((source) => source.binding),
+      policies: bindings.value.map((source) => source.policy),
+    });
+    if (Result.isFailure(policyEvaluation)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "policy_evaluation_failed",
+          false,
+          policyEvaluation.error.message,
+        ),
+      );
+    }
+
     const materialized = await materializeApprovalPlan({
       actionRequestId,
       context,
@@ -336,12 +371,38 @@ export class ActionRequestApplicationService {
       );
     }
 
-    const saved = await this.dependencies.planRepository.save(materialized.plan);
+    return Result.succeed({
+      type: "evaluated",
+      actionRequestId,
+      request,
+      context,
+      actionDefinition: definition.value,
+      bindings: bindings.value,
+      policyEvaluation: policyEvaluation.value,
+      plan: materialized.plan,
+    });
+  }
+
+  async submit(input: {
+    action: Action;
+    trustedContext: TrustedActionRequestContext;
+    idempotencyKey?: string;
+    clientReference?: string;
+  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
+    const evaluated = await this.evaluate({
+      action: input.action,
+      trustedContext: input.trustedContext,
+    });
+    if (Result.isFailure(evaluated)) return evaluated;
+    if (evaluated.value.type === "authorization_denied") return evaluated;
+
+    const { actionRequestId, request, plan } = evaluated.value;
+    const saved = await this.dependencies.planRepository.save(plan);
     if (saved.type !== "created") return Result.fail(planPersistenceError(saved));
 
-    if (materialized.plan.flow.type !== "none") {
+    if (plan.flow.type !== "none") {
       const started = await this.dependencies.workflowStarter.start({
-        plan: materialized.plan,
+        plan,
         startedAt: input.trustedContext.now,
       });
       if (Result.isFailure(started)) {
@@ -351,11 +412,11 @@ export class ActionRequestApplicationService {
         type: "accepted",
         actionRequestId,
         request,
-        plan: materialized.plan,
+        plan,
         workflowInstanceId: started.value.workflowInstanceId,
         view: requestView({
           request,
-          plan: materialized.plan,
+          plan,
           status: "pending_approval",
           now: input.trustedContext.now,
         }),
@@ -367,8 +428,8 @@ export class ActionRequestApplicationService {
       executor: this.dependencies.executor,
       actionRequestId,
       request,
-      actionFingerprint: materialized.plan.actionFingerprint,
-      action: materialized.plan.action,
+      actionFingerprint: plan.actionFingerprint,
+      action: plan.action,
       evaluatedAt: input.trustedContext.now,
     });
     if (Result.isFailure(execution)) {
@@ -386,10 +447,10 @@ export class ActionRequestApplicationService {
         type: "accepted",
         actionRequestId,
         request,
-        plan: materialized.plan,
+        plan,
         view: requestView({
           request,
-          plan: materialized.plan,
+          plan,
           status: "authorization_revoked",
           now: input.trustedContext.now,
           result: {
@@ -405,10 +466,10 @@ export class ActionRequestApplicationService {
       type: "accepted",
       actionRequestId,
       request,
-      plan: materialized.plan,
+      plan,
       view: requestView({
         request,
-        plan: materialized.plan,
+        plan,
         status: "executed",
         now: input.trustedContext.now,
         result: {
