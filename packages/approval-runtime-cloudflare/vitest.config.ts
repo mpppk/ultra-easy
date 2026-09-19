@@ -39,7 +39,10 @@ export default defineConfig({
               action?: { input?: { executorScenario?: string } };
             };
             const actionRequestId = body.actionRequestId ?? "unknown";
-            const executionKey = JSON.stringify([body.organizationId ?? "unknown", actionRequestId]);
+            const executionKey = JSON.stringify([
+              body.organizationId ?? "unknown",
+              actionRequestId,
+            ]);
             const idempotencyKey = body.idempotencyKey ?? "";
             const previous = executorAttempts.get(executionKey);
             const attempt = (previous?.count ?? 0) + 1;
