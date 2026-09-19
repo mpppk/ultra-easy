@@ -12,6 +12,7 @@ import {
   type AuthorizationDecision,
   type ExecutorKey,
   type JsonValue,
+  type OrganizationId,
 } from "@app/approval-core";
 import type { ActionRequest } from "@app/approval-core";
 
@@ -62,7 +63,10 @@ function responseRetriable(value: ErrorResponse, status: number): boolean {
  * Generic Workflowはaction type→relation等のapplication固有mappingを知らない。
  */
 export class ServiceBindingActionAuthorizer implements ActionAuthorizer {
-  constructor(private readonly binding: ActionServiceBinding) {}
+  constructor(
+    private readonly binding: ActionServiceBinding,
+    private readonly organizationId: OrganizationId,
+  ) {}
 
   async check(input: {
     request: ActionRequest;
@@ -74,7 +78,7 @@ export class ServiceBindingActionAuthorizer implements ActionAuthorizer {
       request: new Request("https://action-authorizer.internal/check", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify({ ...input, organizationId: this.organizationId }),
       }),
     });
     if (Result.isFailure(fetched)) {
