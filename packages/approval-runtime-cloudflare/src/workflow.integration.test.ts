@@ -524,12 +524,13 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await expectCompleted(idA, "executed");
     await expectCompleted(idB, "executed");
 
-    const wrongTenantLoad = await new D1MaterializedPlanRepository(testEnv.DB).loadForWorkflow({
+    const wrongTenantLoad = await new D1MaterializedPlanRepository(
+      testEnv.DB,
+    ).loadForWorkflow({
       organizationId: "organization:tenant-c" as OrganizationId,
       actionRequestId: planA.actionRequestId,
       expectedApprovalPlanChecksum: planA.approvalPlanChecksum,
     });
     expect(wrongTenantLoad.type).toBe("not_found");
   });
-
 });
