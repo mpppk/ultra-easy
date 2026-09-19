@@ -17,10 +17,7 @@ jobs:
       - name: Install dependencies
         run: vp install
       - name: Check
-        run: |
-          vp check --fix || true
-          git diff -- packages/approval-application/src/action-request-service.ts packages/approval-application/src/action-request-service.test.ts
-          exit 1
+        run: vp check
       - name: Build Web Preview
         run: vp -C apps/web run build:preview
       - name: Dry-run Approval Runtime Preview

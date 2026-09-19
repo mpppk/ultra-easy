@@ -171,7 +171,9 @@ class FakeWorkflowStarter implements ActionWorkflowStarter {
 
   start(input: { plan: MaterializedApprovalPlan; startedAt: string }) {
     this.plans.push(input.plan);
-    return Promise.resolve(Result.succeed({ workflowInstanceId: String(input.plan.actionRequestId) }));
+    return Promise.resolve(
+      Result.succeed({ workflowInstanceId: String(input.plan.actionRequestId) }),
+    );
   }
 }
 
@@ -183,10 +185,12 @@ class FakePolicyResolver implements VersionedPolicyBindingResolver {
   }
 }
 
-function createHarness(input: {
-  allowed?: boolean;
-  approvalRequired?: boolean;
-} = {}) {
+function createHarness(
+  input: {
+    allowed?: boolean;
+    approvalRequired?: boolean;
+  } = {},
+) {
   const authorizer = new FakeAuthorizer(input.allowed ?? true);
   const executor = new FakeExecutor();
   const planRepository = new FakePlanRepository();

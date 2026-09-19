@@ -65,13 +65,9 @@ function problem(input: {
 }
 
 function json(value: unknown, init: ResponseInit): Response {
-  return new Response(JSON.stringify(value), {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init.headers ?? {}),
-    },
-  });
+  const headers = new Headers(init.headers);
+  headers.set("content-type", "application/json");
+  return new Response(JSON.stringify(value), { ...init, headers });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

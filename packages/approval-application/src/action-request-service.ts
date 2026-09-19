@@ -39,10 +39,7 @@ export type TrustedActionRequestContext = {
   now: string;
 };
 
-export type ActionRequestPublicStatus =
-  | "pending_approval"
-  | "executed"
-  | "authorization_revoked";
+export type ActionRequestPublicStatus = "pending_approval" | "executed" | "authorization_revoked";
 
 export type ActionRequestView = {
   id: string;
@@ -144,10 +141,8 @@ const resolveActionDefinition = Result.fn({
 });
 
 const resolveSchema = Result.fn({
-  try: async (input: {
-    resolver: SchemaResolver;
-    definition: ActionDefinition;
-  }) => input.resolver.resolve(input.definition.inputSchema),
+  try: async (input: { resolver: SchemaResolver; definition: ActionDefinition }) =>
+    input.resolver.resolve(input.definition.inputSchema),
   catch: (error): ActionRequestApplicationError =>
     new ActionRequestApplicationError(
       "schema_resolution_failed",
@@ -157,10 +152,8 @@ const resolveSchema = Result.fn({
 });
 
 const validateSchema = Result.fn({
-  try: async (input: {
-    schema: Awaited<ReturnType<SchemaResolver["resolve"]>>;
-    value: unknown;
-  }) => validateActionInput(input.schema, input.value),
+  try: async (input: { schema: Awaited<ReturnType<SchemaResolver["resolve"]>>; value: unknown }) =>
+    validateActionInput(input.schema, input.value),
   catch: (error): ActionRequestApplicationError =>
     new ActionRequestApplicationError(
       "action_input_validation_failed",
@@ -181,10 +174,7 @@ function mapDependencyError(
 }
 
 function planPersistenceError(
-  result: Exclude<
-    Awaited<ReturnType<MaterializedPlanRepository["save"]>>,
-    { type: "created" }
-  >,
+  result: Exclude<Awaited<ReturnType<MaterializedPlanRepository["save"]>>, { type: "created" }>,
 ): ActionRequestApplicationError {
   if (result.type === "existing" || result.type === "conflict") {
     return new ActionRequestApplicationError(
@@ -311,9 +301,7 @@ export class ActionRequestApplicationService {
     const context: PolicyEvaluationContext = {
       ...request,
       organization: input.trustedContext.organization,
-      ...(input.trustedContext.attributes
-        ? { attributes: input.trustedContext.attributes }
-        : {}),
+      ...(input.trustedContext.attributes ? { attributes: input.trustedContext.attributes } : {}),
       now: input.trustedContext.now,
     };
 
@@ -333,11 +321,7 @@ export class ActionRequestApplicationService {
     });
     if (materialized.type === "error") {
       return Result.fail(
-        new ActionRequestApplicationError(
-          "materialization_failed",
-          false,
-          materialized.message,
-        ),
+        new ActionRequestApplicationError("materialization_failed", false, materialized.message),
       );
     }
 
