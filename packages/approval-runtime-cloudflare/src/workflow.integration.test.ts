@@ -8,6 +8,7 @@ import {
   computeApprovalBindingFingerprint,
   computeApprovalPlanChecksum,
   computeEvaluationSnapshotChecksum,
+  createActionExecutionIdempotencyKey,
   createMaterializedStepId,
 } from "@app/approval-core";
 import type {
@@ -438,7 +439,11 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     expect(actionResult.value).toMatchObject({
       status: "executed",
       guaranteeLevel: "best_effort_at_most_once",
-      idempotencyKey: `${String(plan.actionRequestId)}:${String(plan.actionFingerprint)}`,
+      idempotencyKey: createActionExecutionIdempotencyKey(
+        plan.organizationId,
+        plan.actionRequestId,
+        plan.actionFingerprint,
+      ),
     });
     await introspector.dispose();
   });
