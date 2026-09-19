@@ -398,5 +398,4 @@ describe("D1PublicApiRepository", () => {
     assert(Result.isSuccess(otherTenant));
     expect(otherTenant.value.type).toBe("acquired");
   });
-
 });
