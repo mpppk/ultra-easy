@@ -1,4 +1,5 @@
 export const previewScenarios = [
+  "no-approval",
   "serial-two-users",
   "parallel-all",
   "parallel-quorum",
