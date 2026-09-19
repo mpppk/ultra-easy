@@ -94,8 +94,7 @@ export class ActionRequestSimulationService {
         ...(evaluation.type === "matched"
           ? { matchedRuleKey: String(evaluation.ruleKey) }
           : { matchedRuleKey: null }),
-        outcome:
-          evaluation.type === "matched" && evaluation.flow.type !== "none" ? "flow" : "none",
+        outcome: evaluation.type === "matched" && evaluation.flow.type !== "none" ? "flow" : "none",
       }),
     );
 
@@ -120,8 +119,7 @@ export function createActionRequestSimulationHttpApi(input: {
   return {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
-      const match =
-        /^\/v1\/organizations\/([^/]+)\/action-requests\/simulate$/.exec(url.pathname);
+      const match = /^\/v1\/organizations\/([^/]+)\/action-requests\/simulate$/.exec(url.pathname);
       if (request.method !== "POST" || !match?.[1]) {
         return new Response("Not Found", { status: 404 });
       }
