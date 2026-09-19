@@ -2,7 +2,7 @@ import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
 import type { ActionRequest } from "./domain/action.ts";
-import type { ActionFingerprint, ActionRequestId } from "./domain/brand.ts";
+import type { ActionFingerprint, ActionRequestId, OrganizationId } from "./domain/brand.ts";
 import type { JsonValue } from "./domain/json.ts";
 import type { ApprovalRuntimeState } from "./interpreter/types.ts";
 import type { MaterializedActionSnapshot, MaterializedApprovalPlan } from "./materialization.ts";
@@ -14,6 +14,7 @@ import {
 } from "./authorization.ts";
 
 export type ActionExecutionRequest = {
+  organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   actionFingerprint: ActionFingerprint;
   idempotencyKey: string;
@@ -189,10 +190,13 @@ export type ActionExecutionOutcome =
   | Extract<ActionReauthorizationOutcome, { type: "authorization_revoked" }>;
 
 export function createActionExecutionIdempotencyKey(
+  organizationId: OrganizationId,
   actionRequestId: ActionRequestId,
   actionFingerprint: ActionFingerprint,
 ): string {
-  return `${String(actionRequestId)}:${String(actionFingerprint)}`;
+  return `ue:v1:${encodeURIComponent(String(organizationId))}:${encodeURIComponent(
+    String(actionRequestId),
+  )}:${encodeURIComponent(String(actionFingerprint))}`;
 }
 
 /** Durable runtimeからRe-Authorizationを独立stepとして実行できるphase。 */
@@ -221,16 +225,19 @@ export async function reauthorizeActionForExecution(input: {
 /** Durable runtimeから外部side effectを独立stepとしてretryできるphase。 */
 export async function executeAuthorizedAction(input: {
   executor: ActionExecutor;
+  organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   actionFingerprint: ActionFingerprint;
   action: MaterializedActionSnapshot;
   authorizationEvidence: AuthorizationEvidence;
 }): Result.ResultAsync<Extract<ActionExecutionOutcome, { type: "executed" }>, ActionExecutorError> {
   const idempotencyKey = createActionExecutionIdempotencyKey(
+    input.organizationId,
     input.actionRequestId,
     input.actionFingerprint,
   );
   const executed = await input.executor.execute({
+    organizationId: input.organizationId,
     actionRequestId: input.actionRequestId,
     actionFingerprint: input.actionFingerprint,
     idempotencyKey,
@@ -257,6 +264,7 @@ export async function executeAuthorizedAction(input: {
 export async function executeActionRequest(input: {
   authorizer: ActionAuthorizer;
   executor: ActionExecutor;
+  organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   request: ActionRequest;
   actionFingerprint: ActionFingerprint;
@@ -275,6 +283,7 @@ export async function executeActionRequest(input: {
 
   return executeAuthorizedAction({
     executor: input.executor,
+    organizationId: input.organizationId,
     actionRequestId: input.actionRequestId,
     actionFingerprint: input.actionFingerprint,
     action: input.action,
