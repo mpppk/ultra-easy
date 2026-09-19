@@ -510,6 +510,7 @@ function createHarness() {
       const execution = await executeActionRequest({
         authorizer,
         executor,
+        organizationId: plan.organizationId,
         actionRequestId: plan.actionRequestId,
         request: requestFromPlan(plan),
         actionFingerprint: plan.actionFingerprint,
