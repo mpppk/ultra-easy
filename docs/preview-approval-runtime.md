@@ -13,9 +13,13 @@ Private stable Worker: ultra-easy-approval-runtime-preview
           |
           +-- D1: DB
           +-- Workflow: ACTION_WORKFLOW / ActionWorkflow
+          +-- self Service Binding: ACTION_AUTHORIZER -> PreviewActionAuthorizer
+          +-- self Service Binding: ACTION_EXECUTOR -> PreviewActionExecutor
 ```
 
 The Web preview does not bind D1 or Workflows directly. The stable runtime Worker owns both resources and exposes a private HTTP gateway that is only reachable through a Cloudflare Service Binding.
+
+The M5 Preview mock Authorizer / Executor are named entrypoints on the same private Worker. They are reached only through Service Bindings, so the Preview path exercises the same `ServiceBindingActionAuthorizer` / `ServiceBindingActionExecutor` contracts as a real application integration without adding public mock endpoints.
 
 Production `apps/web/wrangler.jsonc` is unchanged. The harness is enabled only by `apps/web/wrangler.preview.jsonc`, where `PREVIEW_HARNESS_ENABLED=true`.
 
@@ -37,7 +41,7 @@ The runtime Wrangler configuration declares a draft D1 binding (`DB`) without an
 
 The Worker has `workers_dev=false`, so it is not intended to expose a public `workers.dev` endpoint. It is consumed by the Web Worker through a Service Binding.
 
-The first Preview scenarios use direct user targets only. The OpenFGA variables in this Worker are therefore inert placeholders; dynamic OpenFGA scenarios are intentionally deferred.
+The first Preview scenarios use direct user targets only. The OpenFGA variables in this Worker are therefore inert placeholders; dynamic OpenFGA scenarios are intentionally deferred. Re-Authorization still runs through the Preview ActionAuthorizer Service Binding before every Action execution.
 
 ## 2. Configure Web branch previews
 
@@ -65,6 +69,8 @@ vp -C apps/web run build:preview
 vp -C apps/approval-runtime run deploy:dry-run
 ```
 
+Both commands are also executed by the repository check workflow so Preview-specific configuration drift fails CI before merge.
+
 ## 3. Protect Preview URLs
 
 Worker version Preview URLs are public unless protected. Before using the approval harness with real data, protect Preview URLs with Cloudflare Access.
@@ -81,7 +87,30 @@ Open the branch Preview URL at:
 /preview/approval-runtime
 ```
 
-Start with `serial-two-users`.
+### Approvalなし
+
+Start with `no-approval`, then refresh until the Workflow completes.
+
+Expected progression:
+
+```text
+start
+  -> Runtime approved
+  -> Re-Authorization allow
+  -> Preview ActionExecutor
+  -> Workflow complete
+  -> Action result executed
+```
+
+Verify that:
+
+- Guarantee is `best_effort_at_most_once`.
+- Idempotency key is present in the Action Result projection.
+- The executor output recorded in `action_results` contains the same idempotency key.
+
+### Approvalあり
+
+Next run `serial-two-users`.
 
 Expected progression:
 
@@ -96,17 +125,22 @@ Approve as user:alice
   -> finance task pending (user:bob)
 
 Approve as user:bob
-  -> Workflow complete
   -> Runtime approved
+  -> Re-Authorization allow
+  -> Preview ActionExecutor
+  -> Workflow complete
+  -> Action result executed
 ```
 
-Then verify:
+The final Action Result must again show `best_effort_at_most_once` and an idempotency key. This demonstrates that Approvalあり/なしの両方が同じ ActionExecutor contract へ収束する。
+
+Then verify the approval semantics scenarios:
 
 - `parallel-all`
 - `parallel-quorum`
 - `distinct-approvers`
 
-The status endpoint intentionally returns both the Cloudflare Workflow status and the D1 runtime projection so mismatches between durable execution and the read projection are visible.
+The status endpoint intentionally returns the Cloudflare Workflow status, D1 approval runtime projection, and D1 Action Result projection so mismatches between durable execution and either read projection are visible.
 
 ## Follow-up
 
