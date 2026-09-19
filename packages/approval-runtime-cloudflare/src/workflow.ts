@@ -40,13 +40,19 @@ export type ActionWorkflowParams = {
   approvalPlanChecksum: ApprovalPlanChecksum;
 };
 
-export function actionWorkflowInstanceId(input: {
+export async function actionWorkflowInstanceId(input: {
   organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
-}): string {
-  return `${encodeURIComponent(String(input.organizationId))}::${encodeURIComponent(
-    String(input.actionRequestId),
-  )}`;
+}): Promise<string> {
+  const source = JSON.stringify([String(input.organizationId), String(input.actionRequestId)]);
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(source),
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return `ue_${hex}`;
 }
 
 export type ActionWorkflowOutput =
@@ -417,7 +423,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
   ): Promise<ActionWorkflowOutput> {
     const params = event.payload;
 
-    if (event.instanceId !== actionWorkflowInstanceId(params)) {
+    if (event.instanceId !== (await actionWorkflowInstanceId(params))) {
       return {
         type: "failed",
         actionRequestId: params.actionRequestId,
