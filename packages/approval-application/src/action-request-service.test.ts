@@ -1,0 +1,306 @@
+import { Result } from "@praha/byethrow";
+import { describe, expect, it } from "vite-plus/test";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
+
+import {
+  always,
+  approve,
+  authorityPrincipal,
+  definePolicy,
+  principal,
+  rule,
+} from "@app/approval-core";
+import type {
+  Action,
+  ActionAuthorizer,
+  ActionDefinition,
+  ActionDefinitionKey,
+  ActionExecutionRequest,
+  ActionExecutor,
+  ActionRequestId,
+  ApprovalPolicyBinding,
+  ApprovalPolicyBindingId,
+  ApprovalPolicyKey,
+  ExecutorKey,
+  MaterializedApprovalPlan,
+  MaterializedPlanRepository,
+  OrganizationId,
+  SchemaKey,
+  SchemaResolver,
+  UserId,
+  VersionedApprovalPolicyBinding,
+} from "@app/approval-core";
+
+import {
+  ActionRequestApplicationService,
+  createActionRequestHttpApi,
+  type ActionWorkflowStarter,
+  type HttpTrustedContextProvider,
+  type TrustedActionRequestContext,
+  type VersionedPolicyBindingResolver,
+} from "./index.ts";
+
+function branded<T extends string>(value: string): T {
+  return value as T;
+}
+
+const organizationId = branded<OrganizationId>("org:m6");
+const alice = branded<UserId>("user:alice");
+const actionRequestId = branded<ActionRequestId>("action-request:m6");
+const action: Action = {
+  type: branded("ticket.priority.change"),
+  resource: { type: branded("ticket"), id: branded("TICKET-1") },
+  input: { priority: "critical" },
+};
+
+const trustedContext: TrustedActionRequestContext = {
+  actor: { type: "user", id: alice },
+  authority: { principal: { type: "user", id: alice } },
+  origin: { type: "api" },
+  organization: { id: organizationId },
+  now: "2026-09-19T00:00:00.000Z",
+};
+
+const schema = {
+  "~standard": {
+    version: 1,
+    vendor: "m6-test",
+    validate(value: unknown) {
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        return { value: value as Record<string, unknown> };
+      }
+      return { issues: [{ message: "input must be an object" }] };
+    },
+  },
+} satisfies StandardSchemaV1<unknown, Record<string, unknown>>;
+
+const definition: ActionDefinition = {
+  key: branded<ActionDefinitionKey>("ticket-priority-change"),
+  version: 1,
+  actionType: action.type,
+  inputSchema: { key: branded<SchemaKey>("ticket-priority-input"), version: 1 },
+  executorKey: branded<ExecutorKey>("ticket-priority-executor"),
+};
+
+function approvalPolicy(): VersionedApprovalPolicyBinding {
+  const policyKey = branded<ApprovalPolicyKey>("policy:m6");
+  const binding: ApprovalPolicyBinding = {
+    id: branded<ApprovalPolicyBindingId>("binding:m6"),
+    organizationId,
+    policyKey,
+    selector: { actionTypes: [action.type] },
+    enabled: true,
+  };
+  return {
+    binding,
+    policyVersion: 1,
+    policy: definePolicy({
+      key: "policy:m6",
+      name: "M6 approval",
+      rules: [
+        rule("approve", {
+          when: always(),
+          flow: approve({
+            key: "manager",
+            approver: principal(authorityPrincipal()),
+          }),
+        }),
+      ],
+    }),
+  };
+}
+
+class FakeAuthorizer implements ActionAuthorizer {
+  calls = 0;
+
+  constructor(private readonly allowed: boolean) {}
+
+  check() {
+    this.calls += 1;
+    return Promise.resolve(
+      Result.succeed(
+        this.allowed
+          ? {
+              type: "allow" as const,
+              evidence: {
+                evaluatedAt: trustedContext.now,
+                consistency: "higher_consistency" as const,
+                provider: "m6-test",
+              },
+            }
+          : {
+              type: "deny" as const,
+              code: "action_not_allowed",
+              reason: "actor is not authorized",
+            },
+      ),
+    );
+  }
+}
+
+class FakeExecutor implements ActionExecutor {
+  readonly guaranteeLevel = "idempotent" as const;
+  calls: ActionExecutionRequest[] = [];
+
+  execute(request: ActionExecutionRequest) {
+    this.calls.push(request);
+    return Promise.resolve(
+      Result.succeed({
+        status: "succeeded" as const,
+        output: { ok: true },
+      }),
+    );
+  }
+}
+
+class FakePlanRepository implements MaterializedPlanRepository {
+  saved: MaterializedApprovalPlan[] = [];
+
+  save(plan: MaterializedApprovalPlan) {
+    this.saved.push(plan);
+    return Promise.resolve({ type: "created" as const });
+  }
+
+  load() {
+    return Promise.resolve({ type: "not_found" as const });
+  }
+}
+
+class FakeWorkflowStarter implements ActionWorkflowStarter {
+  plans: MaterializedApprovalPlan[] = [];
+
+  start(input: { plan: MaterializedApprovalPlan; startedAt: string }) {
+    this.plans.push(input.plan);
+    return Promise.resolve(Result.succeed({ workflowInstanceId: String(input.plan.actionRequestId) }));
+  }
+}
+
+class FakePolicyResolver implements VersionedPolicyBindingResolver {
+  constructor(private readonly bindings: readonly VersionedApprovalPolicyBinding[]) {}
+
+  resolve() {
+    return Promise.resolve(Result.succeed(this.bindings));
+  }
+}
+
+function createHarness(input: {
+  allowed?: boolean;
+  approvalRequired?: boolean;
+} = {}) {
+  const authorizer = new FakeAuthorizer(input.allowed ?? true);
+  const executor = new FakeExecutor();
+  const planRepository = new FakePlanRepository();
+  const workflowStarter = new FakeWorkflowStarter();
+  const policyBindingResolver = new FakePolicyResolver(
+    input.approvalRequired ? [approvalPolicy()] : [],
+  );
+  const schemaResolver: SchemaResolver = { resolve: () => schema };
+  const service = new ActionRequestApplicationService({
+    actionDefinitionResolver: { resolve: () => definition },
+    schemaResolver,
+    policyBindingResolver,
+    authorizer,
+    executor,
+    planRepository,
+    workflowStarter,
+    idGenerator: { next: () => actionRequestId },
+  });
+
+  let trustedContextCalls = 0;
+  const trustedContextProvider: HttpTrustedContextProvider = {
+    resolve() {
+      trustedContextCalls += 1;
+      return Promise.resolve(Result.succeed(trustedContext));
+    },
+  };
+  const api = createActionRequestHttpApi({ service, trustedContextProvider });
+
+  return {
+    api,
+    authorizer,
+    executor,
+    planRepository,
+    workflowStarter,
+    trustedContextCalls: () => trustedContextCalls,
+  };
+}
+
+function request(body: unknown): Request {
+  return new Request("https://approval.test/v1/organizations/org%3Am6/action-requests", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "idempotency-key": "idem:m6",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("M6-1 ActionRequest unified entrypoint", () => {
+  it("AC-M6-001: callerは同じPOSTだけを使い、Policy結果でimmediate executeになる", async () => {
+    const harness = createHarness({ approvalRequired: false });
+
+    const response = await harness.api.fetch(request({ action }));
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      id: String(actionRequestId),
+      status: "executed",
+      approval: { required: false },
+      result: { status: "executed", output: { ok: true } },
+    });
+    expect(harness.planRepository.saved).toHaveLength(1);
+    expect(harness.workflowStarter.plans).toHaveLength(0);
+    expect(harness.executor.calls).toHaveLength(1);
+    expect(harness.authorizer.calls).toBe(2);
+  });
+
+  it("AC-M6-001: 同じPOSTがPolicy結果でpending_approvalになりExecutorを呼ばない", async () => {
+    const harness = createHarness({ approvalRequired: true });
+
+    const response = await harness.api.fetch(request({ action }));
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      id: String(actionRequestId),
+      status: "pending_approval",
+      approval: { required: true },
+    });
+    expect(harness.planRepository.saved).toHaveLength(1);
+    expect(harness.workflowStarter.plans).toHaveLength(1);
+    expect(harness.executor.calls).toHaveLength(0);
+    expect(harness.authorizer.calls).toBe(1);
+  });
+
+  it("AC-M6-002: actor/authorityをbodyから指定してtrusted contextを偽装できない", async () => {
+    const harness = createHarness();
+
+    for (const injected of [
+      { actor: { type: "user", id: "user:mallory" } },
+      { authority: { principal: { type: "user", id: "user:mallory" } } },
+    ]) {
+      const response = await harness.api.fetch(request({ action, ...injected }));
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "invalid_action_request",
+      });
+    }
+
+    expect(harness.trustedContextCalls()).toBe(0);
+    expect(harness.authorizer.calls).toBe(0);
+    expect(harness.executor.calls).toHaveLength(0);
+  });
+
+  it("AC-M6-003: initial Authorization denyは403でTask/Workflow/Executorを作らない", async () => {
+    const harness = createHarness({ allowed: false, approvalRequired: true });
+
+    const response = await harness.api.fetch(request({ action }));
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 403,
+      code: "action_not_allowed",
+      actionRequestId: String(actionRequestId),
+    });
+    expect(harness.planRepository.saved).toHaveLength(0);
+    expect(harness.workflowStarter.plans).toHaveLength(0);
+    expect(harness.executor.calls).toHaveLength(0);
+  });
+});
