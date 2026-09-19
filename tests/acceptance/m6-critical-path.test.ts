@@ -25,6 +25,7 @@ import {
 } from "@app/approval-core";
 import type {
   Action,
+  AgentId,
   ActionAuthorizer,
   ActionDefinition,
   ActionDefinitionKey,
@@ -43,6 +44,7 @@ import type {
   ApproverResolverProviderError,
   AuthorizationConsistency,
   ExecutorKey,
+  FlowDefinition,
   MaterializedApprovalPlan,
   MaterializedPlanRepository,
   OrganizationId,
@@ -81,7 +83,7 @@ const alice = branded<UserId>("user:alice");
 const bob = branded<UserId>("user:bob");
 const carol = branded<UserId>("user:carol");
 const dave = branded<UserId>("user:dave");
-const agent = branded("agent:ticket");
+const agent = branded<AgentId>("agent:ticket");
 const actionType = branded<ActionType>("ticket.priority.change");
 const resourceType = branded<ResourceType>("ticket");
 const resourceId = branded<ResourceId>("TICKET-1");
@@ -160,7 +162,7 @@ function action(input: Record<string, unknown>): Action {
 
 function source(
   id: string,
-  flow: ReturnType<typeof approve> | ReturnType<typeof serial> | ReturnType<typeof parallelQuorum> | ReturnType<typeof none>,
+  flow: FlowDefinition,
   order = 100,
 ): VersionedApprovalPolicyBinding {
   const policyKey = branded<ApprovalPolicyKey>(`policy:${id}`);
@@ -243,7 +245,8 @@ const priorityPolicy = (): VersionedApprovalPolicyBinding => {
 
 class ScenarioPolicies implements VersionedPolicyBindingResolver {
   resolve(input: Parameters<VersionedPolicyBindingResolver["resolve"]>[0]) {
-    const scenario = String(input.context.action.input.scenario ?? "priority");
+    const rawScenario = input.context.action.input.scenario;
+    const scenario = typeof rawScenario === "string" ? rawScenario : "priority";
     let sources: VersionedApprovalPolicyBinding[];
     switch (scenario) {
       case "none":
@@ -355,7 +358,9 @@ class PlanRepository implements MaterializedPlanRepository {
 
   load(input: Parameters<MaterializedPlanRepository["load"]>[0]) {
     const plan = this.plans.get(String(input.actionRequestId));
-    return Promise.resolve(plan ? ({ type: "found", plan } as const) : ({ type: "not_found" } as const));
+    return Promise.resolve(
+      plan ? ({ type: "found", plan } as const) : ({ type: "not_found" } as const),
+    );
   }
 }
 
@@ -560,7 +565,9 @@ function createHarness() {
   };
 }
 
-function idFromTaskResult(result: Awaited<ReturnType<ReturnType<typeof createHarness>["submitMcp"]>>) {
+function idFromTaskResult(
+  result: Awaited<ReturnType<ReturnType<typeof createHarness>["submitMcp"]>>,
+) {
   assert(result.type === "result");
   assert(result.result.resultType === "task");
   return result.result.taskId;
@@ -698,10 +705,9 @@ describe("M6-5 critical path E2E", () => {
     assert(plan);
     expect(plan.flow.type).toBe("serial");
     if (plan.flow.type !== "serial") return;
-    expect(plan.flow.children.map((child) => (child.type === "approval" ? String(child.stepKey) : "?"))).toEqual([
-      "manager",
-      "security",
-    ]);
+    expect(
+      plan.flow.children.map((child) => (child.type === "approval" ? String(child.stepKey) : "?")),
+    ).toEqual(["manager", "security"]);
   });
 
   it("15 unauthorized AI + human approval attempt → denyのまま", async () => {
