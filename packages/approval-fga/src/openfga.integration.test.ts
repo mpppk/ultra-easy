@@ -1,7 +1,12 @@
 import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
-import type { AuthorizationObjectRef, RelationName, UserId } from "@app/approval-core";
+import type {
+  AuthorizationObjectRef,
+  OrganizationId,
+  RelationName,
+  UserId,
+} from "@app/approval-core";
 import { createHumanActionRequest } from "@app/approval-core/testing";
 
 import {
@@ -69,6 +74,7 @@ describeOpenFga("OpenFGA test store/model integration", () => {
       apiUrl: openFgaApiUrl,
       storeId: store.id,
       authorizationModelId: model.authorization_model_id,
+      organizationId: branded<OrganizationId>("organization:integration"),
       listUsersCompleteness: "assume_complete",
     });
     const projector = new OpenFgaOrganizationProjector(client);
