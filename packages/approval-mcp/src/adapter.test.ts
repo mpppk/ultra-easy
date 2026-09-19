@@ -263,5 +263,4 @@ describe("M6-4 MCP adapter", () => {
       error: { code: -32602 },
     });
   });
-
 });
