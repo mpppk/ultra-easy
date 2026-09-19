@@ -215,7 +215,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     });
     await savePlan(plan);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     const instance = await createInstance(plan, id);
     await instance.sendEvent({
       type: "approval-decision",
@@ -247,7 +247,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
           : { type: "parallel", strategy: "quorum", quorum: 2, children: [first, second, third] };
       const plan = await validPlan(`cf-${scenario}`, flow);
       await savePlan(plan);
-      const id = actionWorkflowInstanceId(plan);
+      const id = await actionWorkflowInstanceId(plan);
       const instance = await createInstance(plan, id);
       await instance.sendEvent({
         type: "approval-decision",
@@ -266,7 +266,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-resume", approval);
     await savePlan(plan);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     await createInstance(plan, id);
 
     const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(testEnv.DB);
@@ -322,7 +322,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-retry", approval);
     await savePlan(plan);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
@@ -368,7 +368,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-checksum", { type: "none" });
     await savePlan(plan);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     await testEnv.ACTION_WORKFLOW.create({
       id,
       params: {
@@ -396,7 +396,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     };
     expect(new TextEncoder().encode(JSON.stringify(params)).byteLength).toBeLessThan(1024);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await testEnv.ACTION_WORKFLOW.create({ id, params });
     await introspector.waitForStatus("complete");
@@ -418,7 +418,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     );
     await savePlan(plan);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
@@ -456,7 +456,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     );
     await savePlan(plan);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
@@ -477,7 +477,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-binding-mismatch", approval);
     await savePlan(plan);
 
-    const id = actionWorkflowInstanceId(plan);
+    const id = await actionWorkflowInstanceId(plan);
     const instance = await createInstance(plan, id);
     await instance.sendEvent({
       type: "approval-decision",
@@ -515,8 +515,10 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await savePlan(planA);
     await savePlan(planB);
 
-    const idA = actionWorkflowInstanceId(planA);
-    const idB = actionWorkflowInstanceId(planB);
+    const idA = await actionWorkflowInstanceId(planA);
+    const idB = await actionWorkflowInstanceId(planB);
+    expect(idA).toMatch(/^ue_[0-9a-f]{64}$/);
+    expect(idA.length).toBeLessThanOrEqual(100);
     expect(idA).not.toBe(idB);
 
     await createInstance(planA, idA);
