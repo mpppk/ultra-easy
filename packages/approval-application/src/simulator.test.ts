@@ -199,17 +199,17 @@ class StaticPolicyResolver implements VersionedPolicyBindingResolver {
   }
 }
 
-function harness(input: {
-  authorization?: "allow" | "deny" | "error";
-  approval?: boolean;
-} = {}) {
+function harness(
+  input: {
+    authorization?: "allow" | "deny" | "error";
+    approval?: boolean;
+  } = {},
+) {
   const authorizer = new FakeAuthorizer(input.authorization ?? "allow");
   const executor = new CountingExecutor();
   const planRepository = new CountingPlanRepository();
   const workflowStarter = new CountingWorkflowStarter();
-  const policyBindingResolver = new StaticPolicyResolver(
-    input.approval ? [approvalBinding()] : [],
-  );
+  const policyBindingResolver = new StaticPolicyResolver(input.approval ? [approvalBinding()] : []);
   const schemaResolver: SchemaResolver = { resolve: () => schema };
   const application = new ActionRequestApplicationService({
     actionDefinitionResolver: { resolve: () => definition },
