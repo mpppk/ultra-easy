@@ -21,6 +21,7 @@ export type D1RunResultLike = {
 export interface D1PreparedStatementLike {
   bind(...values: unknown[]): D1PreparedStatementLike;
   first<T>(): Promise<T | null>;
+  all?<T>(): Promise<{ results: T[] }>;
   run(): Promise<D1RunResultLike>;
 }
 

@@ -39,7 +39,18 @@ export type TrustedActionRequestContext = {
   now: string;
 };
 
-export type ActionRequestPublicStatus = "pending_approval" | "executed" | "authorization_revoked";
+export type ActionRequestPublicStatus =
+  | "evaluating"
+  | "pending_approval"
+  | "approved"
+  | "executing"
+  | "executed"
+  | "rejected"
+  | "cancelled"
+  | "expired"
+  | "authorization_revoked"
+  | "authorization_check_failed"
+  | "execution_failed";
 
 export type ActionRequestView = {
   id: string;
