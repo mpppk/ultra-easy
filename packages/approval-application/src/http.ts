@@ -133,7 +133,7 @@ export function parseActionRequestCreateBody(value: unknown): ActionRequestCreat
   };
 }
 
-export function actionRequestApplicationErrorResponse(error: ActionRequestApplicationError): Response {
+export function actionRequestApplicationErrorResponse(\n  error: ActionRequestApplicationError,\n): Response {
   if (
     error.code === "action_input_validation_failed" ||
     error.code === "action_input_not_object" ||
