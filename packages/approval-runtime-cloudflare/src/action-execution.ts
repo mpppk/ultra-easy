@@ -264,7 +264,10 @@ async function reauthorizeStep(input: {
   }
 
   const result = await reauthorizeActionForExecution({
-    authorizer: new ServiceBindingActionAuthorizer(input.env.ACTION_AUTHORIZER),
+    authorizer: new ServiceBindingActionAuthorizer(
+      input.env.ACTION_AUTHORIZER,
+      loaded.plan.organizationId,
+    ),
     request: requestFromPlan(loaded.plan),
     evaluatedAt: input.evaluatedAt,
   });
@@ -338,6 +341,7 @@ async function executeStep(input: {
   );
   const result = await executeAuthorizedAction({
     executor,
+    organizationId: loaded.plan.organizationId,
     actionRequestId: loaded.plan.actionRequestId,
     actionFingerprint: loaded.plan.actionFingerprint,
     action: loaded.plan.action,
