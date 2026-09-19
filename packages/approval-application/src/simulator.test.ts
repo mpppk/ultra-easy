@@ -182,7 +182,7 @@ class CountingWorkflowStarter implements ActionWorkflowStarter {
 
   start(input: { plan: MaterializedApprovalPlan; startedAt: string }) {
     this.starts += 1;
-    return Promise.resolve(Result.succeed({ workflowInstanceId: String(input.plan.actionRequestId) }));
+    return Promise.resolve(\n      Result.succeed({ workflowInstanceId: String(input.plan.actionRequestId) }),\n    );
   }
 }
 
@@ -205,7 +205,7 @@ function harness(input: {
   const executor = new CountingExecutor();
   const planRepository = new CountingPlanRepository();
   const workflowStarter = new CountingWorkflowStarter();
-  const policyBindingResolver = new StaticPolicyResolver(input.approval ? [approvalBinding()] : []);
+  const policyBindingResolver = new StaticPolicyResolver(\n    input.approval ? [approvalBinding()] : [],\n  );
   const schemaResolver: SchemaResolver = { resolve: () => schema };
   const application = new ActionRequestApplicationService({
     actionDefinitionResolver: { resolve: () => definition },
