@@ -118,7 +118,9 @@ function normalizeTypedRef(type: string, id: string): string {
   return id.startsWith(prefix) ? id : `${prefix}${id}`;
 }
 
-function parseObjectRef(value: AuthorizationObjectRef | string): { type: string; id: string } | null {
+function parseObjectRef(
+  value: AuthorizationObjectRef | string,
+): { type: string; id: string } | null {
   const raw = String(value);
   const separator = raw.indexOf(":");
   if (separator <= 0 || separator === raw.length - 1) return null;
@@ -128,7 +130,9 @@ function parseObjectRef(value: AuthorizationObjectRef | string): { type: string;
 export function tenantScopedOpenFgaObject(organizationId: OrganizationId, object: string): string {
   const parsed = parseObjectRef(object);
   if (!parsed) return object;
-  return `${parsed.type}:${encodeURIComponent(String(organizationId))}/${encodeURIComponent(parsed.id)}`;
+  return `${parsed.type}:${encodeURIComponent(String(organizationId))}/${encodeURIComponent(
+    parsed.id,
+  )}`;
 }
 
 export class OpenFgaClient {
