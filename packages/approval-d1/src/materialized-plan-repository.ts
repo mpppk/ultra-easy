@@ -35,11 +35,6 @@ type StoredPlanRow = {
   approval_binding_fingerprint: string;
 };
 
-type WorkflowPlanLookupRow = {
-  organization_id: string;
-  match_count: number;
-};
-
 class D1RepositoryError extends Error {
   readonly name = "D1RepositoryError";
 }
@@ -57,13 +52,6 @@ const firstStoredPlanRow = Result.fn({
   try: async (statement: D1PreparedStatementLike): Promise<StoredPlanRow | null> =>
     statement.first<StoredPlanRow>(),
   catch: (error): D1RepositoryError => repositoryError(error, "D1 rowの取得に失敗しました"),
-});
-
-const firstWorkflowPlanLookupRow = Result.fn({
-  try: async (statement: D1PreparedStatementLike): Promise<WorkflowPlanLookupRow | null> =>
-    statement.first<WorkflowPlanLookupRow>(),
-  catch: (error): D1RepositoryError =>
-    repositoryError(error, "Workflow用Materialized Plan lookupに失敗しました"),
 });
 
 const parsePlan = Result.fn({
@@ -217,36 +205,16 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
   }
 
   /**
-   * Workflow paramsはtenant情報を持たずActionRequestId + checksumだけに固定するため、
-   * ActionRequestIdが全organizationを跨いで一意に1件だけ存在することを確認してからloadする。
-   * 複数tenantに同じIDが存在する場合は曖昧なPlanを選ばずfail closedする。
+   * Workflow control pathもtenant identityをtrusted paramsとして明示的に受け取る。
+   * ActionRequestId単独のglobal lookupは行わず、常に(organizationId, actionRequestId)でscopeする。
    */
   async loadForWorkflow(input: {
+    organizationId: OrganizationId;
     actionRequestId: ActionRequestId;
     expectedApprovalPlanChecksum: ApprovalPlanChecksum;
   }): Promise<MaterializedPlanLoadResult> {
-    const lookup = await firstWorkflowPlanLookupRow(
-      this.db
-        .prepare(
-          `SELECT organization_id, COUNT(*) OVER () AS match_count
-             FROM action_requests
-            WHERE id = ?
-            LIMIT 1`,
-        )
-        .bind(input.actionRequestId),
-    );
-    if (Result.isFailure(lookup)) {
-      return { type: "repository_error", message: lookup.error.message };
-    }
-    if (!lookup.value) return { type: "not_found" };
-    if (Number(lookup.value.match_count) !== 1) {
-      return {
-        type: "invalid_plan",
-        message: "Workflow用ActionRequestIdがorganization間で一意ではありません",
-      };
-    }
     return this.load({
-      organizationId: lookup.value.organization_id as OrganizationId,
+      organizationId: input.organizationId,
       actionRequestId: input.actionRequestId,
       expectedApprovalPlanChecksum: input.expectedApprovalPlanChecksum,
     });

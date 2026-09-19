@@ -15,11 +15,16 @@ import {
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
+  actionWorkflowInstanceId,
   type ActionWorkflowEnv,
   type ActionWorkflowParams,
 } from "@app/approval-runtime-cloudflare";
 
-import { createPreviewPlan, isPreviewScenario } from "./preview-plan.ts";
+import {
+  createPreviewPlan,
+  isPreviewScenario,
+  PREVIEW_ORGANIZATION_ID,
+} from "./preview-plan.ts";
 
 export { ActionWorkflow };
 
@@ -127,9 +132,11 @@ async function startRun(request: Request, env: PreviewRuntimeEnv): Promise<Respo
     return json({ error: `failed to save preview plan: ${saved.type}` }, { status: 500 });
   }
 
+  const workflowInstanceId = actionWorkflowInstanceId(plan);
   await env.ACTION_WORKFLOW.create({
-    id: String(plan.actionRequestId),
+    id: workflowInstanceId,
     params: {
+      organizationId: plan.organizationId,
       actionRequestId: plan.actionRequestId,
       approvalPlanChecksum: plan.approvalPlanChecksum,
     },
@@ -139,23 +146,21 @@ async function startRun(request: Request, env: PreviewRuntimeEnv): Promise<Respo
     {
       scenario,
       actionRequestId: plan.actionRequestId,
-      workflowInstanceId: String(plan.actionRequestId),
+      workflowInstanceId,
     },
     { status: 201 },
   );
 }
 
 async function getRun(actionRequestId: ActionRequestId, env: PreviewRuntimeEnv): Promise<Response> {
-  const row = await env.DB.prepare(
-    "SELECT organization_id FROM action_requests WHERE id = ? LIMIT 1",
-  )
-    .bind(actionRequestId)
-    .first<{ organization_id: string }>();
-  if (!row) return json({ error: "preview run not found" }, { status: 404 });
+  const plan = await new D1MaterializedPlanRepository(env.DB).load({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    actionRequestId,
+  });
+  if (plan.type !== "found") return json({ error: "preview run not found" }, { status: 404 });
 
-  const organizationId = row.organization_id as OrganizationId;
   const runtime = await new D1ApprovalRuntimeProjectionRepository(env.DB).load({
-    organizationId,
+    organizationId: PREVIEW_ORGANIZATION_ID,
     actionRequestId,
   });
   if (Result.isFailure(runtime)) {
@@ -163,14 +168,19 @@ async function getRun(actionRequestId: ActionRequestId, env: PreviewRuntimeEnv):
   }
 
   const actionResult = await new D1ActionResultProjectionRepository(env.DB).load({
-    organizationId,
+    organizationId: PREVIEW_ORGANIZATION_ID,
     actionRequestId,
   });
   if (Result.isFailure(actionResult)) {
     return json({ error: actionResult.error.message }, { status: 500 });
   }
 
-  const workflow = await env.ACTION_WORKFLOW.get(String(actionRequestId));
+  const workflow = await env.ACTION_WORKFLOW.get(
+    actionWorkflowInstanceId({
+      organizationId: PREVIEW_ORGANIZATION_ID,
+      actionRequestId,
+    }),
+  );
   const workflowStatus = await workflow.status();
   return json({
     actionRequestId,
@@ -208,7 +218,12 @@ async function sendDecision(
     decision,
     decidedAt: new Date().toISOString(),
   };
-  const workflow = await env.ACTION_WORKFLOW.get(String(actionRequestId));
+  const workflow = await env.ACTION_WORKFLOW.get(
+    actionWorkflowInstanceId({
+      organizationId: PREVIEW_ORGANIZATION_ID,
+      actionRequestId,
+    }),
+  );
   await workflow.sendEvent({ type: "approval-decision", payload: event });
   return json({ accepted: true, idempotencyKey: event.idempotencyKey }, { status: 202 });
 }
