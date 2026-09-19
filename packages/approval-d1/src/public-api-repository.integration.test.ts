@@ -326,4 +326,77 @@ describe("D1PublicApiRepository", () => {
     assert(Result.isSuccess(conflict));
     expect(conflict.value.type).toBe("conflict");
   });
+
+  it("AC-M7-001: ActionRequest/task/command/idempotencyをorganization境界で分離する", async () => {
+    const db = database();
+    const plan = await approvalPlan();
+    const saved = await new D1MaterializedPlanRepository(db).save(plan);
+    expect(saved.type).toBe("created");
+    const projected = await new D1ApprovalRuntimeProjectionRepository(db).replace({
+      organizationId,
+      state: runtimeState(plan),
+    });
+    assert(Result.isSuccess(projected));
+
+    const repository = new D1PublicApiRepository(db);
+    const otherOrganizationId = branded<OrganizationId>("org:other");
+
+    const action = await repository.getActionRequest({
+      organizationId: otherOrganizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(action));
+    expect(action.value).toBeNull();
+
+    const task = await repository.getApprovalTask({
+      organizationId: otherOrganizationId,
+      taskId,
+      viewerUserId: alice,
+    });
+    assert(Result.isSuccess(task));
+    expect(task.value).toBeNull();
+
+    const command = await repository.createPending({
+      command: {
+        id: "command:tenant-boundary",
+        organizationId: String(organizationId),
+        actionRequestId: String(plan.actionRequestId),
+        taskId: String(taskId),
+        type: "approve",
+        status: "pending",
+        createdAt: "2026-09-19T00:00:02.000Z",
+      },
+      actorUserId: alice,
+    });
+    assert(Result.isSuccess(command));
+    const crossCommand = await repository.load({
+      organizationId: otherOrganizationId,
+      commandId: "command:tenant-boundary",
+    });
+    assert(Result.isSuccess(crossCommand));
+    expect(crossCommand.value).toBeNull();
+
+    const first = await repository.reserve({
+      organizationId,
+      operation: "same-operation",
+      key: "same-key",
+      requestHash: "sha256:same",
+      status: "pending",
+      createdAt: "2026-09-19T00:00:00.000Z",
+      updatedAt: "2026-09-19T00:00:00.000Z",
+    });
+    assert(Result.isSuccess(first));
+    const otherTenant = await repository.reserve({
+      organizationId: otherOrganizationId,
+      operation: "same-operation",
+      key: "same-key",
+      requestHash: "sha256:different",
+      status: "pending",
+      createdAt: "2026-09-19T00:00:00.000Z",
+      updatedAt: "2026-09-19T00:00:00.000Z",
+    });
+    assert(Result.isSuccess(otherTenant));
+    expect(otherTenant.value.type).toBe("acquired");
+  });
+
 });
