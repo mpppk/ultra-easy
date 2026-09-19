@@ -11,6 +11,7 @@ import { activateReadyNode } from "./activation.ts";
 import {
   ApprovalCandidateRejectedError,
   ApprovalCommentRequiredError,
+  ApprovalDecisionBindingMismatchError,
   ApprovalDistinctApproverViolationError,
   ApprovalSelfApprovalDeniedError,
   ApprovalTaskClosedError,
@@ -159,6 +160,18 @@ async function recordApprovalDecisionV1(
   input: ApprovalDecisionInput,
 ): Result.ResultAsync<ApprovalDecisionReceipt, ApprovalInterpreterError> {
   const state = cloneState(input.state);
+  if (
+    input.event.approvalBindingFingerprint !== undefined &&
+    String(input.event.approvalBindingFingerprint) !== String(input.plan.approvalBindingFingerprint)
+  ) {
+    return Result.fail(
+      new ApprovalDecisionBindingMismatchError({
+        code: "approval_decision_binding_mismatch",
+        expected: input.plan.approvalBindingFingerprint,
+        actual: input.event.approvalBindingFingerprint,
+      }),
+    );
+  }
   if (state.processedDecisionKeys.includes(input.event.idempotencyKey)) {
     return Result.succeed({ state, duplicate: true });
   }
@@ -262,7 +275,10 @@ async function recordApprovalDecisionV1(
   if (!task.candidateUserIds.some((id) => String(id) === String(input.event.userId))) {
     task.candidateUserIds = uniqueUsers([...task.candidateUserIds, input.event.userId]);
   }
-  task.decisions.push({ ...input.event });
+  task.decisions.push({
+    ...input.event,
+    approvalBindingFingerprint: input.plan.approvalBindingFingerprint,
+  });
   state.processedDecisionKeys.push(input.event.idempotencyKey);
   task.status = completionForStep(step, task);
   if (task.status !== "pending") task.closedAt = input.event.decidedAt;

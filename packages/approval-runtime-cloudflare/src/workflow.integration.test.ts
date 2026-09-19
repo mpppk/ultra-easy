@@ -12,6 +12,7 @@ import {
 } from "@app/approval-core";
 import type {
   ActionRequestId,
+  ApprovalBindingFingerprint,
   ApprovalPlanChecksum,
   ApprovalPolicyBindingId,
   ApprovalPolicyKey,
@@ -27,6 +28,7 @@ import type {
   UserId,
 } from "@app/approval-core";
 import {
+  D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
@@ -49,6 +51,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await testEnv.DB.batch([
+    testEnv.DB.prepare("DELETE FROM action_results"),
     testEnv.DB.prepare("DELETE FROM approval_tasks"),
     testEnv.DB.prepare("DELETE FROM approval_runtime_projections"),
     testEnv.DB.prepare("DELETE FROM approval_task_candidate_projections"),
@@ -170,6 +173,7 @@ function decision(
   userId: UserId,
   key: string,
   value: "approve" | "reject" = "approve",
+  approvalBindingFingerprint: ApprovalBindingFingerprint = plan.approvalBindingFingerprint,
 ) {
   return {
     idempotencyKey: key,
@@ -177,6 +181,7 @@ function decision(
     userId,
     decision: value,
     decidedAt: new Date().toISOString(),
+    approvalBindingFingerprint,
   };
 }
 
@@ -418,6 +423,17 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     expect(await introspector.getOutput()).toMatchObject({
       type: "completed",
       status: "executed",
+      guaranteeLevel: "best_effort_at_most_once",
+    });
+    const actionResult = await new D1ActionResultProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(actionResult));
+    expect(actionResult.value).toMatchObject({
+      status: "executed",
+      guaranteeLevel: "best_effort_at_most_once",
+      idempotencyKey: `${String(plan.actionRequestId)}:${String(plan.actionFingerprint)}`,
     });
     await introspector.dispose();
   });
@@ -443,6 +459,41 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       status: "execution_failed",
       code: "business_validation_failed",
     });
+    await introspector.dispose();
+  });
+
+  it("AC-M5-007: stale Approval bindingのDecisionではExecutorへ進まない", async () => {
+    const approval = await directStep("binding", bob, "root");
+    const plan = await validPlan("cf-binding-mismatch", approval);
+    await savePlan(plan);
+
+    const id = "cf-binding-mismatch";
+    const instance = await createInstance(plan, id);
+    await instance.sendEvent({
+      type: "approval-decision",
+      payload: decision(
+        plan,
+        approval,
+        bob,
+        "stale-binding",
+        "approve",
+        `sha256:${"f".repeat(64)}` as ApprovalBindingFingerprint,
+      ),
+    });
+
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({
+      type: "failed",
+      code: "approval_decision_binding_mismatch",
+    });
+
+    const actionResult = await new D1ActionResultProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(actionResult));
+    expect(actionResult.value).toBeNull();
     await introspector.dispose();
   });
 });

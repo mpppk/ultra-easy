@@ -4,6 +4,7 @@ import { ErrorFactory } from "@praha/error-factory";
 import type { ApproverResolver } from "../approver-resolver.ts";
 import type {
   ActionRequestId,
+  ApprovalBindingFingerprint,
   ApprovalPlanChecksum,
   ApprovalTaskId,
   MaterializedStepId,
@@ -27,6 +28,11 @@ export type ApprovalDecisionEvent = {
   userId: UserId;
   decision: ApprovalDecisionValue;
   decidedAt: string;
+  /**
+   * Durable runtimeへ入る前に既知なら指定する。
+   * 省略時もrecord時に現在のMaterialized Planへbindして永続化する。
+   */
+  approvalBindingFingerprint?: ApprovalBindingFingerprint;
   comment?: string;
 };
 

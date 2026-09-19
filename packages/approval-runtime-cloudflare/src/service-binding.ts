@@ -4,6 +4,7 @@ import {
   ActionExecutorError,
   AuthorizationProviderError,
   type ActionAuthorizer,
+  type ActionExecutionGuaranteeLevel,
   type ActionExecutionRequest,
   type ActionExecutionResult,
   type ActionExecutor,
@@ -175,6 +176,7 @@ export class ServiceBindingActionExecutor implements ActionExecutor {
   constructor(
     private readonly binding: ActionServiceBinding,
     private readonly executorKey: ExecutorKey,
+    readonly guaranteeLevel: ActionExecutionGuaranteeLevel = "best_effort_at_most_once",
   ) {}
 
   async execute(

@@ -5,6 +5,7 @@ import {
   ActionAuthorizationCheckFailedError,
   AuthorizationProviderError,
   executeActionRequest,
+  validateApprovalBindingForExecution,
 } from "@app/approval-core";
 import type {
   ActionExecutionRequest,
@@ -12,6 +13,9 @@ import type {
   ActionExecutor,
   ActionFingerprint,
   ActionRequest,
+  ApprovalBindingFingerprint,
+  ApprovalPlanChecksum,
+  ApprovalRuntimeState,
   ActionRequestId,
   ActionAuthorizer,
   AuthorizationConsistency,
@@ -20,6 +24,7 @@ import type {
   ExecutorKey,
   JsonObject,
   MaterializedActionSnapshot,
+  MaterializedApprovalPlan,
   SchemaKey,
 } from "@app/approval-core";
 import { createHumanActionRequest } from "@app/approval-core/testing";
@@ -89,6 +94,7 @@ class FakeAuthorizer implements ActionAuthorizer {
 
 class CapturingExecutor implements ActionExecutor {
   readonly requests: ActionExecutionRequest[] = [];
+  readonly guaranteeLevel = "best_effort_at_most_once" as const;
 
   async execute(request: ActionExecutionRequest) {
     this.requests.push(request);
@@ -170,5 +176,54 @@ describe("M5 Safe Action Execution", () => {
     expect(executor.requests).toHaveLength(2);
     expect(executor.requests[0]?.idempotencyKey).toBe("action-request:m5:sha256:action-m5");
     expect(executor.requests[1]?.idempotencyKey).toBe(executor.requests[0]?.idempotencyKey);
+  });
+
+  it("AC-M5-007: Decision bindingと実行対象が一致しなければ実行対象として扱わない", () => {
+    const currentBinding = branded<ApprovalBindingFingerprint>("sha256:binding-current");
+    const plan = {
+      actionRequestId,
+      approvalPlanChecksum: branded<ApprovalPlanChecksum>("sha256:plan-current"),
+      approvalBindingFingerprint: currentBinding,
+      flow: { type: "approval" },
+    } as unknown as MaterializedApprovalPlan;
+    const state = {
+      actionRequestId,
+      approvalPlanChecksum: plan.approvalPlanChecksum,
+      status: "approved",
+      tasks: [
+        {
+          decisions: [
+            {
+              approvalBindingFingerprint:
+                branded<ApprovalBindingFingerprint>("sha256:binding-stale"),
+            },
+          ],
+        },
+      ],
+    } as unknown as ApprovalRuntimeState;
+
+    const result = validateApprovalBindingForExecution({ plan, state });
+
+    assert(Result.isFailure(result));
+    expect(result.error.code).toBe("approval_binding_mismatch");
+    expect(result.error.expected).toBe(currentBinding);
+    expect(result.error.actual).toBe("sha256:binding-stale");
+  });
+
+  it("AC-M5-008: best-effort Executorをexactly-onceとして扱わない", async () => {
+    const authorizer = new FakeAuthorizer("allow");
+    const executor = new CapturingExecutor();
+    const input = executionInput(authorizer, executor);
+
+    const first = await executeActionRequest(input);
+    const second = await executeActionRequest(input);
+
+    assert(Result.isSuccess(first));
+    assert(Result.isSuccess(second));
+    assert(first.value.type === "executed");
+    assert(second.value.type === "executed");
+    expect(first.value.guaranteeLevel).toBe("best_effort_at_most_once");
+    expect(second.value.guaranteeLevel).toBe("best_effort_at_most_once");
+    expect(executor.requests).toHaveLength(2);
   });
 });

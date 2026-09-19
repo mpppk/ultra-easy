@@ -12,6 +12,8 @@ import {
   startApprovalRuntime,
 } from "@app/approval-core";
 import type {
+  ActionExecutionGuaranteeLevel,
+  ActionExecutionResult,
   ActionRequestId,
   ApprovalDecisionEvent,
   ApprovalPlanChecksum,
@@ -19,6 +21,7 @@ import type {
   ApproverResolver,
 } from "@app/approval-core";
 import {
+  D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
@@ -40,6 +43,8 @@ export type ActionWorkflowOutput =
       type: "completed";
       actionRequestId: ActionRequestId;
       status: ApprovalRuntimeState["status"] | ActionExecutionTerminalStatus;
+      guaranteeLevel?: ActionExecutionGuaranteeLevel;
+      idempotencyKey?: string;
       code?: string;
       message?: string;
     }
@@ -314,6 +319,18 @@ function timeoutUntil(
   return { timeout: `${seconds} seconds`, seconds };
 }
 
+class ActionResultProjectionError extends Error {
+  readonly name = "ActionResultProjectionError";
+}
+
+const parseActionExecutionResult = Result.fn({
+  try: (value: string): ActionExecutionResult => JSON.parse(value) as ActionExecutionResult,
+  catch: (error): ActionResultProjectionError =>
+    new ActionResultProjectionError(
+      error instanceof Error ? error.message : "Action execution resultをparseできません",
+    ),
+});
+
 function outputFromTransition(
   params: ActionWorkflowParams,
   transition: RuntimeFailure,
@@ -324,6 +341,56 @@ function outputFromTransition(
     code: transition.code,
     message: transition.message,
   };
+}
+
+async function projectActionResult(input: {
+  env: ActionWorkflowEnv;
+  params: ActionWorkflowParams;
+  workflowInstanceId: string;
+  execution: Extract<Awaited<ReturnType<typeof runActionExecution>>, { type: "completed" }>;
+  completedAt: string;
+}): Result.ResultAsync<void, ActionResultProjectionError> {
+  const loaded = await new D1MaterializedPlanRepository(input.env.DB).loadForWorkflow({
+    actionRequestId: input.params.actionRequestId,
+    expectedApprovalPlanChecksum: input.params.approvalPlanChecksum,
+  });
+  if (loaded.type !== "found") {
+    return Result.fail(
+      new ActionResultProjectionError(
+        `Action result projection用Planを取得できませんでした: ${loaded.type}`,
+      ),
+    );
+  }
+
+  let result: ActionExecutionResult | undefined;
+  if (input.execution.resultJson !== undefined) {
+    const parsed = parseActionExecutionResult(input.execution.resultJson);
+    if (Result.isFailure(parsed)) return parsed;
+    result = parsed.value;
+  }
+
+  const saved = await new D1ActionResultProjectionRepository(input.env.DB).save({
+    organizationId: loaded.plan.organizationId,
+    actionRequestId: loaded.plan.actionRequestId,
+    workflowInstanceId: input.workflowInstanceId,
+    status: input.execution.status,
+    ...(input.execution.guaranteeLevel !== undefined
+      ? { guaranteeLevel: input.execution.guaranteeLevel }
+      : {}),
+    ...(input.execution.idempotencyKey !== undefined
+      ? { idempotencyKey: input.execution.idempotencyKey }
+      : {}),
+    ...(result !== undefined ? { result } : {}),
+    ...(input.execution.code !== undefined ? { code: input.execution.code } : {}),
+    ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
+    completedAt: input.completedAt,
+  });
+  if (Result.isFailure(saved)) {
+    return Result.fail(
+      new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
+    );
+  }
+  return Result.succeed(undefined);
 }
 
 export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, ActionWorkflowParams> {
@@ -422,10 +489,38 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         message: execution.message,
       };
     }
+
+    try {
+      await step.do("project action result", async () => {
+        const projected = await projectActionResult({
+          env: this.env,
+          params,
+          workflowInstanceId: event.instanceId,
+          execution,
+          completedAt: logicalNow,
+        });
+        if (Result.isFailure(projected)) return Promise.reject(projected.error);
+        return { type: "projected" } as const;
+      });
+    } catch (error) {
+      return {
+        type: "failed",
+        actionRequestId: params.actionRequestId,
+        code: "execution_projection_failed",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+
     return {
       type: "completed",
       actionRequestId: params.actionRequestId,
       status: execution.status,
+      ...(execution.guaranteeLevel !== undefined
+        ? { guaranteeLevel: execution.guaranteeLevel }
+        : {}),
+      ...(execution.idempotencyKey !== undefined
+        ? { idempotencyKey: execution.idempotencyKey }
+        : {}),
       ...(execution.code ? { code: execution.code } : {}),
       ...(execution.message ? { message: execution.message } : {}),
     };
