@@ -13,8 +13,13 @@ function clone<T>(value: T): T {
 export class InMemoryMcpTaskProjectionRepository implements McpTaskProjectionRepository {
   private readonly records = new Map<string, McpTaskProjectionRecord>();
 
+  private key(organizationId: string, taskId: string): string {
+    return JSON.stringify([organizationId, taskId]);
+  }
+
   save(record: McpTaskProjectionRecord) {
-    if (this.records.has(record.taskId)) {
+    const key = this.key(String(record.organizationId), record.taskId);
+    if (this.records.has(key)) {
       return Promise.resolve(
         Result.fail(
           new McpAdapterError(
@@ -25,12 +30,12 @@ export class InMemoryMcpTaskProjectionRepository implements McpTaskProjectionRep
         ),
       );
     }
-    this.records.set(record.taskId, clone(record));
+    this.records.set(key, clone(record));
     return Promise.resolve(Result.succeed(undefined));
   }
 
-  load(taskId: string) {
-    const record = this.records.get(taskId);
+  load(input: { organizationId: McpTaskProjectionRecord["organizationId"]; taskId: string }) {
+    const record = this.records.get(this.key(String(input.organizationId), input.taskId));
     return Promise.resolve(Result.succeed(record ? clone(record) : null));
   }
 }
