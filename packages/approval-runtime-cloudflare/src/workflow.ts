@@ -46,9 +46,9 @@ export async function actionWorkflowInstanceId(input: {
 }): Promise<string> {
   const source = JSON.stringify([String(input.organizationId), String(input.actionRequestId)]);
   const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
-  const hex = Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
   return `ue_${hex}`;
 }
 
