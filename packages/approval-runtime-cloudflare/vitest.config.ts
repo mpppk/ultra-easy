@@ -33,13 +33,15 @@ export default defineConfig({
           },
           ACTION_EXECUTOR: async (request: Request) => {
             const body = (await request.json()) as {
+              organizationId?: string;
               actionRequestId?: string;
               idempotencyKey?: string;
               action?: { input?: { executorScenario?: string } };
             };
             const actionRequestId = body.actionRequestId ?? "unknown";
+            const executionKey = JSON.stringify([body.organizationId ?? "unknown", actionRequestId]);
             const idempotencyKey = body.idempotencyKey ?? "";
-            const previous = executorAttempts.get(actionRequestId);
+            const previous = executorAttempts.get(executionKey);
             const attempt = (previous?.count ?? 0) + 1;
 
             if (previous && previous.idempotencyKey !== idempotencyKey) {
@@ -52,7 +54,7 @@ export default defineConfig({
                 { status: 409 },
               );
             }
-            executorAttempts.set(actionRequestId, { count: attempt, idempotencyKey });
+            executorAttempts.set(executionKey, { count: attempt, idempotencyKey });
 
             const scenario = body.action?.input?.executorScenario;
             if (scenario === "retry-once" && attempt === 1) {
