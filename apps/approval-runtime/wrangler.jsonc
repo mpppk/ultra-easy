@@ -11,12 +11,24 @@
     },
   ],
   "vars": {
-    "ACTION_EXECUTION_MODE": "approval_only",
+    "ACTION_EXECUTION_MODE": "execute",
     "OPENFGA_API_URL": "https://openfga.invalid",
     "OPENFGA_STORE_ID": "unused-for-direct-user-preview",
     "OPENFGA_AUTHORIZATION_MODEL_ID": "unused-for-direct-user-preview",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
   },
+  "services": [
+    {
+      "binding": "ACTION_AUTHORIZER",
+      "service": "ultra-easy-approval-runtime-preview",
+      "entrypoint": "PreviewActionAuthorizer",
+    },
+    {
+      "binding": "ACTION_EXECUTOR",
+      "service": "ultra-easy-approval-runtime-preview",
+      "entrypoint": "PreviewActionExecutor",
+    },
+  ],
   "workflows": [
     {
       "binding": "ACTION_WORKFLOW",
