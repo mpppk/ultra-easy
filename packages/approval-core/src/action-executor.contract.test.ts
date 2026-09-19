@@ -2,7 +2,7 @@ import { Result } from "@praha/byethrow";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ActionExecutorError, createActionExecutionIdempotencyKey } from "./action-execution.ts";
-import type { ActionFingerprint, ActionRequestId } from "./domain/brand.ts";
+import type { ActionFingerprint, ActionRequestId, OrganizationId } from "./domain/brand.ts";
 
 function branded<T extends string>(value: string): T {
   return value as T;
@@ -10,11 +10,14 @@ function branded<T extends string>(value: string): T {
 
 describe("ActionExecutor contract", () => {
   it("actionRequestIdとactionFingerprintから安定したidempotency keyを生成する", () => {
+    const organizationId = branded<OrganizationId>("organization:contract");
     const actionRequestId = branded<ActionRequestId>("action-request:contract");
     const actionFingerprint = branded<ActionFingerprint>("sha256:action-contract");
 
-    expect(createActionExecutionIdempotencyKey(actionRequestId, actionFingerprint)).toBe(
-      "action-request:contract:sha256:action-contract",
+    expect(
+      createActionExecutionIdempotencyKey(organizationId, actionRequestId, actionFingerprint),
+    ).toBe(
+      "ue:v1:organization%3Acontract:action-request%3Acontract:sha256%3Aaction-contract",
     );
   });
 
