@@ -99,7 +99,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example",
         storeId: "store-1",
         authorizationModelId: "model-1",
-      organizationId,
+        organizationId,
         fetch: responseFetch(body, []),
       }),
     );
@@ -115,7 +115,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example",
         storeId: "store-1",
         authorizationModelId: "model-1",
-      organizationId,
+        organizationId,
         fetch: responseFetch(body, []),
         listUsersCompleteness: "assume_complete",
       }),
@@ -132,7 +132,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example/",
         storeId: "store-1",
         authorizationModelId: "model-1",
-      organizationId,
+        organizationId,
         fetch: responseFetch({ allowed: true }, requests),
       }),
     );
@@ -161,7 +161,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example",
         storeId: "store-1",
         authorizationModelId: "model-1",
-      organizationId,
+        organizationId,
         fetch: responseFetch({}, requests),
       }),
     );
@@ -202,10 +202,23 @@ describe("OpenFGA adapters", () => {
       organizationId: otherOrganizationId,
       fetch,
     });
-    await tenantA.check({ user: "user:alice", relation: "viewer", object: "ticket:TICKET-1", consistency: "higher_consistency" });
-    await tenantB.check({ user: "user:alice", relation: "viewer", object: "ticket:TICKET-1", consistency: "higher_consistency" });
-    expect(requestBody(requests, 0)).toMatchObject({ tuple_key: { object: "ticket:organization%3Atenant-a/TICKET-1" } });
-    expect(requestBody(requests, 1)).toMatchObject({ tuple_key: { object: "ticket:organization%3Atenant-b/TICKET-1" } });
+    await tenantA.check({
+      user: "user:alice",
+      relation: "viewer",
+      object: "ticket:TICKET-1",
+      consistency: "higher_consistency",
+    });
+    await tenantB.check({
+      user: "user:alice",
+      relation: "viewer",
+      object: "ticket:TICKET-1",
+      consistency: "higher_consistency",
+    });
+    expect(requestBody(requests, 0)).toMatchObject({
+      tuple_key: { object: "ticket:organization%3Atenant-a/TICKET-1" },
+    });
+    expect(requestBody(requests, 1)).toMatchObject({
+      tuple_key: { object: "ticket:organization%3Atenant-b/TICKET-1" },
+    });
   });
-
 });
