@@ -394,7 +394,7 @@ export class ActionRequestApplicationService {
       trustedContext: input.trustedContext,
     });
     if (Result.isFailure(evaluated)) return evaluated;
-    if (evaluated.value.type === "authorization_denied") return evaluated;
+    if (evaluated.value.type === "authorization_denied") return Result.succeed(evaluated.value);
 
     const { actionRequestId, request, plan } = evaluated.value;
     const saved = await this.dependencies.planRepository.save(plan);
