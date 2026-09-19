@@ -220,7 +220,8 @@ export function createActionRequestHttpApi(input: {
         idempotencyKey,
         ...(body.clientReference ? { clientReference: body.clientReference } : {}),
       });
-      if (Result.isFailure(submitted))\n        return actionRequestApplicationErrorResponse(submitted.error);
+      if (Result.isFailure(submitted))
+        return actionRequestApplicationErrorResponse(submitted.error);
 
       if (submitted.value.type === "authorization_denied") {
         return actionRequestProblem({
