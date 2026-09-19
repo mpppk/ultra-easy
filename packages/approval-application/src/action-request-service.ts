@@ -1,0 +1,430 @@
+import { Result } from "@praha/byethrow";
+
+import {
+  authorizeActionRequest,
+  executeActionRequest,
+  materializeApprovalPlan,
+  validateActionInput,
+} from "@app/approval-core";
+import type {
+  Action,
+  ActionAuthorizer,
+  ActionDefinition,
+  ActionDefinitionResolver,
+  ActionExecutor,
+  ActionRequest,
+  ActionRequestId,
+  JsonObject,
+  JsonValue,
+  MaterializedApprovalPlan,
+  MaterializedPlanRepository,
+  OrganizationId,
+  PolicyEvaluationContext,
+  PolicyEvaluationOrganization,
+  PrincipalRef,
+  SchemaResolver,
+} from "@app/approval-core";
+
+import type {
+  ActionRequestDependencyError,
+  ActionRequestIdGenerator,
+  ActionWorkflowStarter,
+  VersionedPolicyBindingResolver,
+} from "./ports.ts";
+
+export type TrustedActionRequestContext = {
+  actor: PrincipalRef;
+  authority: ActionRequest["authority"];
+  origin: ActionRequest["origin"];
+  organization: PolicyEvaluationOrganization;
+  attributes?: Record<string, JsonValue>;
+  now: string;
+};
+
+export type ActionRequestPublicStatus =
+  | "pending_approval"
+  | "executed"
+  | "authorization_revoked";
+
+export type ActionRequestView = {
+  id: string;
+  organizationId: string;
+  actor: PrincipalRef;
+  authorityPrincipal: PrincipalRef;
+  caller?: PrincipalRef;
+  action: Action;
+  origin: ActionRequest["origin"]["type"];
+  status: ActionRequestPublicStatus;
+  approval: {
+    required: boolean;
+    activeTaskCount?: number;
+    completedTaskCount?: number;
+  };
+  result?: {
+    status:
+      | "executed"
+      | "authorization_revoked"
+      | "authorization_check_failed"
+      | "execution_failed";
+    output?: JsonValue;
+    code?: string;
+    message?: string;
+  };
+  checksums: {
+    actionFingerprint: string;
+    evaluationSnapshotChecksum: string;
+    approvalPlanChecksum: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+};
+
+export type ActionRequestSubmitResult =
+  | {
+      type: "accepted";
+      actionRequestId: ActionRequestId;
+      request: ActionRequest;
+      plan: MaterializedApprovalPlan;
+      view: ActionRequestView;
+      workflowInstanceId?: string;
+    }
+  | {
+      type: "authorization_denied";
+      actionRequestId: ActionRequestId;
+      code: string;
+      reason: string;
+    };
+
+export type ActionRequestApplicationErrorCode =
+  | "action_definition_resolution_failed"
+  | "schema_resolution_failed"
+  | "action_input_validation_failed"
+  | "action_input_not_object"
+  | "authorization_provider_failed"
+  | "policy_binding_resolution_failed"
+  | "materialization_failed"
+  | "plan_persistence_failed"
+  | "action_request_already_exists"
+  | "workflow_start_failed"
+  | "execution_failed";
+
+export class ActionRequestApplicationError extends Error {
+  readonly name = "ActionRequestApplicationError";
+
+  constructor(
+    readonly code: ActionRequestApplicationErrorCode,
+    readonly retriable: boolean,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export type ActionRequestApplicationServiceDependencies = {
+  actionDefinitionResolver: ActionDefinitionResolver;
+  schemaResolver: SchemaResolver;
+  policyBindingResolver: VersionedPolicyBindingResolver;
+  authorizer: ActionAuthorizer;
+  executor: ActionExecutor;
+  planRepository: MaterializedPlanRepository;
+  workflowStarter: ActionWorkflowStarter;
+  idGenerator: ActionRequestIdGenerator;
+};
+
+const resolveActionDefinition = Result.fn({
+  try: async (input: {
+    resolver: ActionDefinitionResolver;
+    action: Action;
+  }): Promise<ActionDefinition> => input.resolver.resolve(input.action.type),
+  catch: (error): ActionRequestApplicationError =>
+    new ActionRequestApplicationError(
+      "action_definition_resolution_failed",
+      true,
+      error instanceof Error ? error.message : "Action Definitionの解決に失敗しました",
+    ),
+});
+
+const resolveSchema = Result.fn({
+  try: async (input: {
+    resolver: SchemaResolver;
+    definition: ActionDefinition;
+  }) => input.resolver.resolve(input.definition.inputSchema),
+  catch: (error): ActionRequestApplicationError =>
+    new ActionRequestApplicationError(
+      "schema_resolution_failed",
+      true,
+      error instanceof Error ? error.message : "Action input schemaの解決に失敗しました",
+    ),
+});
+
+const validateSchema = Result.fn({
+  try: async (input: {
+    schema: Awaited<ReturnType<SchemaResolver["resolve"]>>;
+    value: unknown;
+  }) => validateActionInput(input.schema, input.value),
+  catch: (error): ActionRequestApplicationError =>
+    new ActionRequestApplicationError(
+      "action_input_validation_failed",
+      false,
+      error instanceof Error ? error.message : "Action inputのvalidationに失敗しました",
+    ),
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mapDependencyError(
+  error: ActionRequestDependencyError,
+  code: "policy_binding_resolution_failed" | "workflow_start_failed",
+): ActionRequestApplicationError {
+  return new ActionRequestApplicationError(code, error.retriable, error.message);
+}
+
+function planPersistenceError(
+  result: Exclude<
+    Awaited<ReturnType<MaterializedPlanRepository["save"]>>,
+    { type: "created" }
+  >,
+): ActionRequestApplicationError {
+  if (result.type === "existing" || result.type === "conflict") {
+    return new ActionRequestApplicationError(
+      "action_request_already_exists",
+      false,
+      "同じActionRequest IDのPlanが既に保存されています",
+    );
+  }
+  return new ActionRequestApplicationError(
+    "plan_persistence_failed",
+    result.type === "repository_error",
+    result.message,
+  );
+}
+
+function requestView(input: {
+  request: ActionRequest;
+  plan: MaterializedApprovalPlan;
+  status: ActionRequestPublicStatus;
+  now: string;
+  result?: ActionRequestView["result"];
+}): ActionRequestView {
+  const approvalRequired = input.plan.flow.type !== "none";
+  return {
+    id: String(input.plan.actionRequestId),
+    organizationId: String(input.plan.organizationId),
+    actor: input.request.actor,
+    authorityPrincipal: input.request.authority.principal,
+    ...(input.request.origin.caller ? { caller: input.request.origin.caller } : {}),
+    action: input.request.action,
+    origin: input.request.origin.type,
+    status: input.status,
+    approval: { required: approvalRequired },
+    ...(input.result ? { result: input.result } : {}),
+    checksums: {
+      actionFingerprint: String(input.plan.actionFingerprint),
+      evaluationSnapshotChecksum: String(input.plan.evaluationSnapshotChecksum),
+      approvalPlanChecksum: String(input.plan.approvalPlanChecksum),
+    },
+    createdAt: input.now,
+    updatedAt: input.now,
+    ...(input.status === "pending_approval" ? {} : { completedAt: input.now }),
+  };
+}
+
+export class ActionRequestApplicationService {
+  constructor(private readonly dependencies: ActionRequestApplicationServiceDependencies) {}
+
+  async submit(input: {
+    action: Action;
+    trustedContext: TrustedActionRequestContext;
+    idempotencyKey?: string;
+    clientReference?: string;
+  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
+    const actionRequestId = this.dependencies.idGenerator.next();
+
+    const definition = await resolveActionDefinition({
+      resolver: this.dependencies.actionDefinitionResolver,
+      action: input.action,
+    });
+    if (Result.isFailure(definition)) return definition;
+
+    const schema = await resolveSchema({
+      resolver: this.dependencies.schemaResolver,
+      definition: definition.value,
+    });
+    if (Result.isFailure(schema)) return schema;
+
+    const validated = await validateSchema({ schema: schema.value, value: input.action.input });
+    if (Result.isFailure(validated)) return validated;
+    if (validated.value.type === "invalid") {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "action_input_validation_failed",
+          false,
+          validated.value.issues.map((issue) => issue.message).join("; "),
+        ),
+      );
+    }
+    if (!isRecord(validated.value.value)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "action_input_not_object",
+          false,
+          "Action input schemaの出力はobjectである必要があります",
+        ),
+      );
+    }
+
+    const request: ActionRequest = {
+      actor: input.trustedContext.actor,
+      authority: input.trustedContext.authority,
+      origin: input.trustedContext.origin,
+      action: {
+        ...input.action,
+        input: validated.value.value,
+      },
+    };
+
+    const authorization = await authorizeActionRequest({
+      authorizer: this.dependencies.authorizer,
+      request,
+      evaluatedAt: input.trustedContext.now,
+      consistency: "minimize_latency",
+    });
+    if (Result.isFailure(authorization)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "authorization_provider_failed",
+          authorization.error.retriable,
+          authorization.error.message,
+        ),
+      );
+    }
+    if (authorization.value.type === "deny") {
+      return Result.succeed({
+        type: "authorization_denied",
+        actionRequestId,
+        code: authorization.value.code,
+        reason: authorization.value.reason,
+      });
+    }
+
+    const context: PolicyEvaluationContext = {
+      ...request,
+      organization: input.trustedContext.organization,
+      ...(input.trustedContext.attributes
+        ? { attributes: input.trustedContext.attributes }
+        : {}),
+      now: input.trustedContext.now,
+    };
+
+    const bindings = await this.dependencies.policyBindingResolver.resolve({
+      context,
+      actionDefinition: definition.value,
+    });
+    if (Result.isFailure(bindings)) {
+      return Result.fail(mapDependencyError(bindings.error, "policy_binding_resolution_failed"));
+    }
+
+    const materialized = await materializeApprovalPlan({
+      actionRequestId,
+      context,
+      actionDefinition: definition.value,
+      policyBindings: bindings.value,
+    });
+    if (materialized.type === "error") {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "materialization_failed",
+          false,
+          materialized.message,
+        ),
+      );
+    }
+
+    const saved = await this.dependencies.planRepository.save(materialized.plan);
+    if (saved.type !== "created") return Result.fail(planPersistenceError(saved));
+
+    if (materialized.plan.flow.type !== "none") {
+      const started = await this.dependencies.workflowStarter.start({
+        plan: materialized.plan,
+        startedAt: input.trustedContext.now,
+      });
+      if (Result.isFailure(started)) {
+        return Result.fail(mapDependencyError(started.error, "workflow_start_failed"));
+      }
+      return Result.succeed({
+        type: "accepted",
+        actionRequestId,
+        request,
+        plan: materialized.plan,
+        workflowInstanceId: started.value.workflowInstanceId,
+        view: requestView({
+          request,
+          plan: materialized.plan,
+          status: "pending_approval",
+          now: input.trustedContext.now,
+        }),
+      });
+    }
+
+    const execution = await executeActionRequest({
+      authorizer: this.dependencies.authorizer,
+      executor: this.dependencies.executor,
+      actionRequestId,
+      request,
+      actionFingerprint: materialized.plan.actionFingerprint,
+      action: materialized.plan.action,
+      evaluatedAt: input.trustedContext.now,
+    });
+    if (Result.isFailure(execution)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "execution_failed",
+          execution.error.retriable,
+          execution.error.message,
+        ),
+      );
+    }
+
+    if (execution.value.type === "authorization_revoked") {
+      return Result.succeed({
+        type: "accepted",
+        actionRequestId,
+        request,
+        plan: materialized.plan,
+        view: requestView({
+          request,
+          plan: materialized.plan,
+          status: "authorization_revoked",
+          now: input.trustedContext.now,
+          result: {
+            status: "authorization_revoked",
+            code: execution.value.code,
+            message: execution.value.reason,
+          },
+        }),
+      });
+    }
+
+    return Result.succeed({
+      type: "accepted",
+      actionRequestId,
+      request,
+      plan: materialized.plan,
+      view: requestView({
+        request,
+        plan: materialized.plan,
+        status: "executed",
+        now: input.trustedContext.now,
+        result: {
+          status: "executed",
+          ...(execution.value.result.output !== undefined
+            ? { output: execution.value.result.output }
+            : {}),
+        },
+      }),
+    });
+  }
+}
