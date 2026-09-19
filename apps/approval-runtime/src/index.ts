@@ -127,7 +127,7 @@ async function startRun(request: Request, env: PreviewRuntimeEnv): Promise<Respo
     return json({ error: `failed to save preview plan: ${saved.type}` }, { status: 500 });
   }
 
-  const workflowInstanceId = actionWorkflowInstanceId(plan);
+  const workflowInstanceId = await actionWorkflowInstanceId(plan);
   await env.ACTION_WORKFLOW.create({
     id: workflowInstanceId,
     params: {
@@ -171,7 +171,7 @@ async function getRun(actionRequestId: ActionRequestId, env: PreviewRuntimeEnv):
   }
 
   const workflow = await env.ACTION_WORKFLOW.get(
-    actionWorkflowInstanceId({
+    await actionWorkflowInstanceId({
       organizationId: PREVIEW_ORGANIZATION_ID,
       actionRequestId,
     }),
@@ -214,7 +214,7 @@ async function sendDecision(
     decidedAt: new Date().toISOString(),
   };
   const workflow = await env.ACTION_WORKFLOW.get(
-    actionWorkflowInstanceId({
+    await actionWorkflowInstanceId({
       organizationId: PREVIEW_ORGANIZATION_ID,
       actionRequestId,
     }),
