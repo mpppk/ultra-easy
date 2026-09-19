@@ -131,7 +131,9 @@ export function tenantScopedOpenFgaObject(
 ): string {
   const parsed = parseObjectRef(object);
   if (!parsed) return object;
-  return `${parsed.type}:${encodeURIComponent(String(organizationId))}/${encodeURIComponent(parsed.id)}`;
+  return `${parsed.type}:${encodeURIComponent(String(organizationId))}/${encodeURIComponent(
+    parsed.id,
+  )}`;
 }
 
 export class OpenFgaClient {
