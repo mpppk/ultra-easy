@@ -35,13 +35,13 @@ export interface HttpTrustedContextProvider {
   }): Result.ResultAsync<TrustedActionRequestContext, HttpTrustedContextError>;
 }
 
-type ActionRequestCreateBody = {
+export type ActionRequestCreateBody = {
   action: Action;
   delegationGrantId?: string;
   clientReference?: string;
 };
 
-function problem(input: {
+export function actionRequestProblem(input: {
   status: number;
   code: string;
   title: string;
@@ -64,7 +64,7 @@ function problem(input: {
   );
 }
 
-function json(value: unknown, init: ResponseInit): Response {
+export function actionRequestJson(value: unknown, init: ResponseInit): Response {
   const headers = new Headers(init.headers);
   headers.set("content-type", "application/json");
   return new Response(JSON.stringify(value), { ...init, headers });
@@ -79,7 +79,7 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
   return Object.keys(value).every((key) => allowedSet.has(key));
 }
 
-function parseBody(value: unknown): ActionRequestCreateBody | null {
+export function parseActionRequestCreateBody(value: unknown): ActionRequestCreateBody | null {
   if (!isRecord(value) || !hasOnlyKeys(value, ["action", "delegationGrantId", "clientReference"])) {
     return null;
   }
@@ -133,13 +133,16 @@ function parseBody(value: unknown): ActionRequestCreateBody | null {
   };
 }
 
-function applicationErrorResponse(error: ActionRequestApplicationError): Response {
+export function actionRequestApplicationErrorResponse(
+  error: ActionRequestApplicationError,
+): Response {
   if (
     error.code === "action_input_validation_failed" ||
     error.code === "action_input_not_object" ||
+    error.code === "policy_evaluation_failed" ||
     error.code === "materialization_failed"
   ) {
-    return problem({
+    return actionRequestProblem({
       status: 422,
       code: error.code,
       title: "ActionRequestを処理できません",
@@ -148,7 +151,7 @@ function applicationErrorResponse(error: ActionRequestApplicationError): Respons
   }
 
   if (error.retriable) {
-    return problem({
+    return actionRequestProblem({
       status: 503,
       code: error.code,
       title: "依存サービスを利用できません",
@@ -156,7 +159,7 @@ function applicationErrorResponse(error: ActionRequestApplicationError): Respons
     });
   }
 
-  return problem({
+  return actionRequestProblem({
     status: 409,
     code: error.code,
     title: "ActionRequestの状態が競合しました",
@@ -178,7 +181,7 @@ export function createActionRequestHttpApi(input: {
 
       const idempotencyKey = request.headers.get("idempotency-key");
       if (!idempotencyKey || idempotencyKey.length > 255) {
-        return problem({
+        return actionRequestProblem({
           status: 400,
           code: "invalid_idempotency_key",
           title: "Idempotency-Keyが必要です",
@@ -186,9 +189,9 @@ export function createActionRequestHttpApi(input: {
       }
 
       const parsedJson = await request.json().catch(() => null);
-      const body = parseBody(parsedJson);
+      const body = parseActionRequestCreateBody(parsedJson);
       if (!body) {
-        return problem({
+        return actionRequestProblem({
           status: 400,
           code: "invalid_action_request",
           title: "ActionRequest bodyが不正です",
@@ -203,7 +206,7 @@ export function createActionRequestHttpApi(input: {
         ...(body.clientReference ? { clientReference: body.clientReference } : {}),
       });
       if (Result.isFailure(trusted)) {
-        return problem({
+        return actionRequestProblem({
           status: trusted.error.status,
           code: trusted.error.code,
           title: trusted.error.status === 401 ? "Authentication required" : "Forbidden",
@@ -217,10 +220,11 @@ export function createActionRequestHttpApi(input: {
         idempotencyKey,
         ...(body.clientReference ? { clientReference: body.clientReference } : {}),
       });
-      if (Result.isFailure(submitted)) return applicationErrorResponse(submitted.error);
+      if (Result.isFailure(submitted))
+        return actionRequestApplicationErrorResponse(submitted.error);
 
       if (submitted.value.type === "authorization_denied") {
-        return problem({
+        return actionRequestProblem({
           status: 403,
           code: submitted.value.code,
           title: "Action authorization denied",
@@ -229,7 +233,7 @@ export function createActionRequestHttpApi(input: {
         });
       }
 
-      return json(submitted.value.view, {
+      return actionRequestJson(submitted.value.view, {
         status: 201,
         headers: {
           location: `/v1/organizations/${encodeURIComponent(
