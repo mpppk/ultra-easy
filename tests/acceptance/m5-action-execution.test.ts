@@ -246,5 +246,4 @@ describe("M5 Safe Action Execution", () => {
     expect(executor.requests).toHaveLength(2);
     expect(executor.requests[0]?.idempotencyKey).not.toBe(executor.requests[1]?.idempotencyKey);
   });
-
 });
