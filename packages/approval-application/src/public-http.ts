@@ -348,13 +348,27 @@ export function createPublicHttpApi(input: {
           organizationId,
         });
         if (user instanceof Response) return user;
+        const actionRequestId = decodeURIComponent(actionTasksMatch[2]) as ActionRequestId;
+        const action = await input.readRepository.getActionRequest({
+          organizationId,
+          actionRequestId,
+        });
+        if (Result.isFailure(action)) return repositoryErrorResponse(action.error);
+        if (!action.value) {
+          return problem({
+            status: 404,
+            code: "action_request_not_found",
+            title: "ActionRequest not found",
+          });
+        }
+
         const limit = parseLimit(url);
         if (limit === null) {
           return problem({ status: 400, code: "invalid_limit", title: "limitが不正です" });
         }
         const tasks = await input.readRepository.listActionRequestTasks({
           organizationId,
-          actionRequestId: decodeURIComponent(actionTasksMatch[2]) as ActionRequestId,
+          actionRequestId,
           limit,
           viewerUserId: user,
           ...(url.searchParams.get("cursor")

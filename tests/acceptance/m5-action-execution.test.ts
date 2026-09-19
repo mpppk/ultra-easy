@@ -25,6 +25,7 @@ import type {
   JsonObject,
   MaterializedActionSnapshot,
   MaterializedApprovalPlan,
+  OrganizationId,
   SchemaKey,
 } from "@app/approval-core";
 import { createHumanActionRequest } from "@app/approval-core/testing";
@@ -35,6 +36,7 @@ function branded<T extends string>(value: string): T {
 
 const actionRequestId = branded<ActionRequestId>("action-request:m5");
 const actionFingerprint = branded<ActionFingerprint>("sha256:action-m5");
+const organizationId = branded<OrganizationId>("organization:m5");
 
 function materializedAction(request: ActionRequest): MaterializedActionSnapshot {
   return {
@@ -111,6 +113,7 @@ function executionInput(authorizer: ActionAuthorizer, executor: ActionExecutor) 
   return {
     authorizer,
     executor,
+    organizationId,
     actionRequestId,
     request,
     actionFingerprint,
@@ -174,7 +177,9 @@ describe("M5 Safe Action Execution", () => {
     assert(Result.isSuccess(first));
     assert(Result.isSuccess(second));
     expect(executor.requests).toHaveLength(2);
-    expect(executor.requests[0]?.idempotencyKey).toBe("action-request:m5:sha256:action-m5");
+    expect(executor.requests[0]?.idempotencyKey).toBe(
+      "ue:v1:organization%3Am5:action-request%3Am5:sha256%3Aaction-m5",
+    );
     expect(executor.requests[1]?.idempotencyKey).toBe(executor.requests[0]?.idempotencyKey);
   });
 
@@ -225,5 +230,20 @@ describe("M5 Safe Action Execution", () => {
     expect(first.value.guaranteeLevel).toBe("best_effort_at_most_once");
     expect(second.value.guaranteeLevel).toBe("best_effort_at_most_once");
     expect(executor.requests).toHaveLength(2);
+  });
+
+  it("AC-M7-001: executor idempotency keyはorganization境界で衝突しない", async () => {
+    const authorizer = new FakeAuthorizer("allow");
+    const executor = new CapturingExecutor();
+    const input = executionInput(authorizer, executor);
+
+    await executeActionRequest(input);
+    await executeActionRequest({
+      ...input,
+      organizationId: branded<OrganizationId>("organization:other"),
+    });
+
+    expect(executor.requests).toHaveLength(2);
+    expect(executor.requests[0]?.idempotencyKey).not.toBe(executor.requests[1]?.idempotencyKey);
   });
 });

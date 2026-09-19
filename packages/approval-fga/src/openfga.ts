@@ -11,6 +11,7 @@ import type {
   AuthorizationConsistency,
   AuthorizationDecision,
   AuthorizationObjectRef,
+  OrganizationId,
   RelationName,
   ResolvedApproverTarget,
   UserId,
@@ -92,6 +93,7 @@ export type OpenFgaClientOptions = {
   apiUrl: string;
   storeId: string;
   authorizationModelId: string;
+  organizationId: OrganizationId;
   token?: string;
   fetch?: typeof globalThis.fetch;
   /**
@@ -116,17 +118,28 @@ function normalizeTypedRef(type: string, id: string): string {
   return id.startsWith(prefix) ? id : `${prefix}${id}`;
 }
 
-function parseObjectRef(value: AuthorizationObjectRef): { type: string; id: string } | null {
+function parseObjectRef(
+  value: AuthorizationObjectRef | string,
+): { type: string; id: string } | null {
   const raw = String(value);
   const separator = raw.indexOf(":");
   if (separator <= 0 || separator === raw.length - 1) return null;
   return { type: raw.slice(0, separator), id: raw.slice(separator + 1) };
 }
 
+export function tenantScopedOpenFgaObject(organizationId: OrganizationId, object: string): string {
+  const parsed = parseObjectRef(object);
+  if (!parsed) return object;
+  return `${parsed.type}:${encodeURIComponent(String(organizationId))}/${encodeURIComponent(
+    parsed.id,
+  )}`;
+}
+
 export class OpenFgaClient {
   readonly authorizationModelId: string;
   private readonly apiUrl: string;
   private readonly storeId: string;
+  private readonly organizationId: OrganizationId;
   private readonly token?: string;
   private readonly fetchImplementation: typeof globalThis.fetch;
   private readonly listUsersCompleteness?: OpenFgaListUsersCompleteness;
@@ -135,6 +148,7 @@ export class OpenFgaClient {
     this.apiUrl = normalizeBaseUrl(options.apiUrl);
     this.storeId = options.storeId;
     this.authorizationModelId = options.authorizationModelId;
+    this.organizationId = options.organizationId;
     this.token = options.token;
     this.fetchImplementation = options.fetch ?? globalThis.fetch;
     this.listUsersCompleteness = options.listUsersCompleteness;
@@ -208,7 +222,7 @@ export class OpenFgaClient {
         tuple_key: {
           user: input.user,
           relation: input.relation,
-          object: input.object,
+          object: tenantScopedOpenFgaObject(this.organizationId, input.object),
         },
         ...(input.context ? { context: input.context } : {}),
         consistency: consistencyValue(input.consistency),
@@ -233,7 +247,9 @@ export class OpenFgaClient {
     context?: Record<string, unknown>;
     consistency: AuthorizationConsistency;
   }): Result.ResultAsync<ApproverCandidateList, OpenFgaRequestError> {
-    const object = parseObjectRef(input.object);
+    const object = parseObjectRef(
+      tenantScopedOpenFgaObject(this.organizationId, String(input.object)),
+    );
     if (!object) {
       return Result.fail(
         new OpenFgaRequestError({
@@ -298,10 +314,14 @@ export class OpenFgaClient {
     writes?: OpenFgaTupleKey[];
     deletes?: OpenFgaTupleKey[];
   }): Result.ResultAsync<void, OpenFgaRequestError> {
+    const scope = (tuple: OpenFgaTupleKey): OpenFgaTupleKey => ({
+      ...tuple,
+      object: tenantScopedOpenFgaObject(this.organizationId, tuple.object),
+    });
     const response = await this.postResponse(`/stores/${encodeURIComponent(this.storeId)}/write`, {
       authorization_model_id: this.authorizationModelId,
-      ...(input.writes?.length ? { writes: { tuple_keys: input.writes } } : {}),
-      ...(input.deletes?.length ? { deletes: { tuple_keys: input.deletes } } : {}),
+      ...(input.writes?.length ? { writes: { tuple_keys: input.writes.map(scope) } } : {}),
+      ...(input.deletes?.length ? { deletes: { tuple_keys: input.deletes.map(scope) } } : {}),
     });
     return Result.isFailure(response) ? response : Result.succeed(undefined);
   }

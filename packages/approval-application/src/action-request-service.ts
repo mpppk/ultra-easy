@@ -426,6 +426,7 @@ export class ActionRequestApplicationService {
     const execution = await executeActionRequest({
       authorizer: this.dependencies.authorizer,
       executor: this.dependencies.executor,
+      organizationId: plan.organizationId,
       actionRequestId,
       request,
       actionFingerprint: plan.actionFingerprint,

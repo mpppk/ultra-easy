@@ -32,7 +32,7 @@ export const previewScenarios = [
 
 export type PreviewScenario = (typeof previewScenarios)[number];
 
-const organizationId = "organization:preview" as OrganizationId;
+export const PREVIEW_ORGANIZATION_ID = "organization:preview" as OrganizationId;
 const bindingId = "binding:preview" as ApprovalPolicyBindingId;
 const policyKey = "policy:preview" as ApprovalPolicyKey;
 const alice = "user:alice" as UserId;
@@ -142,7 +142,7 @@ export async function createPreviewPlan(
     actor: { type: "user", id: alice },
     authority: { principal: { type: "user", id: alice } },
     origin: { type: "api" },
-    organization: { id: organizationId },
+    organization: { id: PREVIEW_ORGANIZATION_ID },
     evaluatedAt: new Date().toISOString(),
   };
   const policyBindingSnapshots: MaterializedApprovalPlan["policyBindingSnapshots"] = [
@@ -179,7 +179,7 @@ export async function createPreviewPlan(
   return {
     schemaVersion: 1,
     actionRequestId,
-    organizationId,
+    organizationId: PREVIEW_ORGANIZATION_ID,
     action,
     evaluationSnapshot,
     policyBindingSnapshots,

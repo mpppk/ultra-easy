@@ -19,6 +19,7 @@ import type {
   ApprovalPlanChecksum,
   ApprovalRuntimeState,
   ApproverResolver,
+  OrganizationId,
 } from "@app/approval-core";
 import {
   D1ActionResultProjectionRepository,
@@ -34,9 +35,22 @@ import {
 } from "./action-execution.ts";
 
 export type ActionWorkflowParams = {
+  organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   approvalPlanChecksum: ApprovalPlanChecksum;
 };
+
+export async function actionWorkflowInstanceId(input: {
+  organizationId: OrganizationId;
+  actionRequestId: ActionRequestId;
+}): Promise<string> {
+  const source = JSON.stringify([String(input.organizationId), String(input.actionRequestId)]);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  return `ue_${hex}`;
+}
 
 export type ActionWorkflowOutput =
   | {
@@ -178,12 +192,13 @@ function loadFailure(
   };
 }
 
-function resolverFor(env: ActionWorkflowEnv): ApproverResolver {
+function resolverFor(env: ActionWorkflowEnv, organizationId: OrganizationId): ApproverResolver {
   return new OpenFgaApproverResolver(
     new OpenFgaClient({
       apiUrl: env.OPENFGA_API_URL,
       storeId: env.OPENFGA_STORE_ID,
       authorizationModelId: env.OPENFGA_AUTHORIZATION_MODEL_ID,
+      organizationId,
       ...(env.OPENFGA_ASSUME_LIST_USERS_COMPLETE === "true"
         ? { listUsersCompleteness: "assume_complete" as const }
         : {}),
@@ -210,6 +225,7 @@ async function initializeRuntime(
 ): Promise<RuntimeTransition> {
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
+    organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
   });
@@ -217,7 +233,7 @@ async function initializeRuntime(
 
   const started = await startApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env),
+    resolver: resolverFor(env, params.organizationId),
     startedAt,
   });
   if (Result.isFailure(started)) return interpreterFailure(started.error);
@@ -232,6 +248,7 @@ async function recordDecision(
 ): Promise<RuntimeTransition> {
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
+    organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
   });
@@ -239,7 +256,7 @@ async function recordDecision(
 
   const recorded = await recordApprovalDecision({
     plan: loaded.plan,
-    resolver: resolverFor(env),
+    resolver: resolverFor(env, params.organizationId),
     state,
     event,
   });
@@ -255,6 +272,7 @@ async function advanceRuntime(
 ): Promise<RuntimeTransition> {
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
+    organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
   });
@@ -262,7 +280,7 @@ async function advanceRuntime(
 
   const advanced = await advanceApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env),
+    resolver: resolverFor(env, params.organizationId),
     state,
     now,
   });
@@ -278,6 +296,7 @@ async function expireRuntime(
 ): Promise<RuntimeTransition> {
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
+    organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
   });
@@ -285,7 +304,7 @@ async function expireRuntime(
 
   const expired = await expireApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env),
+    resolver: resolverFor(env, params.organizationId),
     state,
     now,
   });
@@ -351,6 +370,7 @@ async function projectActionResult(input: {
   completedAt: string;
 }): Result.ResultAsync<void, ActionResultProjectionError> {
   const loaded = await new D1MaterializedPlanRepository(input.env.DB).loadForWorkflow({
+    organizationId: input.params.organizationId,
     actionRequestId: input.params.actionRequestId,
     expectedApprovalPlanChecksum: input.params.approvalPlanChecksum,
   });
@@ -400,12 +420,12 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
   ): Promise<ActionWorkflowOutput> {
     const params = event.payload;
 
-    if (event.instanceId !== String(params.actionRequestId)) {
+    if (event.instanceId !== (await actionWorkflowInstanceId(params))) {
       return {
         type: "failed",
         actionRequestId: params.actionRequestId,
         code: "workflow_instance_id_mismatch",
-        message: `Workflow instance idはactionRequestIdと一致する必要があります: ${event.instanceId}`,
+        message: `Workflow instance idはorganizationId + actionRequestIdと一致する必要があります: ${event.instanceId}`,
       };
     }
 

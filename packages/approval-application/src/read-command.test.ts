@@ -79,12 +79,24 @@ class FakeReadRepository implements ApprovalReadRepository {
   action = structuredClone(actionView);
   task = structuredClone(taskView);
 
-  getActionRequest() {
-    return Promise.resolve(Result.succeed(structuredClone(this.action)));
+  getActionRequest(input: { organizationId: OrganizationId }) {
+    return Promise.resolve(
+      Result.succeed(
+        String(input.organizationId) === this.action.organizationId
+          ? structuredClone(this.action)
+          : null,
+      ),
+    );
   }
 
-  getApprovalTask() {
-    return Promise.resolve(Result.succeed(structuredClone(this.task)));
+  getApprovalTask(input: { organizationId: OrganizationId }) {
+    return Promise.resolve(
+      Result.succeed(
+        String(input.organizationId) === this.action.organizationId
+          ? structuredClone(this.task)
+          : null,
+      ),
+    );
   }
 
   listActionRequestTasks() {
@@ -118,8 +130,13 @@ class FakeCommandRepository implements ApprovalCommandRepository {
   }
 
   load(input: { organizationId: OrganizationId; commandId: string }) {
+    const record = this.records.get(input.commandId);
     return Promise.resolve(
-      Result.succeed(structuredClone(this.records.get(input.commandId) ?? null)),
+      Result.succeed(
+        record?.command.organizationId === String(input.organizationId)
+          ? structuredClone(record)
+          : null,
+      ),
     );
   }
 
@@ -131,7 +148,7 @@ class FakeCommandRepository implements ApprovalCommandRepository {
     error?: ApprovalCommandRecord["command"]["error"];
   }) {
     const current = this.records.get(input.commandId);
-    if (!current) {
+    if (!current || current.command.organizationId !== String(input.organizationId)) {
       return Promise.resolve(
         Result.fail(
           new PublicApiRepositoryError("approval_command_not_found", false, "command not found"),
@@ -443,6 +460,71 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     expect(second.status).toBe(202);
     expect(await second.json()).toEqual(await first.json());
     expect(harness.commandRepository.records.size).toBe(1);
+  });
+
+  it("AC-M7-001: cross-tenant ActionRequest/task lookupは404で存在を秘匿する", async () => {
+    const harness = createHarness();
+    const guessedActionId = encodeURIComponent(String(actionRequestId));
+    const guessedTaskId = encodeURIComponent(String(taskId));
+
+    const action = await harness.api.fetch(
+      request(`/v1/organizations/org%3Aother/action-requests/${guessedActionId}`),
+    );
+    expect(action.status).toBe(404);
+
+    const tasks = await harness.api.fetch(
+      request(`/v1/organizations/org%3Aother/action-requests/${guessedActionId}/tasks`),
+    );
+    expect(tasks.status).toBe(404);
+
+    const task = await harness.api.fetch(
+      request(`/v1/organizations/org%3Aother/approval-tasks/${guessedTaskId}`),
+    );
+    expect(task.status).toBe(404);
+
+    const decision = await harness.api.fetch(
+      request(`/v1/organizations/org%3Aother/approval-tasks/${guessedTaskId}/decisions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "cross-tenant-decision",
+        },
+        body: JSON.stringify({ decision: "approve" }),
+      }),
+    );
+    expect(decision.status).toBe(404);
+
+    const ownDecision = await harness.api.fetch(
+      request(`/v1/organizations/org%3Am6/approval-tasks/${guessedTaskId}/decisions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "own-decision-for-command",
+        },
+        body: JSON.stringify({ decision: "approve" }),
+      }),
+    );
+    expect(ownDecision.status).toBe(202);
+    const command = (await ownDecision.json()) as { id: string };
+
+    const crossTenantCommand = await harness.api.fetch(
+      request(`/v1/organizations/org%3Aother/approval-commands/${encodeURIComponent(command.id)}`),
+    );
+    expect(crossTenantCommand.status).toBe(404);
+
+    const processor = new ApprovalDecisionCommandProcessor(
+      harness.commandRepository,
+      new FakeSink(),
+    );
+    const crossTenantProcess = await processor.process({
+      organizationId: branded<OrganizationId>("org:other"),
+      commandId: command.id,
+      appliedAt: "2026-09-19T00:10:00.000Z",
+    });
+    expect(Result.isFailure(crossTenantProcess)).toBe(true);
+    if (Result.isFailure(crossTenantProcess)) {
+      expect(crossTenantProcess.error.code).toBe("approval_command_not_found");
+    }
   });
 
   it("Read API: ActionRequest task list / inbox / task detailを同じread modelから返す", async () => {

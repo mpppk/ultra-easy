@@ -187,6 +187,7 @@ describe("M6-4 MCP adapter", () => {
     });
 
     const polled = await value.adapter.getTask({
+      organizationId,
       taskId: "task:mcp:1",
       extensions: taskExtensions,
     });
@@ -199,6 +200,7 @@ describe("M6-4 MCP adapter", () => {
       updatedAt: "2026-09-19T00:05:00.000Z",
     });
     const completed = await value.adapter.getTask({
+      organizationId,
       taskId: "task:mcp:1",
       extensions: taskExtensions,
     });
@@ -235,11 +237,30 @@ describe("M6-4 MCP adapter", () => {
   it("AC-M6-009: tasks/get自体もextension未宣言clientには-32021を返す", async () => {
     const value = harness("pending_approval");
 
-    const result = await value.adapter.getTask({ taskId: "task:mcp:1" });
+    const result = await value.adapter.getTask({ organizationId, taskId: "task:mcp:1" });
 
     expect(result).toMatchObject({
       type: "error",
       error: { code: MCP_MISSING_REQUIRED_CLIENT_CAPABILITY },
+    });
+  });
+
+  it("AC-M7-001: tasks/getはtrusted organizationを跨いだtaskId推測をnot foundにする", async () => {
+    const value = harness("pending_approval");
+    await value.adapter.callTool({
+      organizationId,
+      toolCall: { name: "ticket_set_priority", arguments: { priority: "critical" } },
+      extensions: taskExtensions,
+    });
+
+    const crossTenant = await value.adapter.getTask({
+      organizationId: branded<OrganizationId>("org:other"),
+      taskId: "task:mcp:1",
+      extensions: taskExtensions,
+    });
+    expect(crossTenant).toMatchObject({
+      type: "error",
+      error: { code: -32602 },
     });
   });
 });

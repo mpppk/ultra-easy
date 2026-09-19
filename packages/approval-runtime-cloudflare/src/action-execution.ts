@@ -15,6 +15,7 @@ import {
   type AuthorizationEvidence,
   type DelegationGrantId,
   type MaterializedApprovalPlan,
+  type OrganizationId,
 } from "@app/approval-core";
 import {
   D1ApprovalRuntimeProjectionRepository,
@@ -56,6 +57,7 @@ export type ActionExecutionWorkflowEnv = {
 };
 
 type ActionExecutionWorkflowParams = {
+  organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   approvalPlanChecksum: ApprovalPlanChecksum;
 };
@@ -184,6 +186,7 @@ async function loadPlan(
   params: ActionExecutionWorkflowParams,
 ): Promise<{ type: "found"; plan: MaterializedApprovalPlan } | FailedTransition | RetryTransition> {
   const loaded = await new D1MaterializedPlanRepository(env.DB).loadForWorkflow({
+    organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
   });
@@ -261,7 +264,10 @@ async function reauthorizeStep(input: {
   }
 
   const result = await reauthorizeActionForExecution({
-    authorizer: new ServiceBindingActionAuthorizer(input.env.ACTION_AUTHORIZER),
+    authorizer: new ServiceBindingActionAuthorizer(
+      input.env.ACTION_AUTHORIZER,
+      loaded.plan.organizationId,
+    ),
     request: requestFromPlan(loaded.plan),
     evaluatedAt: input.evaluatedAt,
   });
@@ -335,6 +341,7 @@ async function executeStep(input: {
   );
   const result = await executeAuthorizedAction({
     executor,
+    organizationId: loaded.plan.organizationId,
     actionRequestId: loaded.plan.actionRequestId,
     actionFingerprint: loaded.plan.actionFingerprint,
     action: loaded.plan.action,

@@ -3,6 +3,7 @@ import { assert, describe, expect, it } from "vite-plus/test";
 
 import type {
   AuthorizationObjectRef,
+  OrganizationId,
   RelationName,
   ResolvedApproverTarget,
   UserId,
@@ -53,6 +54,9 @@ function relationTarget(): ResolvedApproverTarget {
   };
 }
 
+const organizationId = branded<OrganizationId>("organization:tenant-a");
+const otherOrganizationId = branded<OrganizationId>("organization:tenant-b");
+
 describe("OpenFGA adapters", () => {
   it("ActionAuthorizerはAction relationをCheckしconsistencyを伝播する", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -60,6 +64,7 @@ describe("OpenFGA adapters", () => {
       apiUrl: "https://fga.example",
       storeId: "store-1",
       authorizationModelId: "model-1",
+      organizationId,
       fetch: responseFetch({ allowed: true }, requests),
     });
     const authorizer = new OpenFgaActionAuthorizer(client, () =>
@@ -79,7 +84,7 @@ describe("OpenFGA adapters", () => {
       tuple_key: {
         user: "user:alice",
         relation: "change_priority",
-        object: "ticket:TICKET-123",
+        object: "ticket:organization%3Atenant-a/TICKET-123",
       },
       consistency: "HIGHER_CONSISTENCY",
     });
@@ -94,6 +99,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example",
         storeId: "store-1",
         authorizationModelId: "model-1",
+        organizationId,
         fetch: responseFetch(body, []),
       }),
     );
@@ -109,6 +115,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example",
         storeId: "store-1",
         authorizationModelId: "model-1",
+        organizationId,
         fetch: responseFetch(body, []),
         listUsersCompleteness: "assume_complete",
       }),
@@ -125,6 +132,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example/",
         storeId: "store-1",
         authorizationModelId: "model-1",
+        organizationId,
         fetch: responseFetch({ allowed: true }, requests),
       }),
     );
@@ -137,7 +145,11 @@ describe("OpenFGA adapters", () => {
     assert(Result.isSuccess(result));
     expect(result.value).toBe(true);
     expect(requestBody(requests)).toMatchObject({
-      tuple_key: { user: "user:bob", relation: "manager", object: "user:alice" },
+      tuple_key: {
+        user: "user:bob",
+        relation: "manager",
+        object: "user:organization%3Atenant-a/alice",
+      },
       consistency: "HIGHER_CONSISTENCY",
     });
   });
@@ -149,6 +161,7 @@ describe("OpenFGA adapters", () => {
         apiUrl: "https://fga.example",
         storeId: "store-1",
         authorizationModelId: "model-1",
+        organizationId,
         fetch: responseFetch({}, requests),
       }),
     );
@@ -161,8 +174,51 @@ describe("OpenFGA adapters", () => {
     expect(requestBody(requests)).toMatchObject({
       authorization_model_id: "model-1",
       writes: {
-        tuple_keys: [{ user: "user:bob", relation: "manager", object: "org_unit:sales" }],
+        tuple_keys: [
+          {
+            user: "user:bob",
+            relation: "manager",
+            object: "org_unit:organization%3Atenant-a/sales",
+          },
+        ],
       },
+    });
+  });
+
+  it("shared storeでは同じresource idをorganizationごとに別objectへnamespaceする", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const fetch = responseFetch({ allowed: true }, requests);
+    const tenantA = new OpenFgaClient({
+      apiUrl: "https://fga.example",
+      storeId: "shared-store",
+      authorizationModelId: "model-1",
+      organizationId,
+      fetch,
+    });
+    const tenantB = new OpenFgaClient({
+      apiUrl: "https://fga.example",
+      storeId: "shared-store",
+      authorizationModelId: "model-1",
+      organizationId: otherOrganizationId,
+      fetch,
+    });
+    await tenantA.check({
+      user: "user:alice",
+      relation: "viewer",
+      object: "ticket:TICKET-1",
+      consistency: "higher_consistency",
+    });
+    await tenantB.check({
+      user: "user:alice",
+      relation: "viewer",
+      object: "ticket:TICKET-1",
+      consistency: "higher_consistency",
+    });
+    expect(requestBody(requests, 0)).toMatchObject({
+      tuple_key: { object: "ticket:organization%3Atenant-a/TICKET-1" },
+    });
+    expect(requestBody(requests, 1)).toMatchObject({
+      tuple_key: { object: "ticket:organization%3Atenant-b/TICKET-1" },
     });
   });
 });

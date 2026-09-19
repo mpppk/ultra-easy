@@ -89,7 +89,10 @@ export type McpTaskProjectionRecord = {
 
 export interface McpTaskProjectionRepository {
   save(record: McpTaskProjectionRecord): Result.ResultAsync<void, McpAdapterError>;
-  load(taskId: string): Result.ResultAsync<McpTaskProjectionRecord | null, McpAdapterError>;
+  load(input: {
+    organizationId: OrganizationId;
+    taskId: string;
+  }): Result.ResultAsync<McpTaskProjectionRecord | null, McpAdapterError>;
 }
 
 export interface McpTaskIdGenerator {
@@ -303,6 +306,7 @@ export class ApprovalMcpAdapter {
   }
 
   async getTask(input: {
+    organizationId: OrganizationId;
     taskId: string;
     extensions?: McpExtensions;
   }): Promise<McpOutcome<McpGetTaskResult>> {
@@ -310,7 +314,10 @@ export class ApprovalMcpAdapter {
       return { type: "error", error: requiredTasksCapabilityError() };
     }
 
-    const record = await this.dependencies.taskRepository.load(input.taskId);
+    const record = await this.dependencies.taskRepository.load({
+      organizationId: input.organizationId,
+      taskId: input.taskId,
+    });
     if (Result.isFailure(record)) {
       return { type: "error", error: internalError(record.error) };
     }

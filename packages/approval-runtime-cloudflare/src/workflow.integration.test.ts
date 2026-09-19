@@ -8,6 +8,7 @@ import {
   computeApprovalBindingFingerprint,
   computeApprovalPlanChecksum,
   computeEvaluationSnapshotChecksum,
+  createActionExecutionIdempotencyKey,
   createMaterializedStepId,
 } from "@app/approval-core";
 import type {
@@ -33,7 +34,7 @@ import {
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
 
-import type { ActionWorkflowParams } from "./workflow.ts";
+import { actionWorkflowInstanceId, type ActionWorkflowParams } from "./workflow.ts";
 
 const testEnv = env as typeof env & {
   TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
@@ -88,6 +89,7 @@ async function validPlan(
   name: string,
   flow: MaterializedFlow,
   input: Record<string, unknown> = {},
+  planOrganizationId: OrganizationId = organizationId,
 ): Promise<MaterializedApprovalPlan> {
   const actionRequestId = name as ActionRequestId;
   const action: MaterializedApprovalPlan["action"] = {
@@ -110,7 +112,7 @@ async function validPlan(
     actor: { type: "user", id: alice },
     authority: { principal: { type: "user", id: alice } },
     origin: { type: "api" },
-    organization: { id: organizationId },
+    organization: { id: planOrganizationId },
     evaluatedAt: "2026-09-13T00:00:00.000Z",
   };
   const policyBindingSnapshots: MaterializedApprovalPlan["policyBindingSnapshots"] = [
@@ -145,7 +147,7 @@ async function validPlan(
   return {
     schemaVersion: 1,
     actionRequestId,
-    organizationId,
+    organizationId: planOrganizationId,
     action,
     evaluationSnapshot,
     policyBindingSnapshots,
@@ -189,6 +191,7 @@ async function createInstance(plan: MaterializedApprovalPlan, id: string) {
   return testEnv.ACTION_WORKFLOW.create({
     id,
     params: {
+      organizationId: plan.organizationId,
       actionRequestId: plan.actionRequestId,
       approvalPlanChecksum: plan.approvalPlanChecksum,
     },
@@ -212,7 +215,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     });
     await savePlan(plan);
 
-    const id = "cf-serial";
+    const id = await actionWorkflowInstanceId(plan);
     const instance = await createInstance(plan, id);
     await instance.sendEvent({
       type: "approval-decision",
@@ -244,7 +247,8 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
           : { type: "parallel", strategy: "quorum", quorum: 2, children: [first, second, third] };
       const plan = await validPlan(`cf-${scenario}`, flow);
       await savePlan(plan);
-      const instance = await createInstance(plan, `cf-${scenario}`);
+      const id = await actionWorkflowInstanceId(plan);
+      const instance = await createInstance(plan, id);
       await instance.sendEvent({
         type: "approval-decision",
         payload: decision(plan, first, alice, `${scenario}-first`),
@@ -253,7 +257,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
         type: "approval-decision",
         payload: decision(plan, second, bob, `${scenario}-second`),
       });
-      await expectCompleted(`cf-${scenario}`, "executed");
+      await expectCompleted(id, "executed");
     }
   });
 
@@ -262,7 +266,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-resume", approval);
     await savePlan(plan);
 
-    const id = "cf-resume";
+    const id = await actionWorkflowInstanceId(plan);
     await createInstance(plan, id);
 
     const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(testEnv.DB);
@@ -318,7 +322,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-retry", approval);
     await savePlan(plan);
 
-    const id = "cf-retry";
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
@@ -364,10 +368,11 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-checksum", { type: "none" });
     await savePlan(plan);
 
-    const id = "cf-checksum";
+    const id = await actionWorkflowInstanceId(plan);
     await testEnv.ACTION_WORKFLOW.create({
       id,
       params: {
+        organizationId: plan.organizationId,
         actionRequestId: plan.actionRequestId,
         approvalPlanChecksum: `sha256:${"f".repeat(64)}` as ApprovalPlanChecksum,
       },
@@ -385,12 +390,13 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-payload", { type: "none" }, { blob: "x".repeat(900_000) });
     await savePlan(plan);
     const params: ActionWorkflowParams = {
+      organizationId: plan.organizationId,
       actionRequestId: plan.actionRequestId,
       approvalPlanChecksum: plan.approvalPlanChecksum,
     };
     expect(new TextEncoder().encode(JSON.stringify(params)).byteLength).toBeLessThan(1024);
 
-    const id = "cf-payload";
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await testEnv.ACTION_WORKFLOW.create({ id, params });
     await introspector.waitForStatus("complete");
@@ -412,7 +418,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     );
     await savePlan(plan);
 
-    const id = "cf-execution-retry";
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
@@ -433,7 +439,11 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     expect(actionResult.value).toMatchObject({
       status: "executed",
       guaranteeLevel: "best_effort_at_most_once",
-      idempotencyKey: `${String(plan.actionRequestId)}:${String(plan.actionFingerprint)}`,
+      idempotencyKey: createActionExecutionIdempotencyKey(
+        plan.organizationId,
+        plan.actionRequestId,
+        plan.actionFingerprint,
+      ),
     });
     await introspector.dispose();
   });
@@ -446,7 +456,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     );
     await savePlan(plan);
 
-    const id = "cf-execution-terminal";
+    const id = await actionWorkflowInstanceId(plan);
     const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
     await introspector.modify(async (modifier) => {
       await modifier.disableRetryDelays();
@@ -467,7 +477,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     const plan = await validPlan("cf-binding-mismatch", approval);
     await savePlan(plan);
 
-    const id = "cf-binding-mismatch";
+    const id = await actionWorkflowInstanceId(plan);
     const instance = await createInstance(plan, id);
     await instance.sendEvent({
       type: "approval-decision",
@@ -495,5 +505,32 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     assert(Result.isSuccess(actionResult));
     expect(actionResult.value).toBeNull();
     await introspector.dispose();
+  });
+
+  it("AC-M7-001: 同じActionRequestIdでもorganizationごとにPlan/Workflowを分離する", async () => {
+    const tenantA = "organization:tenant-a" as OrganizationId;
+    const tenantB = "organization:tenant-b" as OrganizationId;
+    const planA = await validPlan("cf-cross-tenant", { type: "none" }, {}, tenantA);
+    const planB = await validPlan("cf-cross-tenant", { type: "none" }, {}, tenantB);
+    await savePlan(planA);
+    await savePlan(planB);
+
+    const idA = await actionWorkflowInstanceId(planA);
+    const idB = await actionWorkflowInstanceId(planB);
+    expect(idA).toMatch(/^ue_[0-9a-f]{64}$/);
+    expect(idA.length).toBeLessThanOrEqual(100);
+    expect(idA).not.toBe(idB);
+
+    await createInstance(planA, idA);
+    await createInstance(planB, idB);
+    await expectCompleted(idA, "executed");
+    await expectCompleted(idB, "executed");
+
+    const wrongTenantLoad = await new D1MaterializedPlanRepository(testEnv.DB).loadForWorkflow({
+      organizationId: "organization:tenant-c" as OrganizationId,
+      actionRequestId: planA.actionRequestId,
+      expectedApprovalPlanChecksum: planA.approvalPlanChecksum,
+    });
+    expect(wrongTenantLoad.type).toBe("not_found");
   });
 });
