@@ -16,11 +16,6 @@ jobs:
           cache: true
       - name: Install dependencies
         run: vp install
-      - name: Formatter diagnostic
-        run: |
-          vp check --fix || true
-          git diff -- tests/acceptance/m6-critical-path.test.ts
-          exit 1
       - name: Check
         run: vp check
       - name: Build Web Preview

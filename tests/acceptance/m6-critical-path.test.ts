@@ -160,11 +160,7 @@ function action(input: Record<string, unknown>): Action {
   };
 }
 
-function source(
-  id: string,
-  flow: FlowDefinition,
-  order = 100,
-): VersionedApprovalPolicyBinding {
+function source(id: string, flow: FlowDefinition, order = 100): VersionedApprovalPolicyBinding {
   const policyKey = branded<ApprovalPolicyKey>(`policy:${id}`);
   const binding: ApprovalPolicyBinding = {
     id: branded<ApprovalPolicyBindingId>(`binding:${id}`),
