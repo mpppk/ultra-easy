@@ -508,9 +508,7 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     const command = (await ownDecision.json()) as { id: string };
 
     const crossTenantCommand = await harness.api.fetch(
-      request(
-        `/v1/organizations/org%3Aother/approval-commands/${encodeURIComponent(command.id)}`,
-      ),
+      request(`/v1/organizations/org%3Aother/approval-commands/${encodeURIComponent(command.id)}`),
     );
     expect(crossTenantCommand.status).toBe(404);
 

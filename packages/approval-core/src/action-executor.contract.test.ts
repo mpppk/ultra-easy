@@ -16,9 +16,7 @@ describe("ActionExecutor contract", () => {
 
     expect(
       createActionExecutionIdempotencyKey(organizationId, actionRequestId, actionFingerprint),
-    ).toBe(
-      "ue:v1:organization%3Acontract:action-request%3Acontract:sha256%3Aaction-contract",
-    );
+    ).toBe("ue:v1:organization%3Acontract:action-request%3Acontract:sha256%3Aaction-contract");
   });
 
   it("Executor failureをname/code/retriableで識別できる", () => {
