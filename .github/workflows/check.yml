@@ -18,6 +18,10 @@ jobs:
         run: vp install
       - name: Check
         run: vp check
+      - name: Build Web Preview
+        run: vp -C apps/web run build:preview
+      - name: Dry-run Approval Runtime Preview
+        run: vp -C apps/approval-runtime run deploy:dry-run
       - name: Start OpenFGA test server
         run: |
           docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run

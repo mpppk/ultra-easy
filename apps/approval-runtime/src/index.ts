@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { WorkerEntrypoint } from "cloudflare:workers";
 
 import type {
   ActionRequestId,
@@ -8,6 +9,7 @@ import type {
   UserId,
 } from "@app/approval-core";
 import {
+  D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
@@ -31,6 +33,84 @@ function json(data: unknown, init?: ResponseInit): Response {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Preview専用のActionAuthorizer。
+ * 同一Workerのnamed entrypointへService Bindingすることで、public HTTP endpointを増やさず
+ * productionと同じServiceBindingActionAuthorizer contractを通す。
+ */
+export class PreviewActionAuthorizer extends WorkerEntrypoint<PreviewRuntimeEnv> {
+  override async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method !== "POST" || url.pathname !== "/check") {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const body = await request.json().catch(() => null);
+    if (!isRecord(body)) {
+      return json(
+        {
+          code: "invalid_preview_authorization_request",
+          retriable: false,
+          detail: "preview authorization request must be a JSON object",
+        },
+        { status: 400 },
+      );
+    }
+
+    return json({
+      type: "allow",
+      evidence: { provider: "preview-action-authorizer" },
+    });
+  }
+}
+
+/**
+ * Preview専用のside-effect mock。
+ * idempotency keyをheader/bodyの両方から確認し、実際のActionExecutor adapter contractを
+ * Preview環境でE2E確認できるようにする。
+ */
+export class PreviewActionExecutor extends WorkerEntrypoint<PreviewRuntimeEnv> {
+  override async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const match = /^\/execute\/([^/]+)$/.exec(url.pathname);
+    if (request.method !== "POST" || !match?.[1]) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const body = await request.json().catch(() => null);
+    const headerIdempotencyKey = request.headers.get("idempotency-key");
+    const bodyIdempotencyKey =
+      isRecord(body) && typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+    if (
+      !headerIdempotencyKey ||
+      !bodyIdempotencyKey ||
+      headerIdempotencyKey !== bodyIdempotencyKey
+    ) {
+      return json(
+        {
+          code: "invalid_idempotency_contract",
+          retriable: false,
+          detail: "idempotency key must be stable and identical in header/body",
+        },
+        { status: 409 },
+      );
+    }
+
+    return json({
+      status: "succeeded",
+      output: {
+        preview: true,
+        executorKey: decodeURIComponent(match[1]),
+        idempotencyKey: headerIdempotencyKey,
+      },
+    });
+  }
 }
 
 async function startRun(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
@@ -73,12 +153,21 @@ async function getRun(actionRequestId: ActionRequestId, env: PreviewRuntimeEnv):
     .first<{ organization_id: string }>();
   if (!row) return json({ error: "preview run not found" }, { status: 404 });
 
-  const projection = await new D1ApprovalRuntimeProjectionRepository(env.DB).load({
-    organizationId: row.organization_id as OrganizationId,
+  const organizationId = row.organization_id as OrganizationId;
+  const runtime = await new D1ApprovalRuntimeProjectionRepository(env.DB).load({
+    organizationId,
     actionRequestId,
   });
-  if (Result.isFailure(projection)) {
-    return json({ error: projection.error.message }, { status: 500 });
+  if (Result.isFailure(runtime)) {
+    return json({ error: runtime.error.message }, { status: 500 });
+  }
+
+  const actionResult = await new D1ActionResultProjectionRepository(env.DB).load({
+    organizationId,
+    actionRequestId,
+  });
+  if (Result.isFailure(actionResult)) {
+    return json({ error: actionResult.error.message }, { status: 500 });
   }
 
   const workflow = await env.ACTION_WORKFLOW.get(String(actionRequestId));
@@ -86,7 +175,8 @@ async function getRun(actionRequestId: ActionRequestId, env: PreviewRuntimeEnv):
   return json({
     actionRequestId,
     workflow: workflowStatus,
-    runtime: projection.value,
+    runtime: runtime.value,
+    actionResult: actionResult.value,
   });
 }
 

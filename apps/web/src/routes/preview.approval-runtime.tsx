@@ -17,6 +17,14 @@ type RunStatus = {
     status: string;
     tasks: RuntimeTask[];
   };
+  actionResult: null | {
+    status: string;
+    guaranteeLevel?: string;
+    idempotencyKey?: string;
+    result?: unknown;
+    code?: string;
+    message?: string;
+  };
 };
 
 export const Route = createFileRoute("/preview/approval-runtime")({
@@ -83,7 +91,7 @@ function PreviewApprovalRuntime() {
   return (
     <main style={{ maxWidth: 920, margin: "0 auto", padding: 32, fontFamily: "sans-serif" }}>
       <h1>Approval Runtime Preview</h1>
-      <p>Cloudflare Workflows + D1 のPreview E2E確認用ハーネスです。</p>
+      <p>Cloudflare Workflows + D1 + Safe Action Execution のPreview E2E確認用ハーネスです。</p>
 
       <section style={{ display: "flex", gap: 12, alignItems: "center", marginBlock: 24 }}>
         <select
@@ -117,6 +125,14 @@ function PreviewApprovalRuntime() {
             <dd>{status.workflow.status}</dd>
             <dt>Runtime</dt>
             <dd>{status.runtime?.status ?? "not projected"}</dd>
+            <dt>Action result</dt>
+            <dd>{status.actionResult?.status ?? "not projected"}</dd>
+            <dt>Guarantee</dt>
+            <dd>{status.actionResult?.guaranteeLevel ?? "n/a"}</dd>
+            <dt>Idempotency key</dt>
+            <dd>
+              <code>{status.actionResult?.idempotencyKey ?? "n/a"}</code>
+            </dd>
           </dl>
 
           <h2>Tasks</h2>
