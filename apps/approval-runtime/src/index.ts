@@ -5,7 +5,6 @@ import type {
   ActionRequestId,
   ApprovalDecisionEvent,
   ApprovalTaskId,
-  OrganizationId,
   UserId,
 } from "@app/approval-core";
 import {
