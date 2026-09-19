@@ -125,15 +125,10 @@ function parseObjectRef(value: AuthorizationObjectRef | string): { type: string;
   return { type: raw.slice(0, separator), id: raw.slice(separator + 1) };
 }
 
-export function tenantScopedOpenFgaObject(
-  organizationId: OrganizationId,
-  object: string,
-): string {
+export function tenantScopedOpenFgaObject(organizationId: OrganizationId, object: string): string {
   const parsed = parseObjectRef(object);
   if (!parsed) return object;
-  return `${parsed.type}:${encodeURIComponent(String(organizationId))}/${encodeURIComponent(
-    parsed.id,
-  )}`;
+  return `${parsed.type}:${encodeURIComponent(String(organizationId))}/${encodeURIComponent(parsed.id)}`;
 }
 
 export class OpenFgaClient {
