@@ -1,17 +1,11 @@
 import { Result } from "@praha/byethrow";
 
-import type {
-  Action,
-  ActionRequestId,
-  JsonValue,
-  OrganizationId,
-} from "@app/approval-core";
+import type { Action, ActionRequestId, OrganizationId } from "@app/approval-core";
 import type {
   ActionRequestApplicationService,
   ActionRequestSubmitResult,
   ActionRequestView,
   ApprovalReadRepository,
-  PublicApiRepositoryError,
   TrustedActionRequestContext,
 } from "@app/approval-application";
 
@@ -32,12 +26,7 @@ export type McpCallToolResult = {
   isError?: boolean;
 };
 
-export type McpTaskStatus =
-  | "working"
-  | "input_required"
-  | "completed"
-  | "cancelled"
-  | "failed";
+export type McpTaskStatus = "working" | "input_required" | "completed" | "cancelled" | "failed";
 
 export type McpTask = {
   taskId: string;
@@ -99,12 +88,8 @@ export type McpTaskProjectionRecord = {
 };
 
 export interface McpTaskProjectionRepository {
-  save(
-    record: McpTaskProjectionRecord,
-  ): Result.ResultAsync<void, McpAdapterError>;
-  load(
-    taskId: string,
-  ): Result.ResultAsync<McpTaskProjectionRecord | null, McpAdapterError>;
+  save(record: McpTaskProjectionRecord): Result.ResultAsync<void, McpAdapterError>;
+  load(taskId: string): Result.ResultAsync<McpTaskProjectionRecord | null, McpAdapterError>;
 }
 
 export interface McpTaskIdGenerator {
@@ -164,7 +149,9 @@ function completeResult(view: ActionRequestView, isError = false): McpCallToolRe
   };
 }
 
-function deniedResult(result: Extract<ActionRequestSubmitResult, { type: "authorization_denied" }>) {
+function deniedResult(
+  result: Extract<ActionRequestSubmitResult, { type: "authorization_denied" }>,
+) {
   const payload = {
     actionRequestId: String(result.actionRequestId),
     code: result.code,
@@ -280,10 +267,7 @@ export class ApprovalMcpAdapter {
     if (submitted.value.view.status !== "pending_approval") {
       return {
         type: "result",
-        result: completeResult(
-          submitted.value.view,
-          submitted.value.view.status !== "executed",
-        ),
+        result: completeResult(submitted.value.view, submitted.value.view.status !== "executed"),
       };
     }
 
