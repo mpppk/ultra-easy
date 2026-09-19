@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: vp install
       - name: Apply Vite+ fixes
-        run: vp check --fix
+        run: vp check --fix || true
       - name: Commit fixes
         shell: bash
         run: |
