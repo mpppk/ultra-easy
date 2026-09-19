@@ -23,6 +23,7 @@ import type {
 } from "@app/approval-core";
 
 export const previewScenarios = [
+  "no-approval",
   "serial-two-users",
   "parallel-all",
   "parallel-quorum",
@@ -66,6 +67,8 @@ async function directStep(
 }
 
 async function flowForScenario(scenario: PreviewScenario): Promise<MaterializedFlow> {
+  if (scenario === "no-approval") return { type: "none" };
+
   if (scenario === "serial-two-users") {
     return {
       type: "serial",
