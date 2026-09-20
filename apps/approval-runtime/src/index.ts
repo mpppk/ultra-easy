@@ -1,6 +1,7 @@
 import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
+import { ConsoleTelemetrySink } from "@app/approval-core";
 import type {
   ActionRequestId,
   ApprovalDecisionEvent,
@@ -98,18 +99,23 @@ export class PreviewActionExecutor extends WorkerEntrypoint<PreviewRuntimeEnv> {
 
     const body = await request.json().catch(() => null);
     const headerIdempotencyKey = request.headers.get("idempotency-key");
+    const correlationId = request.headers.get("x-ue-correlation-id");
     const bodyIdempotencyKey =
       isRecord(body) && typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+    const bodyActionRequestId =
+      isRecord(body) && typeof body.actionRequestId === "string" ? body.actionRequestId : undefined;
     if (
       !headerIdempotencyKey ||
       !bodyIdempotencyKey ||
-      headerIdempotencyKey !== bodyIdempotencyKey
+      headerIdempotencyKey !== bodyIdempotencyKey ||
+      !correlationId ||
+      correlationId !== bodyActionRequestId
     ) {
       return json(
         {
           code: "invalid_idempotency_contract",
           retriable: false,
-          detail: "idempotency key must be stable and identical in header/body",
+          detail: "idempotency key and ActionRequest correlation headers must be stable",
         },
         { status: 409 },
       );
@@ -265,10 +271,12 @@ export default {
   },
 
   async scheduled(controller, env): Promise<void> {
+    const telemetry = new ConsoleTelemetrySink();
     const dispatched = await dispatchNotificationOutbox({
       repository: new D1NotificationOutboxRepository(env.DB),
       queue: env.NOTIFICATION_QUEUE,
       now: new Date(controller.scheduledTime).toISOString(),
+      telemetry,
     });
     if (Result.isFailure(dispatched)) {
       console.error("notification outbox dispatch failed", {
@@ -280,12 +288,14 @@ export default {
   async queue(batch, env): Promise<void> {
     const repository = new D1NotificationOutboxRepository(env.DB);
     const sink = new PreviewNotificationSink();
+    const telemetry = new ConsoleTelemetrySink();
     for (const message of batch.messages) {
       const consumed = await consumeNotificationMessage({
         repository,
         sink,
         message: message.body,
         now: new Date().toISOString(),
+        telemetry,
       });
       if (Result.isFailure(consumed)) {
         message.retry();
