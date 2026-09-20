@@ -11,6 +11,7 @@ import {
   type AuthorizationConsistency,
   type AuthorizationDecision,
   type ExecutorKey,
+  type ActionRequestId,
   type JsonValue,
   type OrganizationId,
 } from "@app/approval-core";
@@ -66,6 +67,7 @@ export class ServiceBindingActionAuthorizer implements ActionAuthorizer {
   constructor(
     private readonly binding: ActionServiceBinding,
     private readonly organizationId: OrganizationId,
+    private readonly actionRequestId?: ActionRequestId,
   ) {}
 
   async check(input: {
@@ -77,7 +79,16 @@ export class ServiceBindingActionAuthorizer implements ActionAuthorizer {
       binding: this.binding,
       request: new Request("https://action-authorizer.internal/check", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-ue-organization-id": String(this.organizationId),
+          ...(this.actionRequestId
+            ? {
+                "x-ue-action-request-id": String(this.actionRequestId),
+                "x-ue-correlation-id": String(this.actionRequestId),
+              }
+            : {}),
+        },
         body: JSON.stringify({ ...input, organizationId: this.organizationId }),
       }),
     });
@@ -195,6 +206,9 @@ export class ServiceBindingActionExecutor implements ActionExecutor {
           headers: {
             "content-type": "application/json",
             "idempotency-key": request.idempotencyKey,
+            "x-ue-organization-id": String(request.organizationId),
+            "x-ue-action-request-id": String(request.actionRequestId),
+            "x-ue-correlation-id": String(request.actionRequestId),
           },
           body: JSON.stringify(request),
         },
