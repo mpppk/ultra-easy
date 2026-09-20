@@ -4,6 +4,7 @@ import { ErrorFactory } from "@praha/error-factory";
 import type { ActionRequest } from "./domain/action.ts";
 import type { ActionFingerprint, ActionRequestId, OrganizationId } from "./domain/brand.ts";
 import type { JsonValue } from "./domain/json.ts";
+import type { PrincipalRef } from "./domain/principal.ts";
 import type { ApprovalRuntimeState } from "./interpreter/types.ts";
 import type { MaterializedActionSnapshot, MaterializedApprovalPlan } from "./materialization.ts";
 import {
@@ -20,6 +21,8 @@ export type ActionExecutionRequest = {
   idempotencyKey: string;
   action: MaterializedActionSnapshot;
   authorizationEvidence: AuthorizationEvidence;
+  /** Trusted actor captured by the ActionRequest boundary. Never populate from action.input. */
+  actor?: PrincipalRef;
 };
 
 export type ActionExecutionResult = {
@@ -230,6 +233,7 @@ export async function executeAuthorizedAction(input: {
   actionFingerprint: ActionFingerprint;
   action: MaterializedActionSnapshot;
   authorizationEvidence: AuthorizationEvidence;
+  actor?: PrincipalRef;
 }): Result.ResultAsync<Extract<ActionExecutionOutcome, { type: "executed" }>, ActionExecutorError> {
   const idempotencyKey = createActionExecutionIdempotencyKey(
     input.organizationId,
@@ -243,6 +247,7 @@ export async function executeAuthorizedAction(input: {
     idempotencyKey,
     action: input.action,
     authorizationEvidence: input.authorizationEvidence,
+    ...(input.actor ? { actor: input.actor } : {}),
   });
   if (Result.isFailure(executed)) return Result.fail(executed.error);
 
@@ -288,5 +293,6 @@ export async function executeActionRequest(input: {
     actionFingerprint: input.actionFingerprint,
     action: input.action,
     authorizationEvidence: authorization.value.authorizationEvidence,
+    actor: input.request.actor,
   });
 }
