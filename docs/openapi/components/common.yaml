@@ -130,6 +130,31 @@ responses:
       application/problem+json:
         schema:
           $ref: ./schemas-07.yaml#/Problem
+  TooManyRequests:
+    description: tenant / principal / operation scope の rate limit を超過した。
+    headers:
+      Retry-After:
+        description: 再試行可能になるまでの秒数。
+        schema:
+          type: integer
+          minimum: 1
+      X-RateLimit-Limit:
+        schema:
+          type: integer
+          minimum: 1
+      X-RateLimit-Remaining:
+        schema:
+          type: integer
+          minimum: 0
+      X-RateLimit-Reset:
+        description: 現在windowのreset timestamp (RFC 3339)。
+        schema:
+          type: string
+          format: date-time
+    content:
+      application/problem+json:
+        schema:
+          $ref: ./schemas-07.yaml#/Problem
   ServiceUnavailable:
     description: Authorization provider、Workflow runtime等の依存先が一時的に利用不能。
     content:
