@@ -45,20 +45,20 @@ under the retention policy; that does not make those fields valid default log at
 
 ## SLI metrics
 
-| Metric | Source | Meaning |
-| --- | --- | --- |
-| `approval.lead_time_ms` | append-only Action events | action.received → action.completed |
-| `approval.step_dwell_time_ms` | append-only Action events | step.activated → approved/rejected/expired |
-| `approval.rejected_total` | append-only Action events | rejected approval steps |
-| `approval.expired_total` | append-only Action events | expired approval steps |
-| `fga.check_latency_ms` | OpenFGA adapter | Check latency |
-| `fga.list_users_latency_ms` | OpenFGA adapter | ListUsers latency |
-| `fga.error_total` | OpenFGA adapter | provider/contract errors |
-| `workflow.retry_total` | Workflow step boundary | retriable step attempts |
-| `workflow.failure_total` | Workflow boundary | terminal workflow failures |
-| `action_executor.failure_total` | append-only Action events | terminal execution failures |
-| `outbox.backlog` | notification outbox health | pending + failed outbox rows |
-| `outbox.failure_total` | outbox dispatcher | Queue dispatch failures |
+| Metric                          | Source                     | Meaning                                    |
+| ------------------------------- | -------------------------- | ------------------------------------------ |
+| `approval.lead_time_ms`         | append-only Action events  | action.received → action.completed         |
+| `approval.step_dwell_time_ms`   | append-only Action events  | step.activated → approved/rejected/expired |
+| `approval.rejected_total`       | append-only Action events  | rejected approval steps                    |
+| `approval.expired_total`        | append-only Action events  | expired approval steps                     |
+| `fga.check_latency_ms`          | OpenFGA adapter            | Check latency                              |
+| `fga.list_users_latency_ms`     | OpenFGA adapter            | ListUsers latency                          |
+| `fga.error_total`               | OpenFGA adapter            | provider/contract errors                   |
+| `workflow.retry_total`          | Workflow step boundary     | retriable step attempts                    |
+| `workflow.failure_total`        | Workflow boundary          | terminal workflow failures                 |
+| `action_executor.failure_total` | append-only Action events  | terminal execution failures                |
+| `outbox.backlog`                | notification outbox health | pending + failed outbox rows               |
+| `outbox.failure_total`          | outbox dispatcher          | Queue dispatch failures                    |
 
 Terminal workflow paths derive approval/executor SLIs from the persisted Action event sequence,
 so the dashboard and audit reconstruction use the same source of truth.
