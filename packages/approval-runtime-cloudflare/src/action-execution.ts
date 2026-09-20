@@ -3,6 +3,7 @@ import type { WorkflowStep } from "cloudflare:workers";
 import type { D1Database } from "@cloudflare/workers-types";
 
 import {
+  createActionExecutionIdempotencyKey,
   executeAuthorizedAction,
   reauthorizeActionForExecution,
   validateApprovalBindingForExecution,
@@ -41,6 +42,8 @@ export type ActionExecutionWorkflowResult =
       guaranteeLevel?: ActionExecutionGuaranteeLevel;
       idempotencyKey?: string;
       resultJson?: string;
+      authorizationEvidence?: AuthorizationEvidence;
+      retriable?: boolean;
       code?: string;
       message?: string;
     }
@@ -66,6 +69,8 @@ type TerminalTransition = {
   type: "terminal";
   status: ActionExecutionTerminalStatus;
   guaranteeLevel?: ActionExecutionGuaranteeLevel;
+  idempotencyKey?: string;
+  retriable?: boolean;
   code: string;
   message: string;
 };
@@ -258,6 +263,7 @@ async function reauthorizeStep(input: {
     return {
       type: "terminal",
       status: "authorization_check_failed",
+      retriable: false,
       code: "action_authorizer_not_configured",
       message: "Action Authorization service bindingが設定されていません",
     };
@@ -277,6 +283,7 @@ async function reauthorizeStep(input: {
       : {
           type: "terminal",
           status: "authorization_check_failed",
+          retriable: false,
           code: result.error.code,
           message: result.error.message,
         };
@@ -285,6 +292,7 @@ async function reauthorizeStep(input: {
     return {
       type: "terminal",
       status: "authorization_revoked",
+      retriable: false,
       code: result.value.code,
       message: result.value.reason,
     };
@@ -330,6 +338,7 @@ async function executeStep(input: {
     return {
       type: "terminal",
       status: "execution_failed",
+      retriable: false,
       code: "action_executor_not_configured",
       message: "Action Executor service bindingが設定されていません",
     };
@@ -338,6 +347,11 @@ async function executeStep(input: {
   const executor = new ServiceBindingActionExecutor(
     input.env.ACTION_EXECUTOR,
     loaded.plan.action.definition.executorKey,
+  );
+  const idempotencyKey = createActionExecutionIdempotencyKey(
+    loaded.plan.organizationId,
+    loaded.plan.actionRequestId,
+    loaded.plan.actionFingerprint,
   );
   const result = await executeAuthorizedAction({
     executor,
@@ -354,6 +368,8 @@ async function executeStep(input: {
           type: "terminal",
           status: "execution_failed",
           guaranteeLevel: executor.guaranteeLevel,
+          idempotencyKey,
+          retriable: false,
           code: result.error.code,
           message: result.error.message,
         };
@@ -392,13 +408,21 @@ async function runExecutionStep(input: {
   }
 }
 
-function terminalResult(transition: TerminalTransition): ActionExecutionWorkflowResult {
+function terminalResult(
+  transition: TerminalTransition,
+  authorizationEvidence?: AuthorizationEvidence,
+): ActionExecutionWorkflowResult {
   return {
     type: "completed",
     status: transition.status,
     ...(transition.guaranteeLevel !== undefined
       ? { guaranteeLevel: transition.guaranteeLevel }
       : {}),
+    ...(transition.idempotencyKey !== undefined
+      ? { idempotencyKey: transition.idempotencyKey }
+      : {}),
+    ...(authorizationEvidence !== undefined ? { authorizationEvidence } : {}),
+    ...(transition.retriable !== undefined ? { retriable: transition.retriable } : {}),
     code: transition.code,
     message: transition.message,
   };
@@ -433,7 +457,9 @@ export async function runActionExecution(input: {
       message: execution.message,
     };
   }
-  if (execution.type === "terminal") return terminalResult(execution);
+  if (execution.type === "terminal") {
+    return terminalResult(execution, restoreAuthorizationEvidence(reauthorization.evidence));
+  }
 
   return {
     type: "completed",
@@ -441,5 +467,6 @@ export async function runActionExecution(input: {
     guaranteeLevel: execution.guaranteeLevel,
     idempotencyKey: execution.idempotencyKey,
     resultJson: execution.resultJson,
+    authorizationEvidence: restoreAuthorizationEvidence(reauthorization.evidence),
   };
 }
