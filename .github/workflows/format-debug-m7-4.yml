@@ -1,0 +1,23 @@
+name: format-debug-m7-4
+
+on:
+  push:
+    branches:
+      - feat/m7-4-meta-approval-force-cancel
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: voidzero-dev/setup-vp@v1.19.0
+        with:
+          node-version: 24
+      - run: vp install
+      - name: Apply fixes
+        run: vp check --fix || true
+      - name: Print diff
+        run: git diff
