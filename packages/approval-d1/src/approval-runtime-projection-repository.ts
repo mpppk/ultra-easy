@@ -2,12 +2,14 @@ import { Result } from "@praha/byethrow";
 
 import { ApprovalRuntimeProjectionRepositoryError } from "@app/approval-core";
 import type {
+  ActionEventRecord,
   ActionRequestId,
   ApprovalRuntimeProjectionRepository,
   ApprovalRuntimeState,
   OrganizationId,
 } from "@app/approval-core";
 
+import { prepareActionEventInsert } from "./action-event-repository.ts";
 import type {
   D1DatabaseLike,
   D1PreparedStatementLike,
@@ -86,6 +88,7 @@ export class D1ApprovalRuntimeProjectionRepository implements ApprovalRuntimePro
   async replace(input: {
     organizationId: OrganizationId;
     state: ApprovalRuntimeState;
+    events?: readonly ActionEventRecord[];
   }): Result.ResultAsync<void, ApprovalRuntimeProjectionRepositoryError> {
     const batchDb = asBatchDatabase(this.db);
     if (!batchDb) {
@@ -155,6 +158,14 @@ export class D1ApprovalRuntimeProjectionRepository implements ApprovalRuntimePro
             task.distinctScopeId ?? null,
           ),
       );
+    }
+
+    for (const event of input.events ?? []) {
+      const statement = prepareActionEventInsert(this.db, event);
+      if (Result.isFailure(statement)) {
+        return Result.fail(repositoryError(statement.error.message));
+      }
+      statements.push(statement.value);
     }
 
     const saved = await runBatch({ db: batchDb, statements });
