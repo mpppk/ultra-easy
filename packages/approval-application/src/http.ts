@@ -1,9 +1,12 @@
 import { Result } from "@praha/byethrow";
 
+import { DEFAULT_ACTION_REQUEST_RATE_LIMIT } from "@app/approval-core";
 import type {
   Action,
   ActionType,
   OrganizationId,
+  RateLimiter,
+  RateLimitPolicy,
   ResourceId,
   ResourceType,
 } from "@app/approval-core";
@@ -47,7 +50,10 @@ export function actionRequestProblem(input: {
   title: string;
   detail?: string;
   actionRequestId?: string;
+  headers?: HeadersInit;
 }): Response {
+  const headers = new Headers(input.headers);
+  headers.set("content-type", "application/problem+json");
   return new Response(
     JSON.stringify({
       type: `urn:ultra-easy:problem:${input.code}`,
@@ -59,7 +65,7 @@ export function actionRequestProblem(input: {
     }),
     {
       status: input.status,
-      headers: { "content-type": "application/problem+json" },
+      headers,
     },
   );
 }
@@ -170,6 +176,8 @@ export function actionRequestApplicationErrorResponse(
 export function createActionRequestHttpApi(input: {
   service: ActionRequestApplicationService;
   trustedContextProvider: HttpTrustedContextProvider;
+  rateLimiter?: RateLimiter;
+  rateLimitPolicy?: RateLimitPolicy;
 }): { fetch(request: Request): Promise<Response> } {
   return {
     async fetch(request: Request): Promise<Response> {
@@ -212,6 +220,36 @@ export function createActionRequestHttpApi(input: {
           title: trusted.error.status === 401 ? "Authentication required" : "Forbidden",
           detail: trusted.error.message,
         });
+      }
+
+      if (input.rateLimiter) {
+        const limited = await input.rateLimiter.consume({
+          organizationId,
+          principal: trusted.value.actor,
+          operation: "action_request.submit",
+          policy: input.rateLimitPolicy ?? DEFAULT_ACTION_REQUEST_RATE_LIMIT,
+          now: trusted.value.now,
+        });
+        if (Result.isFailure(limited)) {
+          return actionRequestProblem({
+            status: 503,
+            code: limited.error.code,
+            title: "Rate limit service unavailable",
+          });
+        }
+        if (!limited.value.allowed) {
+          return actionRequestProblem({
+            status: 429,
+            code: "rate_limit_exceeded",
+            title: "Too Many Requests",
+            headers: {
+              "retry-after": String(limited.value.retryAfterSeconds),
+              "x-ratelimit-limit": String(limited.value.limit),
+              "x-ratelimit-remaining": String(limited.value.remaining),
+              "x-ratelimit-reset": limited.value.resetAt,
+            },
+          });
+        }
       }
 
       const submitted = await input.service.submit({
