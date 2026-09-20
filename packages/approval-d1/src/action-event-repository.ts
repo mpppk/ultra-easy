@@ -1,9 +1,14 @@
 import { Result } from "@praha/byethrow";
 
-import { actionEventKey, canonicalizeJson } from "@app/approval-core";
+import {
+  actionEventKey,
+  ActionEventRepositoryError,
+  canonicalizeJson,
+} from "@app/approval-core";
 import type {
   ActionEvent,
   ActionEventRecord,
+  ActionEventRepository,
   ActionRequestId,
   JsonValue,
   OrganizationId,
@@ -29,15 +34,15 @@ type D1BatchDatabaseLike = D1DatabaseLike & {
   batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]>;
 };
 
-export class D1ActionEventRepositoryError extends Error {
+export class D1ActionEventRepositoryError extends ActionEventRepositoryError {
   readonly name = "D1ActionEventRepositoryError";
-  readonly code = "action_event_repository_error";
 
   constructor(
     message: string,
     readonly conflict = false,
+    retriable = !conflict,
   ) {
-    super(message);
+    super(conflict ? "action_event_conflict" : "action_event_repository_error", retriable, message);
   }
 }
 
@@ -137,7 +142,7 @@ function asBatchDatabase(db: D1DatabaseLike): D1BatchDatabaseLike | null {
   return typeof candidate.batch === "function" ? (db as D1BatchDatabaseLike) : null;
 }
 
-export class D1ActionEventRepository {
+export class D1ActionEventRepository implements ActionEventRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
   async append(
