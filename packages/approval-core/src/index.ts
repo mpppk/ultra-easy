@@ -1,5 +1,6 @@
 export type * from "./domain/index.ts";
 export type * from "./action-definition.ts";
+export * from "./action-event.ts";
 export * from "./action-execution.ts";
 export * from "./approver-resolver.ts";
 export * from "./authorization.ts";
