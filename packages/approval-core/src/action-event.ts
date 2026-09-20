@@ -10,7 +10,13 @@ import type {
   UserId,
 } from "./domain/brand.ts";
 import type { DelegationHop, PrincipalRef } from "./domain/principal.ts";
-import type { ResolvedApproverTarget } from "./materialization.ts";
+import type { ApprovalRuntimeState, ApprovalTaskRuntimeState } from "./interpreter/types.ts";
+import type {
+  MaterializedApprovalPlan,
+  MaterializedApprovalStep,
+  MaterializedFlow,
+  ResolvedApproverTarget,
+} from "./materialization.ts";
 
 export type ActionCompletedResult =
   | "executed"
@@ -142,9 +148,9 @@ function eventDiscriminator(event: ActionEvent): string {
 }
 
 /**
- * Returns a stable key for one logical domain transition.
- * Workflow retries/replays must reuse this key so append-only persistence can
- * safely collapse duplicate delivery without mutating prior audit rows.
+ * Stable identity for one logical domain transition.
+ * Workflow retries/replays reuse the same key so append-only persistence can
+ * suppress duplicate delivery without mutating an existing audit row.
  */
 export function actionEventKey(input: {
   organizationId: OrganizationId;
@@ -156,4 +162,187 @@ export function actionEventKey(input: {
     input.event.type,
     eventDiscriminator(input.event),
   ].join(":");
+}
+
+export function actionEventRecord(input: {
+  organizationId: OrganizationId;
+  occurredAt: string;
+  event: ActionEvent;
+}): ActionEventRecord {
+  return {
+    ...input,
+    eventKey: actionEventKey({ organizationId: input.organizationId, event: input.event }),
+  };
+}
+
+export function actionPlanAuditEvents(input: {
+  plan: MaterializedApprovalPlan;
+  authorizationEvidence?: AuthorizationEvidence;
+}): ActionEventRecord[] {
+  const { plan } = input;
+  const occurredAt = plan.evaluationSnapshot.evaluatedAt;
+  const received: ActionEvent = {
+    type: "action.received",
+    actionRequestId: plan.actionRequestId,
+    actor: plan.evaluationSnapshot.actor,
+    authority: plan.evaluationSnapshot.authority.principal,
+    ...(plan.evaluationSnapshot.origin.caller
+      ? { caller: plan.evaluationSnapshot.origin.caller }
+      : {}),
+    ...(plan.evaluationSnapshot.authority.delegation
+      ? { delegationChain: plan.evaluationSnapshot.authority.delegation.chain }
+      : {}),
+    actionFingerprint: plan.actionFingerprint,
+  };
+  const materialized: ActionEvent = {
+    type: "approval_plan.materialized",
+    actionRequestId: plan.actionRequestId,
+    evaluationSnapshotChecksum: plan.evaluationSnapshotChecksum,
+    approvalPlanChecksum: plan.approvalPlanChecksum,
+    interpreterSemanticsVersion: plan.interpreterSemanticsVersion,
+  };
+  return [
+    actionEventRecord({ organizationId: plan.organizationId, occurredAt, event: received }),
+    ...(input.authorizationEvidence
+      ? [
+          actionEventRecord({
+            organizationId: plan.organizationId,
+            occurredAt: input.authorizationEvidence.evaluatedAt,
+            event: {
+              type: "action.authorized",
+              actionRequestId: plan.actionRequestId,
+              evidence: input.authorizationEvidence,
+            },
+          }),
+        ]
+      : []),
+    actionEventRecord({ organizationId: plan.organizationId, occurredAt, event: materialized }),
+  ];
+}
+
+function findStep(flow: MaterializedFlow, materializedStepId: MaterializedStepId): MaterializedApprovalStep | null {
+  if (flow.type === "approval") {
+    return String(flow.materializedStepId) === String(materializedStepId) ? flow : null;
+  }
+  if (flow.type === "none") return null;
+  for (const child of flow.children) {
+    const found = findStep(child, materializedStepId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function taskByStep(state: ApprovalRuntimeState | null): Map<string, ApprovalTaskRuntimeState> {
+  return new Map((state?.tasks ?? []).map((task) => [String(task.materializedStepId), task]));
+}
+
+function closingActor(task: ApprovalTaskRuntimeState): UserId | undefined {
+  return task.decisions.at(-1)?.userId;
+}
+
+/**
+ * Derives domain events from an immutable before/after runtime transition.
+ * It deliberately records only semantic transitions, never the mutable
+ * projection itself, so the audit log remains replay-safe.
+ */
+export function actionRuntimeTransitionEvents(input: {
+  plan: MaterializedApprovalPlan;
+  previousState: ApprovalRuntimeState | null;
+  nextState: ApprovalRuntimeState;
+  workflowInstanceId?: string;
+}): ActionEventRecord[] {
+  const records: ActionEventRecord[] = [];
+  const previousTasks = taskByStep(input.previousState);
+
+  if (!input.previousState && input.workflowInstanceId) {
+    records.push(
+      actionEventRecord({
+        organizationId: input.plan.organizationId,
+        occurredAt: input.nextState.startedAt,
+        event: {
+          type: "workflow.started",
+          actionRequestId: input.plan.actionRequestId,
+          workflowInstanceId: input.workflowInstanceId,
+        },
+      }),
+    );
+  }
+
+  for (const task of input.nextState.tasks) {
+    const previous = previousTasks.get(String(task.materializedStepId));
+    const step = findStep(input.plan.flow, task.materializedStepId);
+    if (!step) continue;
+
+    if (!previous) {
+      records.push(
+        actionEventRecord({
+          organizationId: input.plan.organizationId,
+          occurredAt: task.activatedAt,
+          event: {
+            type: "step.activated",
+            actionRequestId: input.plan.actionRequestId,
+            materializedStepId: task.materializedStepId,
+            stepKey: step.stepKey,
+            ...(step.purpose ? { purpose: step.purpose } : {}),
+            target: task.target,
+          },
+        }),
+      );
+    }
+
+    if (previous?.status === task.status || task.status === "pending" || task.status === "cancelled") {
+      continue;
+    }
+    const occurredAt = task.closedAt ?? input.nextState.completedAt ?? input.nextState.startedAt;
+    if (task.status === "expired") {
+      records.push(
+        actionEventRecord({
+          organizationId: input.plan.organizationId,
+          occurredAt,
+          event: {
+            type: "step.expired",
+            actionRequestId: input.plan.actionRequestId,
+            materializedStepId: task.materializedStepId,
+            stepKey: step.stepKey,
+          },
+        }),
+      );
+      continue;
+    }
+
+    const actorId = closingActor(task);
+    if (!actorId) continue;
+    records.push(
+      actionEventRecord({
+        organizationId: input.plan.organizationId,
+        occurredAt,
+        event: {
+          type: task.status === "approved" ? "step.approved" : "step.rejected",
+          actionRequestId: input.plan.actionRequestId,
+          materializedStepId: task.materializedStepId,
+          stepKey: step.stepKey,
+          actorId,
+        },
+      }),
+    );
+  }
+
+  if (
+    input.previousState?.status !== input.nextState.status &&
+    (input.nextState.status === "rejected" || input.nextState.status === "expired")
+  ) {
+    records.push(
+      actionEventRecord({
+        organizationId: input.plan.organizationId,
+        occurredAt: input.nextState.completedAt ?? input.nextState.startedAt,
+        event: {
+          type: "action.completed",
+          actionRequestId: input.plan.actionRequestId,
+          result: input.nextState.status,
+        },
+      }),
+    );
+  }
+
+  return records;
 }
