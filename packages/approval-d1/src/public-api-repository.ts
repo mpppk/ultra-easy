@@ -171,6 +171,7 @@ function actionStatus(input: {
     if (input.runtime.status === "pending") return "pending_approval";
     if (input.runtime.status === "approved") return "approved";
     if (input.runtime.status === "rejected") return "rejected";
+    if (input.runtime.status === "cancelled") return "cancelled";
     return "expired";
   }
   return input.plan.flow.type === "none" ? "executing" : "pending_approval";

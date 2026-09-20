@@ -364,7 +364,9 @@ export function actionRuntimeTransitionEvents(input: {
 
   if (
     input.previousState?.status !== input.nextState.status &&
-    (input.nextState.status === "rejected" || input.nextState.status === "expired")
+    (input.nextState.status === "rejected" ||
+      input.nextState.status === "expired" ||
+      input.nextState.status === "cancelled")
   ) {
     records.push(
       actionEventRecord({
