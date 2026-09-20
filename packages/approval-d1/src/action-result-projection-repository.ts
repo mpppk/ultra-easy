@@ -9,7 +9,7 @@ import type {
   OrganizationId,
 } from "@app/approval-core";
 
-import { prepareActionEventInsert } from "./action-event-repository.ts";
+import { prepareActionEventPersistenceStatements } from "./action-event-repository.ts";
 import type {
   D1DatabaseLike,
   D1PreparedStatementLike,
@@ -154,11 +154,11 @@ export class D1ActionResultProjectionRepository {
 
     const statements: D1PreparedStatementLike[] = [resultStatement];
     for (const event of events) {
-      const statement = prepareActionEventInsert(this.db, event);
-      if (Result.isFailure(statement)) {
-        return Result.fail(repositoryError(statement.error, statement.error.message));
+      const prepared = prepareActionEventPersistenceStatements(this.db, event);
+      if (Result.isFailure(prepared)) {
+        return Result.fail(repositoryError(prepared.error, prepared.error.message));
       }
-      statements.push(statement.value);
+      statements.push(...prepared.value);
     }
 
     const saved = await Result.fn({
