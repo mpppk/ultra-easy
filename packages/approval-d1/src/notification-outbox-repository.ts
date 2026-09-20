@@ -115,8 +115,7 @@ const runStatement = Result.fn({
 });
 
 const firstUnknownRow = Result.fn({
-  try: async (statement: D1PreparedStatementLike): Promise<unknown> =>
-    statement.first<unknown>(),
+  try: async (statement: D1PreparedStatementLike): Promise<unknown> => statement.first<unknown>(),
   catch: (error): D1NotificationOutboxRepositoryError =>
     repositoryError(error, "notification outbox rowの取得に失敗しました"),
 });
