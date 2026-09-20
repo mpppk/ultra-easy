@@ -3,6 +3,7 @@ export type * from "./action-definition.ts";
 export * from "./action-event.ts";
 export * from "./action-execution.ts";
 export * from "./approver-resolver.ts";
+export * from "./attachment.ts";
 export * from "./authorization.ts";
 export * from "./builder.ts";
 export * from "./canonical-json.ts";
