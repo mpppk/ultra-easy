@@ -1,10 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import {
-  actionEventKey,
-  ActionEventRepositoryError,
-  canonicalizeJson,
-} from "@app/approval-core";
+import { actionEventKey, ActionEventRepositoryError, canonicalizeJson } from "@app/approval-core";
 import type {
   ActionEvent,
   ActionEventRecord,
@@ -183,9 +179,7 @@ export class D1ActionEventRepository implements ActionEventRepository {
     const saved = await runStatement(statement.value);
     if (Result.isFailure(saved)) return saved;
     if (!saved.value.success) {
-      return Result.fail(
-        repositoryError(saved.value.error, "Action eventのappendに失敗しました"),
-      );
+      return Result.fail(repositoryError(saved.value.error, "Action eventのappendに失敗しました"));
     }
     return Result.succeed((saved.value.meta?.changes ?? 0) > 0 ? "created" : "existing");
   }
@@ -215,7 +209,9 @@ export class D1ActionEventRepository implements ActionEventRepository {
       const saved = await runStatement(statement);
       if (Result.isFailure(saved)) return saved;
       if (!saved.value.success) {
-        return Result.fail(repositoryError(saved.value.error, "Action eventのappendに失敗しました"));
+        return Result.fail(
+          repositoryError(saved.value.error, "Action eventのappendに失敗しました"),
+        );
       }
     }
     return Result.succeed(undefined);
