@@ -1,6 +1,8 @@
 import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
+import { m7AttachmentFingerprintGolden } from "../golden/m7-attachment-fingerprint.ts";
+
 import {
   collectAttachmentReferences,
   computeActionFingerprint,
@@ -149,16 +151,15 @@ describe("M7 attachment integrity", () => {
     const result = await computeActionFingerprint(
       action(
         reference({
-          storageKey: "org:test/attachments/quote.pdf",
-          sha256: branded<Sha256Digest>(`sha256:${"1".repeat(64)}`),
-          size: 1234,
+          storageKey: m7AttachmentFingerprintGolden.attachment.storageKey,
+          sha256: branded<Sha256Digest>(m7AttachmentFingerprintGolden.attachment.sha256),
+          size: m7AttachmentFingerprintGolden.attachment.size,
+          contentType: m7AttachmentFingerprintGolden.attachment.contentType,
         }),
       ),
     );
     assert(Result.isSuccess(result));
-    expect(result.value).toBe(
-      "sha256:45ccaf3f5e5e2f6860a82d11613ea6fd6084a87fa307cb15a8ad598301f2eafc",
-    );
+    expect(result.value).toBe(m7AttachmentFingerprintGolden.expectedActionFingerprint);
   });
 
   it("AC-M7-006: cross-tenant metadataはaccess/readをfail closedする", async () => {
