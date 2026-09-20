@@ -29,6 +29,26 @@
       "entrypoint": "PreviewActionExecutor",
     },
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATION_QUEUE",
+        "queue": "ultra-easy-notifications-preview",
+      },
+    ],
+    "consumers": [
+      {
+        "queue": "ultra-easy-notifications-preview",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "ultra-easy-notifications-preview-dlq",
+      },
+    ],
+  },
+  "triggers": {
+    "crons": ["*/1 * * * *"],
+  },
   "workflows": [
     {
       "binding": "ACTION_WORKFLOW",
