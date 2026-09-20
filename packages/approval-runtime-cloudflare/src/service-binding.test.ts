@@ -41,11 +41,7 @@ class CaptureBinding implements ActionServiceBinding {
 describe("service-binding correlation", () => {
   it("AC-M7-007: Workflow→ActionAuthorizerへActionRequest correlation headerを伝播する", async () => {
     const binding = new CaptureBinding();
-    const authorizer = new ServiceBindingActionAuthorizer(
-      binding,
-      organizationId,
-      actionRequestId,
-    );
+    const authorizer = new ServiceBindingActionAuthorizer(binding, organizationId, actionRequestId);
 
     const result = await authorizer.check({
       request: createHumanActionRequest(),
