@@ -1,3 +1,4 @@
+import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -204,11 +205,11 @@ describe("M7 observability / log safety / rate limiting", () => {
       operation: "approval_decision.submit",
     });
 
-    assert(first.type === "success");
-    assert(sameScope.type === "success");
-    assert(otherTenant.type === "success");
-    assert(otherPrincipal.type === "success");
-    assert(otherOperation.type === "success");
+    assert(Result.isSuccess(first));
+    assert(Result.isSuccess(sameScope));
+    assert(Result.isSuccess(otherTenant));
+    assert(Result.isSuccess(otherPrincipal));
+    assert(Result.isSuccess(otherOperation));
     expect(first.value.allowed).toBe(true);
     expect(sameScope.value.allowed).toBe(false);
     expect(otherTenant.value.allowed).toBe(true);
