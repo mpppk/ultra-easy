@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { beforeAll, beforeEach, describe, expect, it, assert } from "vite-plus/test";
+import { assert, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
 
