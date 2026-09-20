@@ -372,7 +372,9 @@ export class D1PublishedActionDefinitionResolver implements ActionDefinitionReso
       .bind(this.organizationId, actionType)
       .first<ActionDefinitionRow>();
     if (!row) {
-      throw new Error(`Published Action Definitionが見つかりません: ${String(actionType)}`);
+      return Promise.reject(
+        new Error(`Published Action Definitionが見つかりません: ${String(actionType)}`),
+      );
     }
     return JSON.parse(row.definition_json) as ActionDefinition;
   }

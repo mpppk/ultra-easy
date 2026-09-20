@@ -294,8 +294,8 @@ function createHarness() {
     actionDefinitionResolver: {
       resolve(actionType) {
         const definition = definitions.get(String(actionType));
-        if (!definition) throw new Error("definition not found");
-        return definition;
+        expect(definition).toBeDefined();
+        return definition as ActionDefinition;
       },
     },
     schemaResolver: { resolve: () => schema },
@@ -417,7 +417,7 @@ describe("M7 governance acceptance", () => {
       action: first.value.plan.action,
       authorizationEvidence: {
         evaluatedAt: now,
-        consistency: "fully_consistent",
+        consistency: "higher_consistency",
       },
       actor: { type: "user", id: alice },
     } satisfies ActionExecutionRequest);
