@@ -36,9 +36,7 @@ function branded<T extends string>(value: string): T {
 const orgA = branded<OrganizationId>("org:a");
 const orgB = branded<OrganizationId>("org:b");
 
-function reference(
-  input: Partial<AttachmentReference> = {},
-): AttachmentReference {
+function reference(input: Partial<AttachmentReference> = {}): AttachmentReference {
   return {
     storageKey: input.storageKey ?? "org:a/attachments/quote.pdf",
     sha256:
@@ -129,9 +127,7 @@ describe("M7 attachment integrity", () => {
     const evaluationSnapshotChecksum = branded<EvaluationSnapshotChecksum>(
       `sha256:${"2".repeat(64)}`,
     );
-    const approvalPlanChecksum = branded<ApprovalPlanChecksum>(
-      `sha256:${"3".repeat(64)}`,
-    );
+    const approvalPlanChecksum = branded<ApprovalPlanChecksum>(`sha256:${"3".repeat(64)}`);
     const originalBinding = await computeApprovalBindingFingerprint({
       actionFingerprint: original.value,
       evaluationSnapshotChecksum,
