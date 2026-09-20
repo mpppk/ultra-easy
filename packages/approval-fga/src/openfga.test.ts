@@ -238,10 +238,13 @@ describe("OpenFGA adapters", () => {
       fetch: async (input) => {
         const url = requestUrl(input);
         if (url.endsWith("/list-users")) {
-          return new Response(JSON.stringify({ users: [{ object: { type: "user", id: "bob" } }] }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ users: [{ object: { type: "user", id: "bob" } }] }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
         }
         return new Response(JSON.stringify({ allowed: true }), {
           status: 200,
