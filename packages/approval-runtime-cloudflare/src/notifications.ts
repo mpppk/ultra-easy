@@ -48,7 +48,9 @@ const sendQueueMessage = Result.fn({
     message: NotificationQueueMessage;
   }): Promise<void> => input.queue.send(input.message),
   catch: (error): NotificationQueueSendError =>
-    new NotificationQueueSendError(error instanceof Error ? error.message : "Queue sendに失敗しました"),
+    new NotificationQueueSendError(
+      error instanceof Error ? error.message : "Queue sendに失敗しました",
+    ),
 });
 
 function repositoryConsumerError(
@@ -127,7 +129,9 @@ export async function consumeNotificationMessage(input: {
   }
 
   const recipients = await input.repository.resolveRecipients(entry.value);
-  if (Result.isFailure(recipients)) return Result.fail(repositoryConsumerError(recipients.error));
+  if (Result.isFailure(recipients)) {
+    return Result.fail(repositoryConsumerError(recipients.error));
+  }
 
   let delivered = 0;
   let skipped = 0;
@@ -137,7 +141,9 @@ export async function consumeNotificationMessage(input: {
       recipientUserId,
       now: input.now,
     });
-    if (Result.isFailure(delivery)) return Result.fail(repositoryConsumerError(delivery.error));
+    if (Result.isFailure(delivery)) {
+      return Result.fail(repositoryConsumerError(delivery.error));
+    }
     if (delivery.value.status === "sent") {
       skipped += 1;
       continue;
@@ -157,7 +163,9 @@ export async function consumeNotificationMessage(input: {
         failedAt: input.now,
         error: sent.error.message,
       });
-      if (Result.isFailure(marked)) return Result.fail(repositoryConsumerError(marked.error));
+      if (Result.isFailure(marked)) {
+        return Result.fail(repositoryConsumerError(marked.error));
+      }
       return Result.fail(
         new NotificationConsumerError(sent.error.code, sent.error.retriable, sent.error.message),
       );
@@ -169,7 +177,9 @@ export async function consumeNotificationMessage(input: {
       recipientUserId,
       sentAt: input.now,
     });
-    if (Result.isFailure(marked)) return Result.fail(repositoryConsumerError(marked.error));
+    if (Result.isFailure(marked)) {
+      return Result.fail(repositoryConsumerError(marked.error));
+    }
     delivered += 1;
   }
 
