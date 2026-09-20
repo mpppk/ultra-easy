@@ -273,6 +273,7 @@ async function reauthorizeStep(input: {
     authorizer: new ServiceBindingActionAuthorizer(
       input.env.ACTION_AUTHORIZER,
       loaded.plan.organizationId,
+      loaded.plan.actionRequestId,
     ),
     request: requestFromPlan(loaded.plan),
     evaluatedAt: input.evaluatedAt,
