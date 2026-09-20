@@ -131,3 +131,13 @@ export const DEFAULT_ACTION_REQUEST_RATE_LIMIT: RateLimitPolicy = {
   limit: 60,
   windowSeconds: 60,
 };
+
+export const DEFAULT_APPROVAL_DECISION_RATE_LIMIT: RateLimitPolicy = {
+  limit: 30,
+  windowSeconds: 60,
+};
+
+export const DEFAULT_MCP_TOOL_CALL_RATE_LIMIT: RateLimitPolicy = {
+  limit: 60,
+  windowSeconds: 60,
+};
