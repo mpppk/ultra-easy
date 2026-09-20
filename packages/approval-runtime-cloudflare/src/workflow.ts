@@ -7,6 +7,7 @@ import {
   actionEventRecord,
   actionRuntimeTransitionEvents,
   advanceApprovalRuntime,
+  ConsoleTelemetrySink,
   ApproverResolverProviderError,
   expireApprovalRuntime,
   nextApprovalRuntimeExpiry,
@@ -37,6 +38,12 @@ import {
   type ActionExecutionTerminalStatus,
   type ActionExecutionWorkflowEnv,
 } from "./action-execution.ts";
+import {
+  emitActionSliSnapshot,
+  emitDomainEventTelemetry,
+  emitWorkflowFailure,
+  emitWorkflowRetry,
+} from "./telemetry.ts";
 
 export type ActionWorkflowParams = {
   organizationId: OrganizationId;
@@ -196,13 +203,19 @@ function loadFailure(
   };
 }
 
-function resolverFor(env: ActionWorkflowEnv, organizationId: OrganizationId): ApproverResolver {
+function resolverFor(
+  env: ActionWorkflowEnv,
+  organizationId: OrganizationId,
+  actionRequestId: ActionRequestId,
+): ApproverResolver {
   return new OpenFgaApproverResolver(
     new OpenFgaClient({
       apiUrl: env.OPENFGA_API_URL,
       storeId: env.OPENFGA_STORE_ID,
       authorizationModelId: env.OPENFGA_AUTHORIZATION_MODEL_ID,
       organizationId,
+      actionRequestId,
+      telemetry: new ConsoleTelemetrySink(),
       ...(env.OPENFGA_ASSUME_LIST_USERS_COMPLETE === "true"
         ? { listUsersCompleteness: "assume_complete" as const }
         : {}),
@@ -228,7 +241,9 @@ async function persistProjection(input: {
     state: input.state,
     events,
   });
-  return Result.isFailure(stored) ? retry(stored.error) : { type: "advanced", state: input.state };
+  if (Result.isFailure(stored)) return retry(stored.error);
+  emitDomainEventTelemetry(new ConsoleTelemetrySink(), events);
+  return { type: "advanced", state: input.state };
 }
 
 async function initializeRuntime(
@@ -247,7 +262,7 @@ async function initializeRuntime(
 
   const started = await startApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     startedAt,
   });
   if (Result.isFailure(started)) return interpreterFailure(started.error);
@@ -276,7 +291,7 @@ async function recordDecision(
 
   const recorded = await recordApprovalDecision({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     state,
     event,
   });
@@ -305,7 +320,7 @@ async function advanceRuntime(
 
   const advanced = await advanceApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     state,
     now,
   });
@@ -334,7 +349,7 @@ async function expireRuntime(
 
   const expired = await expireApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     state,
     now,
   });
@@ -350,11 +365,21 @@ async function expireRuntime(
 async function runRuntimeStep(
   step: WorkflowStep,
   name: string,
+  params: ActionWorkflowParams,
   callback: () => Promise<RuntimeTransition>,
 ): Promise<RuntimeStepResult> {
   return step.do(name, async () => {
     const transition = await callback();
-    if (transition.type === "retry") return Promise.reject(transition.error);
+    if (transition.type === "retry") {
+      emitWorkflowRetry({
+        telemetry: new ConsoleTelemetrySink(),
+        organizationId: params.organizationId,
+        actionRequestId: params.actionRequestId,
+        operation: name,
+        errorCode: errorCode(transition.error),
+      });
+      return Promise.reject(transition.error);
+    }
     return transition;
   });
 }
@@ -389,6 +414,13 @@ function outputFromTransition(
   params: ActionWorkflowParams,
   transition: RuntimeFailure,
 ): ActionWorkflowOutput {
+  emitWorkflowFailure({
+    telemetry: new ConsoleTelemetrySink(),
+    organizationId: params.organizationId,
+    actionRequestId: params.actionRequestId,
+    operation: "approval_runtime",
+    errorCode: transition.code,
+  });
   return {
     type: "failed",
     actionRequestId: params.actionRequestId,
@@ -527,6 +559,14 @@ async function projectActionResult(input: {
       new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
     );
   }
+  const telemetry = new ConsoleTelemetrySink();
+  emitDomainEventTelemetry(telemetry, events);
+  await emitActionSliSnapshot({
+    db: input.env.DB,
+    organizationId: loaded.plan.organizationId,
+    actionRequestId: loaded.plan.actionRequestId,
+    telemetry,
+  });
   return Result.succeed(undefined);
 }
 
@@ -547,7 +587,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     }
 
     let logicalNow = event.timestamp.toISOString();
-    const initialized = await runRuntimeStep(step, "initialize approval runtime", () =>
+    const initialized = await runRuntimeStep(step, "initialize approval runtime", params, () =>
       initializeRuntime(this.env, params, logicalNow, event.instanceId),
     );
     if (initialized.type === "failed") return outputFromTransition(params, initialized);
@@ -557,8 +597,11 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     while (state.status === "pending") {
       const nextExpiry = nextApprovalRuntimeExpiry(state);
       if (nextExpiry && Date.parse(nextExpiry) <= Date.parse(logicalNow)) {
-        const expired = await runRuntimeStep(step, `expire approval runtime ${iteration}`, () =>
-          expireRuntime(this.env, params, state, nextExpiry),
+        const expired = await runRuntimeStep(
+          step,
+          `expire approval runtime ${iteration}`,
+          params,
+          () => expireRuntime(this.env, params, state, nextExpiry),
         );
         if (expired.type === "failed") return outputFromTransition(params, expired);
         state = expired.state;
@@ -573,11 +616,23 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         name: `wait for approval decision ${iteration}`,
         timeout: timeout.timeout,
       });
-      if (decision.type === "control_flow") return Promise.reject(decision.error);
+      if (decision.type === "control_flow") {
+        emitWorkflowFailure({
+          telemetry: new ConsoleTelemetrySink(),
+          organizationId: params.organizationId,
+          actionRequestId: params.actionRequestId,
+          operation: "wait_for_approval_decision",
+          errorCode: errorName(decision.error) ?? "workflow_control_flow_error",
+        });
+        return Promise.reject(decision.error);
+      }
       if (decision.type === "timeout") {
         if (nextExpiry) {
-          const expired = await runRuntimeStep(step, `expire approval runtime ${iteration}`, () =>
-            expireRuntime(this.env, params, state, nextExpiry),
+          const expired = await runRuntimeStep(
+            step,
+            `expire approval runtime ${iteration}`,
+            params,
+            () => expireRuntime(this.env, params, state, nextExpiry),
           );
           if (expired.type === "failed") return outputFromTransition(params, expired);
           state = expired.state;
@@ -589,15 +644,21 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         continue;
       }
 
-      const recorded = await runRuntimeStep(step, `record approval decision ${iteration}`, () =>
-        recordDecision(this.env, params, state, decision.event),
+      const recorded = await runRuntimeStep(
+        step,
+        `record approval decision ${iteration}`,
+        params,
+        () => recordDecision(this.env, params, state, decision.event),
       );
       if (recorded.type === "failed") return outputFromTransition(params, recorded);
       state = recorded.state;
       logicalNow = decision.event.decidedAt;
 
-      const advanced = await runRuntimeStep(step, `activate approval runtime ${iteration}`, () =>
-        advanceRuntime(this.env, params, state, logicalNow),
+      const advanced = await runRuntimeStep(
+        step,
+        `activate approval runtime ${iteration}`,
+        params,
+        () => advanceRuntime(this.env, params, state, logicalNow),
       );
       if (advanced.type === "failed") return outputFromTransition(params, advanced);
       state = advanced.state;
@@ -605,6 +666,14 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     }
 
     if (state.status !== "approved" || this.env.ACTION_EXECUTION_MODE === "approval_only") {
+      if (state.status !== "approved") {
+        await emitActionSliSnapshot({
+          db: this.env.DB,
+          organizationId: params.organizationId,
+          actionRequestId: params.actionRequestId,
+          telemetry: new ConsoleTelemetrySink(),
+        });
+      }
       return {
         type: "completed",
         actionRequestId: params.actionRequestId,
@@ -619,6 +688,13 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       evaluatedAt: logicalNow,
     });
     if (execution.type === "failed") {
+      emitWorkflowFailure({
+        telemetry: new ConsoleTelemetrySink(),
+        organizationId: params.organizationId,
+        actionRequestId: params.actionRequestId,
+        operation: "action_execution",
+        errorCode: execution.code,
+      });
       return {
         type: "failed",
         actionRequestId: params.actionRequestId,
@@ -640,6 +716,13 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         return { type: "projected" } as const;
       });
     } catch (error) {
+      emitWorkflowFailure({
+        telemetry: new ConsoleTelemetrySink(),
+        organizationId: params.organizationId,
+        actionRequestId: params.actionRequestId,
+        operation: "project_action_result",
+        errorCode: "execution_projection_failed",
+      });
       return {
         type: "failed",
         actionRequestId: params.actionRequestId,

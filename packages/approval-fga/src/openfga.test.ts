@@ -1,7 +1,9 @@
 import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
+import { MemoryTelemetrySink } from "@app/approval-core";
 import type {
+  ActionRequestId,
   AuthorizationObjectRef,
   OrganizationId,
   RelationName,
@@ -56,6 +58,7 @@ function relationTarget(): ResolvedApproverTarget {
 
 const organizationId = branded<OrganizationId>("organization:tenant-a");
 const otherOrganizationId = branded<OrganizationId>("organization:tenant-b");
+const telemetryActionRequestId = branded<ActionRequestId>("action:fga-telemetry");
 
 describe("OpenFGA adapters", () => {
   it("ActionAuthorizerはAction relationをCheckしconsistencyを伝播する", async () => {
@@ -220,5 +223,103 @@ describe("OpenFGA adapters", () => {
     expect(requestBody(requests, 1)).toMatchObject({
       tuple_key: { object: "ticket:organization%3Atenant-b/TICKET-1" },
     });
+  });
+
+  it("AC-M7-007/008: Check/ListUsers latencyとerrorをActionRequest correlation付きで計測する", async () => {
+    const telemetry = new MemoryTelemetrySink();
+    const client = new OpenFgaClient({
+      apiUrl: "https://fga.example",
+      storeId: "store-1",
+      authorizationModelId: "model-1",
+      organizationId,
+      actionRequestId: telemetryActionRequestId,
+      telemetry,
+      listUsersCompleteness: "assume_complete",
+      fetch: async (input) => {
+        const url = requestUrl(input);
+        if (url.endsWith("/list-users")) {
+          return new Response(
+            JSON.stringify({ users: [{ object: { type: "user", id: "bob" } }] }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        return new Response(JSON.stringify({ allowed: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const checked = await client.check({
+      user: "user:alice",
+      relation: "viewer",
+      object: "ticket:TICKET-1",
+      consistency: "higher_consistency",
+    });
+    const listed = await client.listUsers({
+      object: branded<AuthorizationObjectRef>("ticket:TICKET-1"),
+      relation: branded<RelationName>("viewer"),
+      consistency: "higher_consistency",
+    });
+    assert(Result.isSuccess(checked));
+    assert(Result.isSuccess(listed));
+
+    expect(telemetry.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "metric",
+          name: "fga.check_latency_ms",
+          correlation: expect.objectContaining({
+            correlationId: String(telemetryActionRequestId),
+            component: "fga",
+            operation: "check",
+          }),
+        }),
+        expect.objectContaining({
+          kind: "metric",
+          name: "fga.list_users_latency_ms",
+          correlation: expect.objectContaining({
+            correlationId: String(telemetryActionRequestId),
+            component: "fga",
+            operation: "list_users",
+          }),
+        }),
+      ]),
+    );
+
+    const errorTelemetry = new MemoryTelemetrySink();
+    const failing = new OpenFgaClient({
+      apiUrl: "https://fga.example",
+      storeId: "store-1",
+      authorizationModelId: "model-1",
+      organizationId,
+      actionRequestId: telemetryActionRequestId,
+      telemetry: errorTelemetry,
+      fetch: async () => new Response("unavailable", { status: 503 }),
+    });
+    const failed = await failing.check({
+      user: "user:alice",
+      relation: "viewer",
+      object: "ticket:TICKET-1",
+      consistency: "higher_consistency",
+    });
+    assert(Result.isFailure(failed));
+    expect(errorTelemetry.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "metric",
+          name: "fga.error_total",
+          value: 1,
+          correlation: expect.objectContaining({
+            correlationId: String(telemetryActionRequestId),
+            component: "fga",
+          }),
+          attributes: { errorCode: "http_error" },
+        }),
+      ]),
+    );
   });
 });

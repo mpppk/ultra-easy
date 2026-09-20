@@ -1,6 +1,18 @@
 import { Result } from "@praha/byethrow";
 
-import type { Action, ActionRequestId, OrganizationId } from "@app/approval-core";
+import {
+  DEFAULT_MCP_TOOL_CALL_RATE_LIMIT,
+  actionCorrelation,
+  safeLogRecord,
+} from "@app/approval-core";
+import type {
+  Action,
+  ActionRequestId,
+  OrganizationId,
+  RateLimiter,
+  RateLimitPolicy,
+  TelemetrySink,
+} from "@app/approval-core";
 import type {
   ActionRequestApplicationService,
   ActionRequestSubmitResult,
@@ -11,6 +23,7 @@ import type {
 
 export const MCP_TASKS_EXTENSION = "io.modelcontextprotocol/tasks" as const;
 export const MCP_MISSING_REQUIRED_CLIENT_CAPABILITY = -32021 as const;
+export const MCP_RATE_LIMITED = -32029 as const;
 
 export type McpExtensions = Record<string, Record<string, unknown>>;
 
@@ -108,6 +121,24 @@ type ActionRequestReader = Pick<ApprovalReadRepository, "getActionRequest">;
 
 function supportsTasks(extensions: McpExtensions | undefined): boolean {
   return extensions?.[MCP_TASKS_EXTENSION] !== undefined;
+}
+
+function rateLimitedError(input: {
+  retryAfterSeconds: number;
+  limit: number;
+  remaining: number;
+  resetAt: string;
+}): McpProtocolError {
+  return {
+    code: MCP_RATE_LIMITED,
+    message: "Too Many Requests",
+    data: {
+      retryAfterSeconds: input.retryAfterSeconds,
+      limit: input.limit,
+      remaining: input.remaining,
+      resetAt: input.resetAt,
+    },
+  };
 }
 
 function requiredTasksCapabilityError(): McpProtocolError {
@@ -235,6 +266,9 @@ export class ApprovalMcpAdapter {
       taskIdGenerator: McpTaskIdGenerator;
       clock: McpClock;
       pollIntervalMs?: number;
+      rateLimiter?: RateLimiter;
+      rateLimitPolicy?: RateLimitPolicy;
+      telemetry?: TelemetrySink;
     },
   ) {}
 
@@ -256,6 +290,22 @@ export class ApprovalMcpAdapter {
       return { type: "error", error: internalError(trustedContext.error) };
     }
 
+    if (this.dependencies.rateLimiter) {
+      const limited = await this.dependencies.rateLimiter.consume({
+        organizationId: input.organizationId,
+        principal: trustedContext.value.actor,
+        operation: "mcp.tools.call",
+        policy: this.dependencies.rateLimitPolicy ?? DEFAULT_MCP_TOOL_CALL_RATE_LIMIT,
+        now: trustedContext.value.now,
+      });
+      if (Result.isFailure(limited)) {
+        return { type: "error", error: internalError(limited.error) };
+      }
+      if (!limited.value.allowed) {
+        return { type: "error", error: rateLimitedError(limited.value) };
+      }
+    }
+
     const submitted = await this.dependencies.applicationService.submit({
       action: action.value,
       trustedContext: trustedContext.value,
@@ -264,8 +314,35 @@ export class ApprovalMcpAdapter {
       return { type: "error", error: internalError(submitted.error) };
     }
     if (submitted.value.type === "authorization_denied") {
+      this.dependencies.telemetry?.emit(
+        safeLogRecord({
+          level: "warn",
+          event: "request.denied",
+          correlation: actionCorrelation({
+            organizationId: input.organizationId,
+            actionRequestId: submitted.value.actionRequestId,
+            component: "mcp",
+            operation: "tools.call",
+          }),
+          attributes: { errorCode: submitted.value.code, status: "authorization_denied" },
+        }),
+      );
       return { type: "result", result: deniedResult(submitted.value) };
     }
+
+    this.dependencies.telemetry?.emit(
+      safeLogRecord({
+        level: "info",
+        event: "request.accepted",
+        correlation: actionCorrelation({
+          organizationId: input.organizationId,
+          actionRequestId: submitted.value.actionRequestId,
+          component: "mcp",
+          operation: "tools.call",
+        }),
+        attributes: { status: submitted.value.view.status },
+      }),
+    );
 
     if (submitted.value.view.status !== "pending_approval") {
       return {

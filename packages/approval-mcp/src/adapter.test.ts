@@ -1,6 +1,7 @@
 import { Result } from "@praha/byethrow";
 import { describe, expect, it } from "vite-plus/test";
 
+import { InMemoryFixedWindowRateLimiter, MemoryTelemetrySink } from "@app/approval-core";
 import type {
   Action,
   ActionRequestId,
@@ -21,6 +22,7 @@ import {
   ApprovalMcpAdapter,
   InMemoryMcpTaskProjectionRepository,
   MCP_MISSING_REQUIRED_CLIENT_CAPABILITY,
+  MCP_RATE_LIMITED,
   MCP_TASKS_EXTENSION,
 } from "./index.ts";
 
@@ -83,7 +85,13 @@ function accepted(status: ActionRequestView["status"]) {
   };
 }
 
-function harness(status: ActionRequestView["status"] = "executed") {
+function harness(
+  status: ActionRequestView["status"] = "executed",
+  options: {
+    rateLimitPolicy?: { limit: number; windowSeconds: number };
+    telemetry?: MemoryTelemetrySink;
+  } = {},
+) {
   const submissions: Array<Parameters<ActionRequestApplicationService["submit"]>[0]> = [];
   const mappings: Array<{ name: string; arguments?: Record<string, unknown> }> = [];
   let currentView = view(status);
@@ -123,6 +131,13 @@ function harness(status: ActionRequestView["status"] = "executed") {
     taskIdGenerator: { next: () => "task:mcp:1" },
     clock: { now: () => "2026-09-19T00:00:01.000Z" },
     pollIntervalMs: 5000,
+    ...(options.rateLimitPolicy
+      ? {
+          rateLimiter: new InMemoryFixedWindowRateLimiter(),
+          rateLimitPolicy: options.rateLimitPolicy,
+        }
+      : {}),
+    ...(options.telemetry ? { telemetry: options.telemetry } : {}),
   });
 
   return {
@@ -262,5 +277,63 @@ describe("M6-4 MCP adapter", () => {
       type: "error",
       error: { code: -32602 },
     });
+  });
+
+  it("AC-M7-007/009: MCP telemetryはActionRequest IDで相関しtool argumentsをログへ出さない", async () => {
+    const telemetry = new MemoryTelemetrySink();
+    const value = harness("executed", { telemetry });
+
+    const result = await value.adapter.callTool({
+      organizationId,
+      toolCall: {
+        name: "ticket_set_priority",
+        arguments: { priority: "critical", secret: "DO-NOT-LOG" },
+      },
+    });
+
+    expect(result.type).toBe("result");
+    expect(telemetry.records).toHaveLength(1);
+    expect(telemetry.records[0]).toMatchObject({
+      kind: "log",
+      event: "request.accepted",
+      correlation: {
+        organizationId,
+        actionRequestId,
+        correlationId: String(actionRequestId),
+        component: "mcp",
+        operation: "tools.call",
+      },
+    });
+    expect(JSON.stringify(telemetry.records)).not.toContain("DO-NOT-LOG");
+    expect(JSON.stringify(telemetry.records)).not.toContain("critical");
+  });
+
+  it("AC-M7 rate limit: MCP tools/call超過は-32029とretry metadataを返す", async () => {
+    const value = harness("executed", {
+      rateLimitPolicy: { limit: 1, windowSeconds: 60 },
+    });
+
+    const first = await value.adapter.callTool({
+      organizationId,
+      toolCall: { name: "ticket_set_priority", arguments: { priority: "critical" } },
+    });
+    const limited = await value.adapter.callTool({
+      organizationId,
+      toolCall: { name: "ticket_set_priority", arguments: { priority: "critical" } },
+    });
+
+    expect(first.type).toBe("result");
+    expect(limited).toMatchObject({
+      type: "error",
+      error: {
+        code: MCP_RATE_LIMITED,
+        data: {
+          retryAfterSeconds: 60,
+          limit: 1,
+          remaining: 0,
+        },
+      },
+    });
+    expect(value.submissions).toHaveLength(1);
   });
 });

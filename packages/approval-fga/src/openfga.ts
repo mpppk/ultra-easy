@@ -1,10 +1,16 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
-import { ApproverResolverProviderError, AuthorizationProviderError } from "@app/approval-core";
+import {
+  ApproverResolverProviderError,
+  AuthorizationProviderError,
+  actionCorrelation,
+  metricRecord,
+} from "@app/approval-core";
 import type {
   ActionAuthorizer,
   ActionRequest,
+  ActionRequestId,
   ActionType,
   ApproverCandidateList,
   ApproverResolver,
@@ -14,6 +20,7 @@ import type {
   OrganizationId,
   RelationName,
   ResolvedApproverTarget,
+  TelemetrySink,
   UserId,
 } from "@app/approval-core";
 
@@ -101,6 +108,8 @@ export type OpenFgaClientOptions = {
    * bounded model等で外部から完全性を保証できる場合のみ明示する。
    */
   listUsersCompleteness?: OpenFgaListUsersCompleteness;
+  actionRequestId?: ActionRequestId;
+  telemetry?: TelemetrySink;
 };
 
 function normalizeBaseUrl(value: string): string {
@@ -143,6 +152,8 @@ export class OpenFgaClient {
   private readonly token?: string;
   private readonly fetchImplementation: typeof globalThis.fetch;
   private readonly listUsersCompleteness?: OpenFgaListUsersCompleteness;
+  private readonly actionRequestId?: ActionRequestId;
+  private readonly telemetry?: TelemetrySink;
 
   constructor(options: OpenFgaClientOptions) {
     this.apiUrl = normalizeBaseUrl(options.apiUrl);
@@ -152,6 +163,41 @@ export class OpenFgaClient {
     this.token = options.token;
     this.fetchImplementation = options.fetch ?? globalThis.fetch;
     this.listUsersCompleteness = options.listUsersCompleteness;
+    this.actionRequestId = options.actionRequestId;
+    this.telemetry = options.telemetry;
+  }
+
+  private emitObservation(
+    operation: "check" | "list_users",
+    startedAt: number,
+    errorCode?: string,
+  ): void {
+    if (!this.telemetry || !this.actionRequestId) return;
+    const correlation = actionCorrelation({
+      organizationId: this.organizationId,
+      actionRequestId: this.actionRequestId,
+      component: "fga",
+      operation,
+    });
+    this.telemetry.emit(
+      metricRecord({
+        name: operation === "check" ? "fga.check_latency_ms" : "fga.list_users_latency_ms",
+        value: Math.max(0, Date.now() - startedAt),
+        unit: "milliseconds",
+        correlation,
+      }),
+    );
+    if (errorCode) {
+      this.telemetry.emit(
+        metricRecord({
+          name: "fga.error_total",
+          value: 1,
+          unit: "count",
+          correlation,
+          attributes: { errorCode },
+        }),
+      );
+    }
   }
 
   private async postResponse(
@@ -215,6 +261,7 @@ export class OpenFgaClient {
     context?: Record<string, unknown>;
     consistency: AuthorizationConsistency;
   }): Result.ResultAsync<boolean, OpenFgaRequestError> {
+    const startedAt = Date.now();
     const response = await this.postJsonObject(
       `/stores/${encodeURIComponent(this.storeId)}/check`,
       {
@@ -228,16 +275,20 @@ export class OpenFgaClient {
         consistency: consistencyValue(input.consistency),
       },
     );
-    if (Result.isFailure(response)) return response;
-    if (!("allowed" in response.value) || typeof response.value.allowed !== "boolean") {
-      return Result.fail(
-        new OpenFgaRequestError({
-          code: "invalid_check_response",
-          detail: "Check responseにboolean allowedがありません",
-          retriable: false,
-        }),
-      );
+    if (Result.isFailure(response)) {
+      this.emitObservation("check", startedAt, response.error.code);
+      return response;
     }
+    if (!("allowed" in response.value) || typeof response.value.allowed !== "boolean") {
+      const error = new OpenFgaRequestError({
+        code: "invalid_check_response",
+        detail: "Check responseにboolean allowedがありません",
+        retriable: false,
+      });
+      this.emitObservation("check", startedAt, error.code);
+      return Result.fail(error);
+    }
+    this.emitObservation("check", startedAt);
     return Result.succeed(response.value.allowed);
   }
 
@@ -247,6 +298,7 @@ export class OpenFgaClient {
     context?: Record<string, unknown>;
     consistency: AuthorizationConsistency;
   }): Result.ResultAsync<ApproverCandidateList, OpenFgaRequestError> {
+    const startedAt = Date.now();
     const object = parseObjectRef(
       tenantScopedOpenFgaObject(this.organizationId, String(input.object)),
     );
@@ -270,15 +322,18 @@ export class OpenFgaClient {
         consistency: consistencyValue(input.consistency),
       },
     );
-    if (Result.isFailure(response)) return response;
+    if (Result.isFailure(response)) {
+      this.emitObservation("list_users", startedAt, response.error.code);
+      return response;
+    }
     if (!("users" in response.value) || !Array.isArray(response.value.users)) {
-      return Result.fail(
-        new OpenFgaRequestError({
-          code: "invalid_list_users_response",
-          detail: "ListUsers responseにusers配列がありません",
-          retriable: false,
-        }),
-      );
+      const error = new OpenFgaRequestError({
+        code: "invalid_list_users_response",
+        detail: "ListUsers responseにusers配列がありません",
+        retriable: false,
+      });
+      this.emitObservation("list_users", startedAt, error.code);
+      return Result.fail(error);
     }
 
     const userIds: UserId[] = [];
@@ -307,6 +362,7 @@ export class OpenFgaClient {
         : typeof this.listUsersCompleteness === "function"
           ? this.listUsersCompleteness(response.value)
           : false;
+    this.emitObservation("list_users", startedAt);
     return Result.succeed({ userIds, complete: concreteUsersOnly && configuredComplete });
   }
 
