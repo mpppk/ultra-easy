@@ -1,3 +1,5 @@
+import { Result } from "@praha/byethrow";
+
 import type { AuthorizationEvidence } from "./authorization.ts";
 import type {
   ActionFingerprint,
@@ -132,6 +134,28 @@ export type ActionEventRecord = {
   occurredAt: string;
   event: ActionEvent;
 };
+
+export class ActionEventRepositoryError extends Error {
+  readonly name = "ActionEventRepositoryError";
+
+  constructor(
+    readonly code: string,
+    readonly retriable: boolean,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export interface ActionEventRepository {
+  appendMany(
+    records: readonly ActionEventRecord[],
+  ): Result.ResultAsync<void, ActionEventRepositoryError>;
+  listForAction(input: {
+    organizationId: OrganizationId;
+    actionRequestId: ActionRequestId;
+  }): Result.ResultAsync<ActionEventRecord[], ActionEventRepositoryError>;
+}
 
 function eventDiscriminator(event: ActionEvent): string {
   switch (event.type) {
