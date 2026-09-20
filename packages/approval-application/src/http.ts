@@ -1,6 +1,10 @@
 import { Result } from "@praha/byethrow";
 
-import { DEFAULT_ACTION_REQUEST_RATE_LIMIT } from "@app/approval-core";
+import {
+  DEFAULT_ACTION_REQUEST_RATE_LIMIT,
+  actionCorrelation,
+  safeLogRecord,
+} from "@app/approval-core";
 import type {
   Action,
   ActionType,
@@ -8,6 +12,7 @@ import type {
   RateLimiter,
   RateLimitPolicy,
   ResourceId,
+  TelemetrySink,
   ResourceType,
 } from "@app/approval-core";
 
@@ -178,6 +183,7 @@ export function createActionRequestHttpApi(input: {
   trustedContextProvider: HttpTrustedContextProvider;
   rateLimiter?: RateLimiter;
   rateLimitPolicy?: RateLimitPolicy;
+  telemetry?: TelemetrySink;
 }): { fetch(request: Request): Promise<Response> } {
   return {
     async fetch(request: Request): Promise<Response> {
@@ -262,6 +268,19 @@ export function createActionRequestHttpApi(input: {
         return actionRequestApplicationErrorResponse(submitted.error);
 
       if (submitted.value.type === "authorization_denied") {
+        input.telemetry?.emit(
+          safeLogRecord({
+            level: "warn",
+            event: "request.denied",
+            correlation: actionCorrelation({
+              organizationId,
+              actionRequestId: submitted.value.actionRequestId,
+              component: "http",
+              operation: "action_request.submit",
+            }),
+            attributes: { errorCode: submitted.value.code, status: "authorization_denied" },
+          }),
+        );
         return actionRequestProblem({
           status: 403,
           code: submitted.value.code,
@@ -270,6 +289,20 @@ export function createActionRequestHttpApi(input: {
           actionRequestId: String(submitted.value.actionRequestId),
         });
       }
+
+      input.telemetry?.emit(
+        safeLogRecord({
+          level: "info",
+          event: "request.accepted",
+          correlation: actionCorrelation({
+            organizationId,
+            actionRequestId: submitted.value.actionRequestId,
+            component: "http",
+            operation: "action_request.submit",
+          }),
+          attributes: { status: submitted.value.view.status },
+        }),
+      );
 
       return actionRequestJson(submitted.value.view, {
         status: 201,
