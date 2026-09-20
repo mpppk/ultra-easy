@@ -17,7 +17,10 @@ jobs:
       - name: Install dependencies
         run: vp install
       - name: Check
-        run: vp check
+        run: |
+          vp check --fix
+          git diff -- packages/approval-core/src/action-event.ts packages/approval-d1/src/action-event-repository.ts packages/approval-d1/src/action-result-projection-repository.ts packages/approval-d1/src/approval-runtime-projection-repository.integration.test.ts packages/approval-runtime-cloudflare/src/workflow.integration.test.ts packages/approval-runtime-cloudflare/src/workflow.ts
+          exit 1
       - name: Build Web Preview
         run: vp -C apps/web run build:preview
       - name: Dry-run Approval Runtime Preview
