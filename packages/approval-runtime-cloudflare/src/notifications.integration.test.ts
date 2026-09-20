@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
 
 import {
+  MemoryTelemetrySink,
   NotificationSinkError,
   actionEventRecord,
   type ActionFingerprint,
@@ -97,11 +98,13 @@ describe("notification outbox Queue integration", () => {
     await seedCompletedNotification();
     const repository = new D1NotificationOutboxRepository(testEnv.DB);
     const queue = new RetryQueue();
+    const telemetry = new MemoryTelemetrySink();
 
     const first = await dispatchNotificationOutbox({
       repository,
       queue,
       now: "2026-09-20T08:02:00.000Z",
+      telemetry,
     });
     assert(Result.isSuccess(first));
     expect(first.value).toEqual({ attempted: 1, dispatched: 0, failed: 1 });
@@ -114,10 +117,32 @@ describe("notification outbox Queue integration", () => {
       repository,
       queue,
       now: "2026-09-20T08:03:00.000Z",
+      telemetry,
     });
     assert(Result.isSuccess(second));
     expect(second.value).toEqual({ attempted: 1, dispatched: 1, failed: 0 });
     expect(queue.messages).toHaveLength(1);
+    expect(queue.messages[0]).toMatchObject({
+      organizationId,
+      actionRequestId,
+    });
+    expect(telemetry.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "metric",
+          name: "outbox.failure_total",
+          value: 1,
+          correlation: expect.objectContaining({
+            correlationId: String(actionRequestId),
+            component: "outbox",
+          }),
+        }),
+        expect.objectContaining({
+          kind: "metric",
+          name: "outbox.backlog",
+        }),
+      ]),
+    );
   });
 
   it("AC-M7-004: consumer redeliveryは同じrecipient idempotency keyを再利用しsent後はskipする", async () => {
@@ -134,12 +159,14 @@ describe("notification outbox Queue integration", () => {
     assert(Result.isSuccess(dispatched));
     const message = queue.messages[0]!;
     const sink = new RetrySink();
+    const telemetry = new MemoryTelemetrySink();
 
     const first = await consumeNotificationMessage({
       repository,
       sink,
       message,
       now: "2026-09-20T08:03:00.000Z",
+      telemetry,
     });
     assert(Result.isFailure(first));
     expect(first.error.retriable).toBe(true);
@@ -149,6 +176,7 @@ describe("notification outbox Queue integration", () => {
       sink,
       message,
       now: "2026-09-20T08:04:00.000Z",
+      telemetry,
     });
     assert(Result.isSuccess(second));
     expect(second.value).toEqual({ delivered: 1, skipped: 0 });
@@ -160,13 +188,57 @@ describe("notification outbox Queue integration", () => {
       sink,
       message,
       now: "2026-09-20T08:05:00.000Z",
+      telemetry,
     });
     assert(Result.isSuccess(redelivery));
     expect(redelivery.value).toEqual({ delivered: 0, skipped: 1 });
     expect(sink.requests).toHaveLength(2);
+    expect(telemetry.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "log",
+          event: "notification.failed",
+          correlation: expect.objectContaining({
+            correlationId: String(actionRequestId),
+            component: "notification",
+            operation: "deliver",
+          }),
+          attributes: {
+            errorCode: "temporary_provider_outage",
+            retriable: true,
+          },
+        }),
+      ]),
+    );
 
     const health = await repository.health();
     assert(Result.isSuccess(health));
     expect(health.value.failedDeliveries).toBe(0);
+  });
+
+  it("AC-M7-007: Queue correlationがOutbox ActionRequestと一致しないmessageは拒否する", async () => {
+    await seedCompletedNotification();
+    const repository = new D1NotificationOutboxRepository(testEnv.DB);
+    const queue = new RetryQueue();
+    queue.attempts = 1;
+    const dispatched = await dispatchNotificationOutbox({
+      repository,
+      queue,
+      now: "2026-09-20T08:02:00.000Z",
+    });
+    assert(Result.isSuccess(dispatched));
+
+    const message = queue.messages[0]!;
+    const consumed = await consumeNotificationMessage({
+      repository,
+      sink: new RetrySink(),
+      message: {
+        ...message,
+        actionRequestId: "action:wrong-correlation" as ActionRequestId,
+      },
+      now: "2026-09-20T08:03:00.000Z",
+    });
+    assert(Result.isFailure(consumed));
+    expect(consumed.error.code).toBe("notification_correlation_mismatch");
   });
 });
