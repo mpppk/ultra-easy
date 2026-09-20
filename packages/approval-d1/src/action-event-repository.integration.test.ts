@@ -147,7 +147,7 @@ describe("D1ActionEventRepository", () => {
   });
 
   it("append sequenceでAction auditを再構成できる", async () => {
-    const { repository } = createRepository();
+    const { repository, sqlite } = createRepository();
     const records = [
       actionEventRecord({
         organizationId,
