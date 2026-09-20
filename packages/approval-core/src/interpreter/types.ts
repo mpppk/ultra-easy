@@ -20,7 +20,7 @@ export type ApprovalTaskRuntimeStatus =
   | "rejected"
   | "expired"
   | "cancelled";
-export type ApprovalRuntimeStatus = "pending" | "approved" | "rejected" | "expired";
+export type ApprovalRuntimeStatus = "pending" | "approved" | "rejected" | "expired" | "cancelled";
 
 export type ApprovalDecisionEvent = {
   idempotencyKey: string;
