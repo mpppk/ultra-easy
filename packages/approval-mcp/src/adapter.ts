@@ -1,12 +1,17 @@
 import { Result } from "@praha/byethrow";
 
-import { DEFAULT_MCP_TOOL_CALL_RATE_LIMIT } from "@app/approval-core";
+import {
+  DEFAULT_MCP_TOOL_CALL_RATE_LIMIT,
+  actionCorrelation,
+  safeLogRecord,
+} from "@app/approval-core";
 import type {
   Action,
   ActionRequestId,
   OrganizationId,
   RateLimiter,
   RateLimitPolicy,
+  TelemetrySink,
 } from "@app/approval-core";
 import type {
   ActionRequestApplicationService,
@@ -263,6 +268,7 @@ export class ApprovalMcpAdapter {
       pollIntervalMs?: number;
       rateLimiter?: RateLimiter;
       rateLimitPolicy?: RateLimitPolicy;
+      telemetry?: TelemetrySink;
     },
   ) {}
 
@@ -308,8 +314,35 @@ export class ApprovalMcpAdapter {
       return { type: "error", error: internalError(submitted.error) };
     }
     if (submitted.value.type === "authorization_denied") {
+      this.dependencies.telemetry?.emit(
+        safeLogRecord({
+          level: "warn",
+          event: "request.denied",
+          correlation: actionCorrelation({
+            organizationId: input.organizationId,
+            actionRequestId: submitted.value.actionRequestId,
+            component: "mcp",
+            operation: "tools.call",
+          }),
+          attributes: { errorCode: submitted.value.code, status: "authorization_denied" },
+        }),
+      );
       return { type: "result", result: deniedResult(submitted.value) };
     }
+
+    this.dependencies.telemetry?.emit(
+      safeLogRecord({
+        level: "info",
+        event: "request.accepted",
+        correlation: actionCorrelation({
+          organizationId: input.organizationId,
+          actionRequestId: submitted.value.actionRequestId,
+          component: "mcp",
+          operation: "tools.call",
+        }),
+        attributes: { status: submitted.value.view.status },
+      }),
+    );
 
     if (submitted.value.view.status !== "pending_approval") {
       return {
