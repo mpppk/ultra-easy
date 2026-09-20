@@ -1,7 +1,12 @@
 import { Result } from "@praha/byethrow";
 
 import {
+  actionEventRecord,
+  actionPlanAuditEvents,
+  ActionAuthorizationCheckFailedError,
+  ActionExecutorError,
   authorizeActionRequest,
+  createActionExecutionIdempotencyKey,
   evaluateApprovalPlan,
   executeActionRequest,
   materializeApprovalPlan,
@@ -10,12 +15,15 @@ import {
 import type {
   Action,
   ActionAuthorizer,
+  ActionEventRecord,
+  ActionEventRepository,
   ApprovalPlanEvaluation,
   ActionDefinition,
   ActionDefinitionResolver,
   ActionExecutor,
   ActionRequest,
   ActionRequestId,
+  AuthorizationEvidence,
   JsonValue,
   MaterializedApprovalPlan,
   MaterializedPlanRepository,
@@ -98,6 +106,7 @@ export type ActionRequestEvaluation =
       actionDefinition: ActionDefinition;
       bindings: readonly VersionedApprovalPolicyBinding[];
       policyEvaluation: ApprovalPlanEvaluation;
+      authorizationEvidence: AuthorizationEvidence;
       plan: MaterializedApprovalPlan;
     }
   | {
@@ -133,6 +142,7 @@ export type ActionRequestApplicationErrorCode =
   | "policy_evaluation_failed"
   | "materialization_failed"
   | "plan_persistence_failed"
+  | "audit_persistence_failed"
   | "action_request_already_exists"
   | "workflow_start_failed"
   | "execution_failed";
@@ -156,6 +166,7 @@ export type ActionRequestApplicationServiceDependencies = {
   authorizer: ActionAuthorizer;
   executor: ActionExecutor;
   planRepository: MaterializedPlanRepository;
+  eventRepository?: ActionEventRepository;
   workflowStarter: ActionWorkflowStarter;
   idGenerator: ActionRequestIdGenerator;
 };
@@ -221,6 +232,24 @@ function planPersistenceError(
     result.type === "repository_error",
     result.message,
   );
+}
+
+async function appendAudit(
+  repository: ActionEventRepository | undefined,
+  records: readonly ActionEventRecord[],
+): Result.ResultAsync<void, ActionRequestApplicationError> {
+  if (!repository || records.length === 0) return Result.succeed(undefined);
+  const appended = await repository.appendMany(records);
+  if (Result.isFailure(appended)) {
+    return Result.fail(
+      new ActionRequestApplicationError(
+        "audit_persistence_failed",
+        appended.error.retriable,
+        appended.error.message,
+      ),
+    );
+  }
+  return Result.succeed(undefined);
 }
 
 function requestView(input: {
@@ -379,6 +408,7 @@ export class ActionRequestApplicationService {
       actionDefinition: definition.value,
       bindings: bindings.value,
       policyEvaluation: policyEvaluation.value,
+      authorizationEvidence: authorization.value.evidence,
       plan: materialized.plan,
     });
   }
@@ -394,11 +424,32 @@ export class ActionRequestApplicationService {
       trustedContext: input.trustedContext,
     });
     if (Result.isFailure(evaluated)) return evaluated;
-    if (evaluated.value.type === "authorization_denied") return Result.succeed(evaluated.value);
+    if (evaluated.value.type === "authorization_denied") {
+      const audited = await appendAudit(this.dependencies.eventRepository, [
+        actionEventRecord({
+          organizationId: input.trustedContext.organization.id,
+          occurredAt: input.trustedContext.now,
+          event: {
+            type: "action.authorization_denied",
+            actionRequestId: evaluated.value.actionRequestId,
+            code: evaluated.value.code,
+            reason: evaluated.value.reason,
+          },
+        }),
+      ]);
+      if (Result.isFailure(audited)) return audited;
+      return Result.succeed(evaluated.value);
+    }
 
-    const { actionRequestId, request, plan } = evaluated.value;
+    const { actionRequestId, request, plan, authorizationEvidence } = evaluated.value;
     const saved = await this.dependencies.planRepository.save(plan);
     if (saved.type !== "created") return Result.fail(planPersistenceError(saved));
+
+    const initialAudit = await appendAudit(
+      this.dependencies.eventRepository,
+      actionPlanAuditEvents({ plan, authorizationEvidence }),
+    );
+    if (Result.isFailure(initialAudit)) return initialAudit;
 
     if (plan.flow.type !== "none") {
       const started = await this.dependencies.workflowStarter.start({
@@ -434,6 +485,70 @@ export class ActionRequestApplicationService {
       evaluatedAt: input.trustedContext.now,
     });
     if (Result.isFailure(execution)) {
+      const failedEvents: ActionEventRecord[] = [];
+      if (execution.error instanceof ActionAuthorizationCheckFailedError) {
+        failedEvents.push(
+          actionEventRecord({
+            organizationId: plan.organizationId,
+            occurredAt: input.trustedContext.now,
+            event: {
+              type: "action.reauthorization_check_failed",
+              actionRequestId,
+              code: execution.error.providerCode,
+            },
+          }),
+        );
+        failedEvents.push(
+          actionEventRecord({
+            organizationId: plan.organizationId,
+            occurredAt: input.trustedContext.now,
+            event: {
+              type: "action.completed",
+              actionRequestId,
+              result: "authorization_check_failed",
+            },
+          }),
+        );
+      } else if (execution.error instanceof ActionExecutorError) {
+        const idempotencyKey = createActionExecutionIdempotencyKey(
+          plan.organizationId,
+          actionRequestId,
+          plan.actionFingerprint,
+        );
+        failedEvents.push(
+          actionEventRecord({
+            organizationId: plan.organizationId,
+            occurredAt: input.trustedContext.now,
+            event: {
+              type: "action.execution_started",
+              actionRequestId,
+              idempotencyKey,
+            },
+          }),
+          actionEventRecord({
+            organizationId: plan.organizationId,
+            occurredAt: input.trustedContext.now,
+            event: {
+              type: "action.execution_failed",
+              actionRequestId,
+              code: execution.error.code,
+              retriable: execution.error.retriable,
+            },
+          }),
+          actionEventRecord({
+            organizationId: plan.organizationId,
+            occurredAt: input.trustedContext.now,
+            event: {
+              type: "action.completed",
+              actionRequestId,
+              result: "execution_failed",
+            },
+          }),
+        );
+      }
+      const audited = await appendAudit(this.dependencies.eventRepository, failedEvents);
+      if (Result.isFailure(audited)) return audited;
+
       return Result.fail(
         new ActionRequestApplicationError(
           "execution_failed",
@@ -444,6 +559,29 @@ export class ActionRequestApplicationService {
     }
 
     if (execution.value.type === "authorization_revoked") {
+      const audited = await appendAudit(this.dependencies.eventRepository, [
+        actionEventRecord({
+          organizationId: plan.organizationId,
+          occurredAt: input.trustedContext.now,
+          event: {
+            type: "action.reauthorization_denied",
+            actionRequestId,
+            code: execution.value.code,
+            reason: execution.value.reason,
+          },
+        }),
+        actionEventRecord({
+          organizationId: plan.organizationId,
+          occurredAt: input.trustedContext.now,
+          event: {
+            type: "action.completed",
+            actionRequestId,
+            result: "authorization_revoked",
+          },
+        }),
+      ]);
+      if (Result.isFailure(audited)) return audited;
+
       return Result.succeed({
         type: "accepted",
         actionRequestId,
@@ -462,6 +600,37 @@ export class ActionRequestApplicationService {
         }),
       });
     }
+
+    const executionAudit = await appendAudit(this.dependencies.eventRepository, [
+      actionEventRecord({
+        organizationId: plan.organizationId,
+        occurredAt: execution.value.authorizationEvidence.evaluatedAt,
+        event: {
+          type: "action.reauthorized",
+          actionRequestId,
+          evidence: execution.value.authorizationEvidence,
+        },
+      }),
+      actionEventRecord({
+        organizationId: plan.organizationId,
+        occurredAt: input.trustedContext.now,
+        event: {
+          type: "action.execution_started",
+          actionRequestId,
+          idempotencyKey: execution.value.idempotencyKey,
+        },
+      }),
+      actionEventRecord({
+        organizationId: plan.organizationId,
+        occurredAt: input.trustedContext.now,
+        event: {
+          type: "action.completed",
+          actionRequestId,
+          result: "executed",
+        },
+      }),
+    ]);
+    if (Result.isFailure(executionAudit)) return executionAudit;
 
     return Result.succeed({
       type: "accepted",
