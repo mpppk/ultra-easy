@@ -17,7 +17,6 @@ import type {
   AttachmentReference,
   AttachmentRetentionMetadata,
   AttachmentStorage,
-  AttachmentStorageError,
   EvaluationSnapshotChecksum,
   ExecutorKey,
   MaterializedActionSnapshot,
