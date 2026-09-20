@@ -170,16 +170,28 @@ describe("D1ApprovalRuntimeProjectionRepository", () => {
       },
     });
 
-    assert(Result.isSuccess(await repository.replace({ organizationId, state: state(), events: [event] })));
-    assert(Result.isSuccess(await repository.replace({ organizationId, state: state(), events: [event] })));
+    assert(
+      Result.isSuccess(
+        await repository.replace({ organizationId, state: state(), events: [event] }),
+      ),
+    );
+    assert(
+      Result.isSuccess(
+        await repository.replace({ organizationId, state: state(), events: [event] }),
+      ),
+    );
 
     const audit = sqlite
-      .prepare("SELECT COUNT(*) AS count FROM action_events WHERE organization_id = ? AND action_request_id = ?")
+      .prepare(
+        "SELECT COUNT(*) AS count FROM action_events WHERE organization_id = ? AND action_request_id = ?",
+      )
       .get(organizationId, actionRequestId) as { count: number };
     expect(audit.count).toBe(1);
 
     const runtime = sqlite
-      .prepare("SELECT status FROM approval_runtime_projections WHERE organization_id = ? AND action_request_id = ?")
+      .prepare(
+        "SELECT status FROM approval_runtime_projections WHERE organization_id = ? AND action_request_id = ?",
+      )
       .get(organizationId, actionRequestId) as { status: string };
     expect(runtime.status).toBe("pending");
   });
