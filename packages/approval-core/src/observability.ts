@@ -155,9 +155,7 @@ export function safeActionEventLogRecord(
   });
 }
 
-export function deriveApprovalSliMetrics(
-  records: readonly ActionEventRecord[],
-): MetricRecord[] {
+export function deriveApprovalSliMetrics(records: readonly ActionEventRecord[]): MetricRecord[] {
   const metrics: MetricRecord[] = [];
   const receivedAt = new Map<string, number>();
   const stepActivatedAt = new Map<string, number>();
