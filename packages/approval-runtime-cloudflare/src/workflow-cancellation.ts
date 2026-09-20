@@ -10,6 +10,7 @@ import {
 } from "@app/approval-core";
 import {
   D1ApprovalRuntimeProjectionRepository,
+  D1MaterializedPlanRepository,
   type D1DatabaseLike,
 } from "@app/approval-d1";
 
@@ -113,10 +114,22 @@ export class CloudflareWorkflowCancellationControl implements WorkflowCancellati
       );
     }
 
+    const plan = await new D1MaterializedPlanRepository(this.db).load({
+      organizationId: input.organizationId,
+      actionRequestId: input.actionRequestId,
+    });
+    if (plan.type !== "found") {
+      return Result.fail(
+        new WorkflowCancellationError(
+          "force_cancel_plan_read_failed",
+          plan.type === "repository_error",
+          `force cancel対象のMaterialized Planを取得できません: ${plan.type}`,
+        ),
+      );
+    }
+
     const events = actionRuntimeTransitionEvents({
-      plan: {
-        actionRequestId: transition.state.actionRequestId,
-      } as never,
+      plan: plan.plan,
       previousState: loaded.value,
       nextState: transition.state,
     });
