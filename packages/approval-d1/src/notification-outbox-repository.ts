@@ -115,7 +115,7 @@ const runStatement = Result.fn({
 });
 
 const firstUnknownRow = Result.fn({
-  try: async (statement: D1PreparedStatementLike): Promise<unknown | null> =>
+  try: async (statement: D1PreparedStatementLike): Promise<unknown> =>
     statement.first<unknown>(),
   catch: (error): D1NotificationOutboxRepositoryError =>
     repositoryError(error, "notification outbox rowの取得に失敗しました"),
@@ -125,7 +125,7 @@ async function firstRow<T>(
   statement: D1PreparedStatementLike,
 ): Result.ResultAsync<T | null, D1NotificationOutboxRepositoryError> {
   const row = await firstUnknownRow(statement);
-  return Result.isFailure(row) ? row : Result.succeed(row.value as T | null);
+  return row as Result.Result<T | null, D1NotificationOutboxRepositoryError>;
 }
 
 const allUnknownRows = Result.fn({
@@ -152,7 +152,7 @@ const parseUnknownJson = Result.fn({
 
 function parseJson<T>(value: string): Result.Result<T, D1NotificationOutboxRepositoryError> {
   const parsed = parseUnknownJson(value);
-  return Result.isFailure(parsed) ? parsed : Result.succeed(parsed.value as T);
+  return parsed as Result.Result<T, D1NotificationOutboxRepositoryError>;
 }
 
 function outboxKey(eventKey: string): string {
