@@ -4,6 +4,7 @@ import type { AuthorizationEvidence } from "./authorization.ts";
 import type {
   ActionFingerprint,
   ActionRequestId,
+  ApprovalBindingFingerprint,
   ApprovalPlanChecksum,
   ApprovalStepKey,
   EvaluationSnapshotChecksum,
@@ -80,14 +81,20 @@ export type ActionEvent =
       actionRequestId: ActionRequestId;
       materializedStepId: MaterializedStepId;
       stepKey: ApprovalStepKey;
+      decisionKey: string;
       actorId: UserId;
+      approvalBindingFingerprint?: ApprovalBindingFingerprint;
+      comment?: string;
     }
   | {
       type: "step.rejected";
       actionRequestId: ActionRequestId;
       materializedStepId: MaterializedStepId;
       stepKey: ApprovalStepKey;
+      decisionKey: string;
       actorId: UserId;
+      approvalBindingFingerprint?: ApprovalBindingFingerprint;
+      comment?: string;
     }
   | {
       type: "step.expired";
@@ -159,9 +166,10 @@ export interface ActionEventRepository {
 
 function eventDiscriminator(event: ActionEvent): string {
   switch (event.type) {
-    case "step.activated":
     case "step.approved":
     case "step.rejected":
+      return `${String(event.materializedStepId)}:${event.decisionKey}`;
+    case "step.activated":
     case "step.expired":
       return String(event.materializedStepId);
     case "workflow.started":
@@ -263,10 +271,6 @@ function taskByStep(state: ApprovalRuntimeState | null): Map<string, ApprovalTas
   return new Map((state?.tasks ?? []).map((task) => [String(task.materializedStepId), task]));
 }
 
-function closingActor(task: ApprovalTaskRuntimeState): UserId | undefined {
-  return task.decisions.at(-1)?.userId;
-}
-
 /**
  * Derives domain events from an immutable before/after runtime transition.
  * It deliberately records only semantic transitions, never the mutable
@@ -317,42 +321,42 @@ export function actionRuntimeTransitionEvents(input: {
       );
     }
 
-    if (
-      previous?.status === task.status ||
-      task.status === "pending" ||
-      task.status === "cancelled"
-    ) {
-      continue;
-    }
-    const occurredAt = task.closedAt ?? input.nextState.completedAt ?? input.nextState.startedAt;
-    if (task.status === "expired") {
+    const previousDecisionKeys = new Set(
+      (previous?.decisions ?? []).map((decision) => decision.idempotencyKey),
+    );
+    for (const decision of task.decisions) {
+      if (previousDecisionKeys.has(decision.idempotencyKey)) continue;
       records.push(
         actionEventRecord({
           organizationId: input.plan.organizationId,
-          occurredAt,
+          occurredAt: decision.decidedAt,
           event: {
-            type: "step.expired",
+            type: decision.decision === "approve" ? "step.approved" : "step.rejected",
             actionRequestId: input.plan.actionRequestId,
             materializedStepId: task.materializedStepId,
             stepKey: step.stepKey,
+            decisionKey: decision.idempotencyKey,
+            actorId: decision.userId,
+            ...(decision.approvalBindingFingerprint
+              ? { approvalBindingFingerprint: decision.approvalBindingFingerprint }
+              : {}),
+            ...(decision.comment !== undefined ? { comment: decision.comment } : {}),
           },
         }),
       );
-      continue;
     }
 
-    const actorId = closingActor(task);
-    if (!actorId) continue;
+    if (previous?.status === task.status || task.status !== "expired") continue;
+    const occurredAt = task.closedAt ?? input.nextState.completedAt ?? input.nextState.startedAt;
     records.push(
       actionEventRecord({
         organizationId: input.plan.organizationId,
         occurredAt,
         event: {
-          type: task.status === "approved" ? "step.approved" : "step.rejected",
+          type: "step.expired",
           actionRequestId: input.plan.actionRequestId,
           materializedStepId: task.materializedStepId,
           stepKey: step.stepKey,
-          actorId,
         },
       }),
     );
