@@ -47,7 +47,10 @@ const plan: MaterializedApprovalPlan = {
       key: branded<ActionDefinitionKey>("ticket.update"),
       version: 1,
       actionType: branded<ActionType>("ticket.update"),
-      inputSchema: branded<SchemaKey>("ticket.update.input"),
+      inputSchema: {
+        key: branded<SchemaKey>("ticket.update.input"),
+        version: 1,
+      },
       executorKey: branded<ExecutorKey>("ticket"),
     },
     type: branded<ActionType>("ticket.update"),
