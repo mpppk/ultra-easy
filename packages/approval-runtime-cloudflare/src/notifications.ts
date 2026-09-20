@@ -1,6 +1,12 @@
 import { Result } from "@praha/byethrow";
 
-import type { NotificationSink, OrganizationId } from "@app/approval-core";
+import { actionCorrelation, metricRecord, safeLogRecord } from "@app/approval-core";
+import type {
+  ActionRequestId,
+  NotificationSink,
+  OrganizationId,
+  TelemetrySink,
+} from "@app/approval-core";
 import type {
   D1NotificationOutboxRepository,
   D1NotificationOutboxRepositoryError,
@@ -8,6 +14,7 @@ import type {
 
 export type NotificationQueueMessage = {
   organizationId: OrganizationId;
+  actionRequestId: ActionRequestId;
   outboxKey: string;
 };
 
@@ -64,6 +71,7 @@ export async function dispatchNotificationOutbox(input: {
   queue: NotificationQueueProducer;
   now: string;
   limit?: number;
+  telemetry?: TelemetrySink;
 }): Result.ResultAsync<NotificationDispatchResult, D1NotificationOutboxRepositoryError> {
   const entries = await input.repository.listDispatchable(input.limit ?? 100);
   if (Result.isFailure(entries)) return entries;
@@ -75,11 +83,35 @@ export async function dispatchNotificationOutbox(input: {
       queue: input.queue,
       message: {
         organizationId: entry.organizationId,
+        actionRequestId: entry.actionRequestId,
         outboxKey: entry.outboxKey,
       },
     });
 
     if (Result.isFailure(sent)) {
+      const correlation = actionCorrelation({
+        organizationId: entry.organizationId,
+        actionRequestId: entry.actionRequestId,
+        component: "outbox",
+        operation: "dispatch",
+      });
+      input.telemetry?.emit(
+        safeLogRecord({
+          level: "error",
+          event: "notification.failed",
+          correlation,
+          attributes: { errorCode: "notification_queue_send_failed" },
+        }),
+      );
+      input.telemetry?.emit(
+        metricRecord({
+          name: "outbox.failure_total",
+          value: 1,
+          unit: "count",
+          correlation,
+          attributes: { errorCode: "notification_queue_send_failed" },
+        }),
+      );
       const marked = await input.repository.markDispatchFailed({
         organizationId: entry.organizationId,
         outboxKey: entry.outboxKey,
@@ -99,6 +131,19 @@ export async function dispatchNotificationOutbox(input: {
     dispatched += 1;
   }
 
+  if (input.telemetry) {
+    const health = await input.repository.health();
+    if (Result.isSuccess(health)) {
+      input.telemetry.emit(
+        metricRecord({
+          name: "outbox.backlog",
+          value: health.value.pendingOutbox + health.value.failedOutbox,
+          unit: "items",
+        }),
+      );
+    }
+  }
+
   return Result.succeed({
     attempted: entries.value.length,
     dispatched,
@@ -111,10 +156,20 @@ export async function consumeNotificationMessage(input: {
   sink: NotificationSink;
   message: NotificationQueueMessage;
   now: string;
+  telemetry?: TelemetrySink;
 }): Result.ResultAsync<NotificationConsumeResult, NotificationConsumerError> {
   const entry = await input.repository.load(input.message);
   if (Result.isFailure(entry)) return Result.fail(repositoryConsumerError(entry.error));
   if (!entry.value) return Result.succeed({ delivered: 0, skipped: 1 });
+  if (String(entry.value.actionRequestId) !== String(input.message.actionRequestId)) {
+    return Result.fail(
+      new NotificationConsumerError(
+        "notification_correlation_mismatch",
+        false,
+        "Queue messageのActionRequest correlationがOutbox entryと一致しません",
+      ),
+    );
+  }
 
   const source = await input.repository.loadSourceEvent(entry.value);
   if (Result.isFailure(source)) return Result.fail(repositoryConsumerError(source.error));
@@ -156,6 +211,19 @@ export async function consumeNotificationMessage(input: {
     });
     const sent = await input.sink.send(request);
     if (Result.isFailure(sent)) {
+      input.telemetry?.emit(
+        safeLogRecord({
+          level: "error",
+          event: "notification.failed",
+          correlation: actionCorrelation({
+            organizationId: entry.value.organizationId,
+            actionRequestId: entry.value.actionRequestId,
+            component: "notification",
+            operation: "deliver",
+          }),
+          attributes: { errorCode: sent.error.code, retriable: sent.error.retriable },
+        }),
+      );
       const marked = await input.repository.markDeliveryFailed({
         organizationId: entry.value.organizationId,
         notificationKey: entry.value.notificationKey,
