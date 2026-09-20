@@ -42,9 +42,7 @@ export class RateLimitProviderError extends Error {
 }
 
 export interface RateLimiter {
-  consume(
-    request: RateLimitRequest,
-  ): Result.ResultAsync<RateLimitDecision, RateLimitProviderError>;
+  consume(request: RateLimitRequest): Result.ResultAsync<RateLimitDecision, RateLimitProviderError>;
 }
 
 export function rateLimitScopeKey(input: {
