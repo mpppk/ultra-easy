@@ -360,6 +360,7 @@ async function executeStep(input: {
     actionFingerprint: loaded.plan.actionFingerprint,
     action: loaded.plan.action,
     authorizationEvidence: input.authorizationEvidence,
+    actor: loaded.plan.evaluationSnapshot.actor,
   });
   if (Result.isFailure(result)) {
     return result.error.retriable
