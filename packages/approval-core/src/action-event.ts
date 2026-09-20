@@ -136,7 +136,7 @@ export type ActionEventRecord = {
 };
 
 export class ActionEventRepositoryError extends Error {
-  readonly name = "ActionEventRepositoryError";
+  readonly name: string = "ActionEventRepositoryError";
 
   constructor(
     readonly code: string,
