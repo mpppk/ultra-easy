@@ -15,6 +15,7 @@ import type {
   D1PreparedStatementLike,
   D1RunResultLike,
 } from "./materialized-plan-repository.ts";
+import { prepareNotificationOutboxInsert } from "./notification-outbox-repository.ts";
 
 type StoredActionEventRow = {
   sequence: number;
@@ -93,6 +94,17 @@ export function prepareActionEventInsert(
       ),
   );
 }
+
+export function prepareActionEventPersistenceStatements(
+  db: D1DatabaseLike,
+  record: ActionEventRecord,
+): Result.Result<D1PreparedStatementLike[], D1ActionEventRepositoryError> {
+  const event = prepareActionEventInsert(db, record);
+  if (Result.isFailure(event)) return event;
+  const outbox = prepareNotificationOutboxInsert(db, record);
+  return Result.succeed(outbox ? [event.value, outbox] : [event.value]);
+}
+
 
 const runStatement = Result.fn({
   try: async (statement: D1PreparedStatementLike): Promise<D1RunResultLike> => statement.run(),
@@ -174,24 +186,46 @@ export class D1ActionEventRepository implements ActionEventRepository {
           );
     }
 
-    const statement = prepareActionEventInsert(this.db, record);
-    if (Result.isFailure(statement)) return statement;
-    const saved = await runStatement(statement.value);
-    if (Result.isFailure(saved)) return saved;
-    if (!saved.value.success) {
-      return Result.fail(repositoryError(saved.value.error, "Action eventのappendに失敗しました"));
+    const statements = prepareActionEventPersistenceStatements(this.db, record);
+    if (Result.isFailure(statements)) return statements;
+
+    if (statements.value.length === 1) {
+      const saved = await runStatement(statements.value[0]!);
+      if (Result.isFailure(saved)) return saved;
+      if (!saved.value.success) {
+        return Result.fail(repositoryError(saved.value.error, "Action eventのappendに失敗しました"));
+      }
+      return Result.succeed((saved.value.meta?.changes ?? 0) > 0 ? "created" : "existing");
     }
-    return Result.succeed((saved.value.meta?.changes ?? 0) > 0 ? "created" : "existing");
+
+    const batchDb = asBatchDatabase(this.db);
+    if (!batchDb) {
+      return Result.fail(
+        repositoryError(
+          undefined,
+          "D1 batch()が利用できないためeventとoutboxをatomicに保存できません",
+        ),
+      );
+    }
+    const saved = await runBatch({ db: batchDb, statements: statements.value });
+    if (Result.isFailure(saved)) return saved;
+    const failed = saved.value.find((result) => !result.success);
+    if (failed) {
+      return Result.fail(repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"));
+    }
+    return Result.succeed((saved.value[0]?.meta?.changes ?? 0) > 0 ? "created" : "existing");
   }
 
   async appendMany(
     records: readonly ActionEventRecord[],
   ): Result.ResultAsync<void, D1ActionEventRepositoryError> {
     const statements: D1PreparedStatementLike[] = [];
+    let requiresAtomicOutbox = false;
     for (const record of records) {
-      const statement = prepareActionEventInsert(this.db, record);
-      if (Result.isFailure(statement)) return statement;
-      statements.push(statement.value);
+      const prepared = prepareActionEventPersistenceStatements(this.db, record);
+      if (Result.isFailure(prepared)) return prepared;
+      if (prepared.value.length > 1) requiresAtomicOutbox = true;
+      statements.push(...prepared.value);
     }
     if (statements.length === 0) return Result.succeed(undefined);
 
@@ -201,10 +235,18 @@ export class D1ActionEventRepository implements ActionEventRepository {
       if (Result.isFailure(saved)) return saved;
       const failed = saved.value.find((result) => !result.success);
       return failed
-        ? Result.fail(repositoryError(failed.error, "Action event batchのappendに失敗しました"))
+        ? Result.fail(repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"))
         : Result.succeed(undefined);
     }
 
+    if (requiresAtomicOutbox) {
+      return Result.fail(
+        repositoryError(
+          undefined,
+          "D1 batch()が利用できないためeventとoutboxをatomicに保存できません",
+        ),
+      );
+    }
     for (const statement of statements) {
       const saved = await runStatement(statement);
       if (Result.isFailure(saved)) return saved;
