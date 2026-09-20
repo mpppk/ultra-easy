@@ -4,6 +4,7 @@ import type { WorkflowEvent, WorkflowSleepDuration, WorkflowStep } from "cloudfl
 import type { D1Database } from "@cloudflare/workers-types";
 
 import {
+  actionRuntimeTransitionEvents,
   advanceApprovalRuntime,
   ApproverResolverProviderError,
   expireApprovalRuntime,
@@ -19,6 +20,7 @@ import type {
   ApprovalPlanChecksum,
   ApprovalRuntimeState,
   ApproverResolver,
+  MaterializedApprovalPlan,
   OrganizationId,
 } from "@app/approval-core";
 import {
@@ -206,22 +208,34 @@ function resolverFor(env: ActionWorkflowEnv, organizationId: OrganizationId): Ap
   );
 }
 
-async function persistProjection(
-  env: ActionWorkflowEnv,
-  organizationId: Parameters<D1ApprovalRuntimeProjectionRepository["replace"]>[0]["organizationId"],
-  state: ApprovalRuntimeState,
-): Promise<RuntimeTransition> {
-  const stored = await new D1ApprovalRuntimeProjectionRepository(env.DB).replace({
-    organizationId,
-    state,
+async function persistProjection(input: {
+  env: ActionWorkflowEnv;
+  plan: MaterializedApprovalPlan;
+  previousState: ApprovalRuntimeState | null;
+  state: ApprovalRuntimeState;
+  workflowInstanceId?: string;
+}): Promise<RuntimeTransition> {
+  const events = actionRuntimeTransitionEvents({
+    plan: input.plan,
+    previousState: input.previousState,
+    nextState: input.state,
+    ...(input.workflowInstanceId ? { workflowInstanceId: input.workflowInstanceId } : {}),
   });
-  return Result.isFailure(stored) ? retry(stored.error) : { type: "advanced", state };
+  const stored = await new D1ApprovalRuntimeProjectionRepository(input.env.DB).replace({
+    organizationId: input.plan.organizationId,
+    state: input.state,
+    events,
+  });
+  return Result.isFailure(stored)
+    ? retry(stored.error)
+    : { type: "advanced", state: input.state };
 }
 
 async function initializeRuntime(
   env: ActionWorkflowEnv,
   params: ActionWorkflowParams,
   startedAt: string,
+  workflowInstanceId: string,
 ): Promise<RuntimeTransition> {
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
@@ -237,7 +251,13 @@ async function initializeRuntime(
     startedAt,
   });
   if (Result.isFailure(started)) return interpreterFailure(started.error);
-  return persistProjection(env, loaded.plan.organizationId, started.value);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: null,
+    state: started.value,
+    workflowInstanceId,
+  });
 }
 
 async function recordDecision(
@@ -261,7 +281,12 @@ async function recordDecision(
     event,
   });
   if (Result.isFailure(recorded)) return interpreterFailure(recorded.error);
-  return persistProjection(env, loaded.plan.organizationId, recorded.value.state);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: state,
+    state: recorded.value.state,
+  });
 }
 
 async function advanceRuntime(
@@ -285,7 +310,12 @@ async function advanceRuntime(
     now,
   });
   if (Result.isFailure(advanced)) return interpreterFailure(advanced.error);
-  return persistProjection(env, loaded.plan.organizationId, advanced.value);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: state,
+    state: advanced.value,
+  });
 }
 
 async function expireRuntime(
@@ -309,7 +339,12 @@ async function expireRuntime(
     now,
   });
   if (Result.isFailure(expired)) return interpreterFailure(expired.error);
-  return persistProjection(env, loaded.plan.organizationId, expired.value);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: state,
+    state: expired.value,
+  });
 }
 
 async function runRuntimeStep(
@@ -431,7 +466,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
 
     let logicalNow = event.timestamp.toISOString();
     const initialized = await runRuntimeStep(step, "initialize approval runtime", () =>
-      initializeRuntime(this.env, params, logicalNow),
+      initializeRuntime(this.env, params, logicalNow, event.instanceId),
     );
     if (initialized.type === "failed") return outputFromTransition(params, initialized);
 
