@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
+  InMemoryFixedWindowRateLimiter,
+  MemoryTelemetrySink,
   always,
   approve,
   authorityPrincipal,
@@ -25,6 +27,7 @@ import type {
   MaterializedApprovalPlan,
   MaterializedPlanRepository,
   OrganizationId,
+  RateLimitPolicy,
   SchemaKey,
   SchemaResolver,
   UserId,
@@ -189,6 +192,8 @@ function createHarness(
   input: {
     allowed?: boolean;
     approvalRequired?: boolean;
+    rateLimitPolicy?: RateLimitPolicy;
+    telemetry?: MemoryTelemetrySink;
   } = {},
 ) {
   const authorizer = new FakeAuthorizer(input.allowed ?? true);
@@ -217,7 +222,17 @@ function createHarness(
       return Promise.resolve(Result.succeed(trustedContext));
     },
   };
-  const api = createActionRequestHttpApi({ service, trustedContextProvider });
+  const api = createActionRequestHttpApi({
+    service,
+    trustedContextProvider,
+    ...(input.rateLimitPolicy
+      ? {
+          rateLimiter: new InMemoryFixedWindowRateLimiter(),
+          rateLimitPolicy: input.rateLimitPolicy,
+        }
+      : {}),
+    ...(input.telemetry ? { telemetry: input.telemetry } : {}),
+  });
 
   return {
     api,
@@ -306,5 +321,47 @@ describe("M6-1 ActionRequest unified entrypoint", () => {
     expect(harness.planRepository.saved).toHaveLength(0);
     expect(harness.workflowStarter.plans).toHaveLength(0);
     expect(harness.executor.calls).toHaveLength(0);
+  });
+
+  it("AC-M7-007/009: HTTP logはactionRequestIdで相関しAction inputを含めない", async () => {
+    const telemetry = new MemoryTelemetrySink();
+    const harness = createHarness({ telemetry });
+
+    const response = await harness.api.fetch(request({ action }));
+    expect(response.status).toBe(201);
+    expect(telemetry.records).toHaveLength(1);
+    expect(telemetry.records[0]).toMatchObject({
+      kind: "log",
+      event: "request.accepted",
+      correlation: {
+        organizationId,
+        actionRequestId,
+        correlationId: String(actionRequestId),
+        component: "http",
+        operation: "action_request.submit",
+      },
+      attributes: { status: "executed" },
+    });
+    expect(JSON.stringify(telemetry.records)).not.toContain("critical");
+    expect(JSON.stringify(telemetry.records)).not.toContain('"input"');
+  });
+
+  it("AC-M7 rate limit: ActionRequest超過は429とretry metadataを返す", async () => {
+    const harness = createHarness({
+      rateLimitPolicy: { limit: 1, windowSeconds: 60 },
+    });
+
+    const first = await harness.api.fetch(request({ action }));
+    const limited = await harness.api.fetch(request({ action }));
+
+    expect(first.status).toBe(201);
+    expect(limited.status).toBe(429);
+    await expect(limited.json()).resolves.toMatchObject({
+      status: 429,
+      code: "rate_limit_exceeded",
+    });
+    expect(limited.headers.get("retry-after")).toBe("60");
+    expect(limited.headers.get("x-ratelimit-limit")).toBe("1");
+    expect(limited.headers.get("x-ratelimit-remaining")).toBe("0");
   });
 });
