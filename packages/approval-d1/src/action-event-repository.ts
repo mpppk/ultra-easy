@@ -105,7 +105,6 @@ export function prepareActionEventPersistenceStatements(
   return Result.succeed(outbox ? [event.value, outbox] : [event.value]);
 }
 
-
 const runStatement = Result.fn({
   try: async (statement: D1PreparedStatementLike): Promise<D1RunResultLike> => statement.run(),
   catch: (error): D1ActionEventRepositoryError =>
@@ -193,7 +192,9 @@ export class D1ActionEventRepository implements ActionEventRepository {
       const saved = await runStatement(statements.value[0]!);
       if (Result.isFailure(saved)) return saved;
       if (!saved.value.success) {
-        return Result.fail(repositoryError(saved.value.error, "Action eventのappendに失敗しました"));
+        return Result.fail(
+          repositoryError(saved.value.error, "Action eventのappendに失敗しました"),
+        );
       }
       return Result.succeed((saved.value.meta?.changes ?? 0) > 0 ? "created" : "existing");
     }
@@ -211,7 +212,9 @@ export class D1ActionEventRepository implements ActionEventRepository {
     if (Result.isFailure(saved)) return saved;
     const failed = saved.value.find((result) => !result.success);
     if (failed) {
-      return Result.fail(repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"));
+      return Result.fail(
+        repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"),
+      );
     }
     return Result.succeed((saved.value[0]?.meta?.changes ?? 0) > 0 ? "created" : "existing");
   }
@@ -235,7 +238,9 @@ export class D1ActionEventRepository implements ActionEventRepository {
       if (Result.isFailure(saved)) return saved;
       const failed = saved.value.find((result) => !result.success);
       return failed
-        ? Result.fail(repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"))
+        ? Result.fail(
+            repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"),
+          )
         : Result.succeed(undefined);
     }
 
