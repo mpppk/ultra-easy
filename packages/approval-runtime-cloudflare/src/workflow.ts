@@ -7,6 +7,7 @@ import {
   actionEventRecord,
   actionRuntimeTransitionEvents,
   advanceApprovalRuntime,
+  ConsoleTelemetrySink,
   ApproverResolverProviderError,
   expireApprovalRuntime,
   nextApprovalRuntimeExpiry,
@@ -196,13 +197,19 @@ function loadFailure(
   };
 }
 
-function resolverFor(env: ActionWorkflowEnv, organizationId: OrganizationId): ApproverResolver {
+function resolverFor(
+  env: ActionWorkflowEnv,
+  organizationId: OrganizationId,
+  actionRequestId: ActionRequestId,
+): ApproverResolver {
   return new OpenFgaApproverResolver(
     new OpenFgaClient({
       apiUrl: env.OPENFGA_API_URL,
       storeId: env.OPENFGA_STORE_ID,
       authorizationModelId: env.OPENFGA_AUTHORIZATION_MODEL_ID,
       organizationId,
+      actionRequestId,
+      telemetry: new ConsoleTelemetrySink(),
       ...(env.OPENFGA_ASSUME_LIST_USERS_COMPLETE === "true"
         ? { listUsersCompleteness: "assume_complete" as const }
         : {}),
@@ -247,7 +254,7 @@ async function initializeRuntime(
 
   const started = await startApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     startedAt,
   });
   if (Result.isFailure(started)) return interpreterFailure(started.error);
@@ -276,7 +283,7 @@ async function recordDecision(
 
   const recorded = await recordApprovalDecision({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     state,
     event,
   });
@@ -305,7 +312,7 @@ async function advanceRuntime(
 
   const advanced = await advanceApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     state,
     now,
   });
@@ -334,7 +341,7 @@ async function expireRuntime(
 
   const expired = await expireApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId),
+    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
     state,
     now,
   });
