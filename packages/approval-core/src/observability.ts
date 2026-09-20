@@ -268,3 +268,15 @@ export class MemoryTelemetrySink implements TelemetrySink {
     this.records.push(record);
   }
 }
+
+/**
+ * Production default for Workers: emits one JSON object per record.
+ * Records are constructed from allow-listed correlation/attribute types only;
+ * callers must never attach raw Action input, Decision comments, attachment
+ * contents, credentials, or arbitrary Error objects.
+ */
+export class ConsoleTelemetrySink implements TelemetrySink {
+  emit(record: TelemetryRecord): void {
+    console.log(JSON.stringify(record));
+  }
+}
