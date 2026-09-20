@@ -434,10 +434,7 @@ export class D1NotificationOutboxRepository {
     }
     const loaded = await this.loadDelivery({
       organizationId: input.entry.organizationId,
-      notificationKey: notificationDeliveryKey({
-        notificationKey: input.entry.notificationKey,
-        recipientUserId: input.recipientUserId,
-      }),
+      notificationKey: input.entry.notificationKey,
       recipientUserId: input.recipientUserId,
     });
     if (Result.isFailure(loaded)) return loaded;
@@ -565,7 +562,10 @@ export class D1NotificationOutboxRepository {
     return {
       organizationId: input.entry.organizationId,
       actionRequestId: input.entry.actionRequestId,
-      notificationKey: input.entry.notificationKey,
+      notificationKey: notificationDeliveryKey({
+        notificationKey: input.entry.notificationKey,
+        recipientUserId: input.recipientUserId,
+      }),
       eventKey: input.entry.eventKey,
       eventType: input.entry.eventType,
       event: input.event,
