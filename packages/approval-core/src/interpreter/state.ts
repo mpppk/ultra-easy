@@ -182,14 +182,19 @@ export function cancelPendingTasks(state: ApprovalRuntimeState, closedAt: string
 export function cancelApprovalRuntimeState(
   state: ApprovalRuntimeState,
   cancelledAt: string,
-): { state: ApprovalRuntimeState; duplicate: boolean } {
-  if (state.status === "cancelled") return { state: cloneState(state), duplicate: true };
+): { state: ApprovalRuntimeState; duplicate: boolean; cancelled: boolean } {
+  if (state.status === "cancelled") {
+    return { state: cloneState(state), duplicate: true, cancelled: true };
+  }
+  if (state.status !== "pending") {
+    return { state: cloneState(state), duplicate: false, cancelled: false };
+  }
 
   const next = cloneState(state);
   next.status = "cancelled";
   next.completedAt = cancelledAt;
   cancelPendingTasks(next, cancelledAt);
-  return { state: next, duplicate: false };
+  return { state: next, duplicate: false, cancelled: true };
 }
 
 export function updateRootStatus(
