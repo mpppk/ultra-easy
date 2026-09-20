@@ -228,9 +228,7 @@ async function persistProjection(input: {
     state: input.state,
     events,
   });
-  return Result.isFailure(stored)
-    ? retry(stored.error)
-    : { type: "advanced", state: input.state };
+  return Result.isFailure(stored) ? retry(stored.error) : { type: "advanced", state: input.state };
 }
 
 async function initializeRuntime(
@@ -505,22 +503,25 @@ async function projectActionResult(input: {
     }),
   );
 
-  const saved = await new D1ActionResultProjectionRepository(input.env.DB).save({
-    organizationId: loaded.plan.organizationId,
-    actionRequestId: loaded.plan.actionRequestId,
-    workflowInstanceId: input.workflowInstanceId,
-    status: input.execution.status,
-    ...(input.execution.guaranteeLevel !== undefined
-      ? { guaranteeLevel: input.execution.guaranteeLevel }
-      : {}),
-    ...(input.execution.idempotencyKey !== undefined
-      ? { idempotencyKey: input.execution.idempotencyKey }
-      : {}),
-    ...(result !== undefined ? { result } : {}),
-    ...(input.execution.code !== undefined ? { code: input.execution.code } : {}),
-    ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
-    completedAt: input.completedAt,
-  }, events);
+  const saved = await new D1ActionResultProjectionRepository(input.env.DB).save(
+    {
+      organizationId: loaded.plan.organizationId,
+      actionRequestId: loaded.plan.actionRequestId,
+      workflowInstanceId: input.workflowInstanceId,
+      status: input.execution.status,
+      ...(input.execution.guaranteeLevel !== undefined
+        ? { guaranteeLevel: input.execution.guaranteeLevel }
+        : {}),
+      ...(input.execution.idempotencyKey !== undefined
+        ? { idempotencyKey: input.execution.idempotencyKey }
+        : {}),
+      ...(result !== undefined ? { result } : {}),
+      ...(input.execution.code !== undefined ? { code: input.execution.code } : {}),
+      ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
+      completedAt: input.completedAt,
+    },
+    events,
+  );
   if (Result.isFailure(saved)) {
     return Result.fail(
       new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
