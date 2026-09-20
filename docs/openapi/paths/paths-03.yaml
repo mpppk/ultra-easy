@@ -64,6 +64,8 @@
         $ref: ../components/common.yaml#/responses/Conflict
       '422':
         $ref: ../components/common.yaml#/responses/UnprocessableEntity
+      '429':
+        $ref: ../components/common.yaml#/responses/TooManyRequests
 /v1/organizations/{organizationId}/approval-commands/{commandId}:
   get:
     tags:
