@@ -88,24 +88,32 @@ export type GovernanceWriteContext = {
 };
 
 export interface GovernancePersistence {
-  publishActionDefinition(input: GovernanceWriteContext & {
-    definition: ActionDefinition;
-  }): Result.ResultAsync<void, GovernancePersistenceError>;
+  publishActionDefinition(
+    input: GovernanceWriteContext & {
+      definition: ActionDefinition;
+    },
+  ): Result.ResultAsync<void, GovernancePersistenceError>;
 
-  publishApprovalPolicy(input: GovernanceWriteContext & {
-    version: number;
-    policy: ApprovalPolicyDefinition;
-  }): Result.ResultAsync<void, GovernancePersistenceError>;
+  publishApprovalPolicy(
+    input: GovernanceWriteContext & {
+      version: number;
+      policy: ApprovalPolicyDefinition;
+    },
+  ): Result.ResultAsync<void, GovernancePersistenceError>;
 
-  updateApprovalPolicyBinding(input: GovernanceWriteContext & {
-    binding: ApprovalPolicyBinding;
-  }): Result.ResultAsync<void, GovernancePersistenceError>;
+  updateApprovalPolicyBinding(
+    input: GovernanceWriteContext & {
+      binding: ApprovalPolicyBinding;
+    },
+  ): Result.ResultAsync<void, GovernancePersistenceError>;
 
-  recordForceCancel(input: GovernanceWriteContext & {
-    targetActionRequestId: ActionRequestId;
-    reason: string;
-    postReviewRequired: true;
-  }): Result.ResultAsync<void, GovernancePersistenceError>;
+  recordForceCancel(
+    input: GovernanceWriteContext & {
+      targetActionRequestId: ActionRequestId;
+      reason: string;
+      postReviewRequired: true;
+    },
+  ): Result.ResultAsync<void, GovernancePersistenceError>;
 }
 
 export class WorkflowCancellationError extends Error {
@@ -144,7 +152,9 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function requireActor(request: ActionExecutionRequest): Result.Result<PrincipalRef, ActionExecutorError> {
+function requireActor(
+  request: ActionExecutionRequest,
+): Result.Result<PrincipalRef, ActionExecutorError> {
   return request.actor
     ? Result.succeed(request.actor)
     : fail("governance_actor_missing", "Governance actionにはtrusted actorが必要です");
@@ -187,7 +197,11 @@ export class GovernanceActionExecutor implements ActionExecutor {
     if (Result.isFailure(actor)) return actor;
 
     const input = record(request.action.input);
-    if (!input) return fail("invalid_governance_input", "Governance action inputはobjectである必要があります");
+    if (!input)
+      return fail(
+        "invalid_governance_input",
+        "Governance action inputはobjectである必要があります",
+      );
 
     const context: GovernanceWriteContext = {
       organizationId: request.organizationId,
@@ -209,7 +223,10 @@ export class GovernanceActionExecutor implements ActionExecutor {
         ) {
           return fail("invalid_action_definition", "publishするAction Definitionが不正です");
         }
-        const published = await this.persistence.publishActionDefinition({ ...context, definition });
+        const published = await this.persistence.publishActionDefinition({
+          ...context,
+          definition,
+        });
         if (Result.isFailure(published)) return Result.fail(wrapPersistence(published.error));
         return Result.succeed({
           status: "succeeded",

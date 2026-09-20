@@ -171,7 +171,9 @@ class Plans implements MaterializedPlanRepository {
 
   load(input: Parameters<MaterializedPlanRepository["load"]>[0]) {
     const plan = this.values.get(String(input.actionRequestId));
-    return Promise.resolve(plan ? ({ type: "found", plan } as const) : ({ type: "not_found" } as const));
+    return Promise.resolve(
+      plan ? ({ type: "found", plan } as const) : ({ type: "not_found" } as const),
+    );
   }
 }
 
@@ -179,7 +181,9 @@ class MetaPolicyResolver implements VersionedPolicyBindingResolver {
   resolve(
     input: Parameters<VersionedPolicyBindingResolver["resolve"]>[0],
   ): Result.ResultAsync<readonly VersionedApprovalPolicyBinding[], ActionRequestDependencyError> {
-    if (String(input.context.action.type) !== String(GOVERNANCE_ACTION_TYPES.approvalPolicyPublish)) {
+    if (
+      String(input.context.action.type) !== String(GOVERNANCE_ACTION_TYPES.approvalPolicyPublish)
+    ) {
       return Promise.resolve(Result.succeed([]));
     }
 
@@ -252,7 +256,9 @@ class Cancellation implements WorkflowCancellationControl {
     const transition = cancelApprovalRuntimeState(this.state, input.cancelledAt);
     if (!transition.cancelled) {
       return Promise.resolve(
-        Result.fail(new WorkflowCancellationError("target_not_pending", false, "target not pending")),
+        Result.fail(
+          new WorkflowCancellationError("target_not_pending", false, "target not pending"),
+        ),
       );
     }
     this.state = transition.state;
@@ -436,7 +442,11 @@ describe("M7 governance acceptance", () => {
     });
     assert(Result.isFailure(invalid));
     expect(invalid.error.code).toBe("execution_failed");
-    expect(GOVERNANCE_ACTION_DEFINITIONS.some((item: ActionDefinition) => String(item.actionType) === "admin.force_approve")).toBe(false);
+    expect(
+      GOVERNANCE_ACTION_DEFINITIONS.some(
+        (item: ActionDefinition) => String(item.actionType) === "admin.force_approve",
+      ),
+    ).toBe(false);
     expect(h.cancellation.state.status).toBe("pending");
     expect(h.persistence.forceCancels).toHaveLength(0);
   });

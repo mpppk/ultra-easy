@@ -71,7 +71,12 @@ async function run(statement: D1PreparedStatementLike) {
     return Result.succeed(result);
   } catch (error) {
     return Result.fail(
-      persistenceError("governance_repository_error", true, error, "Governance writeに失敗しました"),
+      persistenceError(
+        "governance_repository_error",
+        true,
+        error,
+        "Governance writeに失敗しました",
+      ),
     );
   }
 }
@@ -104,7 +109,12 @@ async function all<T>(
     return Result.succeed(rows.results) as Result.Result<T[], GovernancePersistenceError>;
   } catch (error) {
     return Result.fail(
-      persistenceError("governance_repository_error", true, error, "Governance rows取得に失敗しました"),
+      persistenceError(
+        "governance_repository_error",
+        true,
+        error,
+        "Governance rows取得に失敗しました",
+      ),
     );
   }
 }
@@ -124,7 +134,12 @@ function json(value: unknown): Result.Result<string, GovernancePersistenceError>
     return Result.succeed(JSON.stringify(value));
   } catch (error) {
     return Result.fail(
-      persistenceError("governance_json_invalid", false, error, "Governance JSONをserializeできません"),
+      persistenceError(
+        "governance_json_invalid",
+        false,
+        error,
+        "Governance JSONをserializeできません",
+      ),
     );
   }
 }
@@ -321,14 +336,13 @@ export class D1GovernanceRepository implements GovernancePersistence {
     organizationId: OrganizationId;
     sourceActionRequestId: string;
   }): Result.ResultAsync<
-    | {
-        targetActionRequestId: string;
-        actor: PrincipalRef;
-        reason: string;
-        occurredAt: string;
-        postReviewRequired: true;
-      }
-    | null,
+    {
+      targetActionRequestId: string;
+      actor: PrincipalRef;
+      reason: string;
+      occurredAt: string;
+      postReviewRequired: true;
+    } | null,
     GovernancePersistenceError
   > {
     const row = await first<ForceCancelAuditRow>(
