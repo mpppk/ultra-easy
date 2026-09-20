@@ -13,6 +13,8 @@ export * from "./interpreter/index.ts";
 export * from "./materialization.ts";
 export type * from "./materialized-plan-repository.ts";
 export * from "./notification.ts";
+export * from "./observability.ts";
+export * from "./rate-limit.ts";
 export * from "./policy-evaluator.ts";
 export * from "./schema.ts";
 export * from "./semantic-validator.ts";
