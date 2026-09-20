@@ -385,7 +385,9 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       actionRequestId: plan.actionRequestId,
     });
     assert(Result.isSuccess(audit));
-    expect(audit.value.filter((record) => record.event.type === "workflow.started")).toHaveLength(1);
+    expect(audit.value.filter((record) => record.event.type === "workflow.started")).toHaveLength(
+      1,
+    );
     expect(audit.value.filter((record) => record.event.type === "step.activated")).toHaveLength(1);
     expect(audit.value.filter((record) => record.event.type === "step.approved")).toHaveLength(1);
     await introspector.dispose();
