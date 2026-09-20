@@ -150,9 +150,7 @@ const parseUnknownJson = Result.fn({
     repositoryError(error, "notification outbox JSONをparseできません"),
 });
 
-function parseJson<T>(
-  value: string,
-): Result.Result<T, D1NotificationOutboxRepositoryError> {
+function parseJson<T>(value: string): Result.Result<T, D1NotificationOutboxRepositoryError> {
   const parsed = parseUnknownJson(value);
   return Result.isFailure(parsed) ? parsed : Result.succeed(parsed.value as T);
 }
@@ -227,12 +225,8 @@ function mapOutbox(row: StoredOutboxRow): NotificationOutboxEntry {
     eventKey: row.event_key,
     eventType: row.event_type,
     recipientMode: row.recipient_mode,
-    ...(row.recipient_user_id !== null
-      ? { recipientUserId: row.recipient_user_id as UserId }
-      : {}),
-    ...(row.materialized_step_id !== null
-      ? { materializedStepId: row.materialized_step_id }
-      : {}),
+    ...(row.recipient_user_id !== null ? { recipientUserId: row.recipient_user_id as UserId } : {}),
+    ...(row.materialized_step_id !== null ? { materializedStepId: row.materialized_step_id } : {}),
     status: row.status,
     attemptCount: row.attempt_count,
     ...(row.last_error !== null ? { lastError: row.last_error } : {}),
@@ -303,9 +297,7 @@ export class D1NotificationOutboxRepository {
         )
         .bind(input.organizationId, input.outboxKey),
     );
-    return Result.isFailure(row)
-      ? row
-      : Result.succeed(row.value ? mapOutbox(row.value) : null);
+    return Result.isFailure(row) ? row : Result.succeed(row.value ? mapOutbox(row.value) : null);
   }
 
   async markDispatched(input: {
@@ -328,9 +320,7 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(
-          repositoryError(result.value.error, "outbox dispatched更新に失敗しました"),
-        );
+      : Result.fail(repositoryError(result.value.error, "outbox dispatched更新に失敗しました"));
   }
 
   async markDispatchFailed(input: {
@@ -352,9 +342,7 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(
-          repositoryError(result.value.error, "outbox failure更新に失敗しました"),
-        );
+      : Result.fail(repositoryError(result.value.error, "outbox failure更新に失敗しました"));
   }
 
   async loadSourceEvent(
@@ -457,10 +445,7 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(inserted)) return inserted;
     if (!inserted.value.success) {
       return Result.fail(
-        repositoryError(
-          inserted.value.error,
-          "notification deliveryの作成に失敗しました",
-        ),
+        repositoryError(inserted.value.error, "notification deliveryの作成に失敗しました"),
       );
     }
     const loaded = await this.loadDelivery({
@@ -491,9 +476,7 @@ export class D1NotificationOutboxRepository {
         )
         .bind(input.organizationId, input.notificationKey, input.recipientUserId),
     );
-    return Result.isFailure(row)
-      ? row
-      : Result.succeed(row.value ? mapDelivery(row.value) : null);
+    return Result.isFailure(row) ? row : Result.succeed(row.value ? mapDelivery(row.value) : null);
   }
 
   async markDeliverySent(input: {
@@ -526,9 +509,7 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(
-          repositoryError(result.value.error, "notification sent更新に失敗しました"),
-        );
+      : Result.fail(repositoryError(result.value.error, "notification sent更新に失敗しました"));
   }
 
   async markDeliveryFailed(input: {
@@ -561,9 +542,7 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(
-          repositoryError(result.value.error, "notification failure更新に失敗しました"),
-        );
+      : Result.fail(repositoryError(result.value.error, "notification failure更新に失敗しました"));
   }
 
   async health(): Result.ResultAsync<
