@@ -4,6 +4,7 @@ import type { WorkflowEvent, WorkflowSleepDuration, WorkflowStep } from "cloudfl
 import type { D1Database } from "@cloudflare/workers-types";
 
 import {
+  actionEventRecord,
   actionRuntimeTransitionEvents,
   advanceApprovalRuntime,
   ApproverResolverProviderError,
@@ -13,6 +14,7 @@ import {
   startApprovalRuntime,
 } from "@app/approval-core";
 import type {
+  ActionEventRecord,
   ActionExecutionGuaranteeLevel,
   ActionExecutionResult,
   ActionRequestId,
@@ -424,6 +426,85 @@ async function projectActionResult(input: {
     result = parsed.value;
   }
 
+  const events: ActionEventRecord[] = [];
+  if (input.execution.authorizationEvidence) {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.execution.authorizationEvidence.evaluatedAt,
+        event: {
+          type: "action.reauthorized",
+          actionRequestId: loaded.plan.actionRequestId,
+          evidence: input.execution.authorizationEvidence,
+        },
+      }),
+    );
+  } else if (input.execution.status === "authorization_revoked") {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.reauthorization_denied",
+          actionRequestId: loaded.plan.actionRequestId,
+          code: input.execution.code ?? "authorization_revoked",
+          reason: input.execution.message ?? "Action authorization was revoked",
+        },
+      }),
+    );
+  } else if (input.execution.status === "authorization_check_failed") {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.reauthorization_check_failed",
+          actionRequestId: loaded.plan.actionRequestId,
+          code: input.execution.code ?? "authorization_check_failed",
+        },
+      }),
+    );
+  }
+
+  if (input.execution.idempotencyKey) {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.execution_started",
+          actionRequestId: loaded.plan.actionRequestId,
+          idempotencyKey: input.execution.idempotencyKey,
+        },
+      }),
+    );
+  }
+  if (input.execution.status === "execution_failed") {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.execution_failed",
+          actionRequestId: loaded.plan.actionRequestId,
+          code: input.execution.code ?? "execution_failed",
+          retriable: input.execution.retriable ?? false,
+        },
+      }),
+    );
+  }
+  events.push(
+    actionEventRecord({
+      organizationId: loaded.plan.organizationId,
+      occurredAt: input.completedAt,
+      event: {
+        type: "action.completed",
+        actionRequestId: loaded.plan.actionRequestId,
+        result: input.execution.status,
+      },
+    }),
+  );
+
   const saved = await new D1ActionResultProjectionRepository(input.env.DB).save({
     organizationId: loaded.plan.organizationId,
     actionRequestId: loaded.plan.actionRequestId,
@@ -439,7 +520,7 @@ async function projectActionResult(input: {
     ...(input.execution.code !== undefined ? { code: input.execution.code } : {}),
     ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
     completedAt: input.completedAt,
-  });
+  }, events);
   if (Result.isFailure(saved)) {
     return Result.fail(
       new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
