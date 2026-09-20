@@ -145,7 +145,10 @@ export class D1ActionResultProjectionRepository {
     const batchDb = this.db as Partial<D1BatchDatabaseLike>;
     if (typeof batchDb.batch !== "function") {
       return Result.fail(
-        repositoryError(undefined, "D1 batch()が利用できないためeventとresultをatomicに保存できません"),
+        repositoryError(
+          undefined,
+          "D1 batch()が利用できないためeventとresultをatomicに保存できません",
+        ),
       );
     }
 
