@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import { notificationKeyForEvent } from "@app/approval-core";
+import { notificationDeliveryKey, notificationKeyForEvent } from "@app/approval-core";
 import type {
   ActionEvent,
   ActionEventRecord,
@@ -434,7 +434,10 @@ export class D1NotificationOutboxRepository {
     }
     const loaded = await this.loadDelivery({
       organizationId: input.entry.organizationId,
-      notificationKey: input.entry.notificationKey,
+      notificationKey: notificationDeliveryKey({
+        notificationKey: input.entry.notificationKey,
+        recipientUserId: input.recipientUserId,
+      }),
       recipientUserId: input.recipientUserId,
     });
     if (Result.isFailure(loaded)) return loaded;
