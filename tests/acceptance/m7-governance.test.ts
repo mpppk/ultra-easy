@@ -4,7 +4,7 @@ import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   ActionRequestApplicationService,
-  type ActionRequestDependencyError,
+  ActionRequestDependencyError,
   type ActionWorkflowStarter,
   type TrustedActionRequestContext,
   type VersionedPolicyBindingResolver,
@@ -13,7 +13,6 @@ import {
   GOVERNANCE_ACTION_DEFINITIONS,
   GOVERNANCE_ACTION_TYPES,
   GovernanceActionExecutor,
-  GovernancePersistenceError,
   WorkflowCancellationError,
   always,
   approve,
@@ -275,10 +274,12 @@ function createHarness() {
       const started = await runtime.start({ plan: input.plan, startedAt: input.startedAt });
       if (Result.isFailure(started)) {
         return Result.fail(
-          new (class extends Error {
-            readonly code = "runtime_start_failed";
-            readonly retriable = false;
-          })(started.error.message) as ActionRequestDependencyError,
+          new ActionRequestDependencyError(
+            "runtime_start_failed",
+            false,
+            started.error.message,
+            started.error,
+          ),
         );
       }
       return Result.succeed({ workflowInstanceId: String(input.plan.actionRequestId) });
