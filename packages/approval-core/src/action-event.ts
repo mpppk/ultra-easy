@@ -244,7 +244,10 @@ export function actionPlanAuditEvents(input: {
   ];
 }
 
-function findStep(flow: MaterializedFlow, materializedStepId: MaterializedStepId): MaterializedApprovalStep | null {
+function findStep(
+  flow: MaterializedFlow,
+  materializedStepId: MaterializedStepId,
+): MaterializedApprovalStep | null {
   if (flow.type === "approval") {
     return String(flow.materializedStepId) === String(materializedStepId) ? flow : null;
   }
@@ -314,7 +317,11 @@ export function actionRuntimeTransitionEvents(input: {
       );
     }
 
-    if (previous?.status === task.status || task.status === "pending" || task.status === "cancelled") {
+    if (
+      previous?.status === task.status ||
+      task.status === "pending" ||
+      task.status === "cancelled"
+    ) {
       continue;
     }
     const occurredAt = task.closedAt ?? input.nextState.completedAt ?? input.nextState.startedAt;
