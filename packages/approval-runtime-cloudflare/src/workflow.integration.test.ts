@@ -34,8 +34,8 @@ import type {
 import {
   D1ActionEventRepository,
   D1ActionResultProjectionRepository,
-  D1GovernanceRepository,
   D1ApprovalRuntimeProjectionRepository,
+  D1GovernanceRepository,
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
 
@@ -667,5 +667,4 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       postReviewRequired: true,
     });
   });
-
 });
