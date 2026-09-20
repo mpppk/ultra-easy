@@ -16,7 +16,10 @@ import type {
   D1RunResultLike,
 } from "./materialized-plan-repository.ts";
 
-export type NotificationRecipientMode = "direct_user" | "task_candidates" | "action_requester";
+export type NotificationRecipientMode =
+  | "direct_user"
+  | "task_candidates"
+  | "action_requester";
 export type NotificationOutboxStatus = "pending" | "dispatched" | "failed";
 export type NotificationDeliveryStatus = "pending" | "sent" | "failed";
 
@@ -104,8 +107,13 @@ export class D1NotificationOutboxRepositoryError extends Error {
   readonly retriable = true;
 }
 
-function repositoryError(error: unknown, fallback: string): D1NotificationOutboxRepositoryError {
-  return new D1NotificationOutboxRepositoryError(error instanceof Error ? error.message : fallback);
+function repositoryError(
+  error: unknown,
+  fallback: string,
+): D1NotificationOutboxRepositoryError {
+  return new D1NotificationOutboxRepositoryError(
+    error instanceof Error ? error.message : fallback,
+  );
 }
 
 const runStatement = Result.fn({
@@ -208,7 +216,9 @@ function mapOutbox(row: StoredOutboxRow): NotificationOutboxEntry {
     ...(row.recipient_user_id !== null
       ? { recipientUserId: row.recipient_user_id as UserId }
       : {}),
-    ...(row.materialized_step_id !== null ? { materializedStepId: row.materialized_step_id } : {}),
+    ...(row.materialized_step_id !== null
+      ? { materializedStepId: row.materialized_step_id }
+      : {}),
     status: row.status,
     attemptCount: row.attempt_count,
     ...(row.last_error !== null ? { lastError: row.last_error } : {}),
@@ -304,7 +314,9 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(repositoryError(result.value.error, "outbox dispatched更新に失敗しました"));
+      : Result.fail(
+          repositoryError(result.value.error, "outbox dispatched更新に失敗しました"),
+        );
   }
 
   async markDispatchFailed(input: {
@@ -326,7 +338,9 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(repositoryError(result.value.error, "outbox failure更新に失敗しました"));
+      : Result.fail(
+          repositoryError(result.value.error, "outbox failure更新に失敗しました"),
+        );
   }
 
   async loadSourceEvent(
@@ -429,7 +443,10 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(inserted)) return inserted;
     if (!inserted.value.success) {
       return Result.fail(
-        repositoryError(inserted.value.error, "notification deliveryの作成に失敗しました"),
+        repositoryError(
+          inserted.value.error,
+          "notification deliveryの作成に失敗しました",
+        ),
       );
     }
     const loaded = await this.loadDelivery({
@@ -495,7 +512,9 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(repositoryError(result.value.error, "notification sent更新に失敗しました"));
+      : Result.fail(
+          repositoryError(result.value.error, "notification sent更新に失敗しました"),
+        );
   }
 
   async markDeliveryFailed(input: {
@@ -528,7 +547,9 @@ export class D1NotificationOutboxRepository {
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(repositoryError(result.value.error, "notification failure更新に失敗しました"));
+      : Result.fail(
+          repositoryError(result.value.error, "notification failure更新に失敗しました"),
+        );
   }
 
   async health(): Result.ResultAsync<
@@ -544,7 +565,9 @@ export class D1NotificationOutboxRepository {
     );
     if (Result.isFailure(failedOutbox)) return failedOutbox;
     const failedDeliveries = await firstRow<StoredCountRow>(
-      this.db.prepare("SELECT COUNT(*) AS count FROM notification_deliveries WHERE status = 'failed'"),
+      this.db.prepare(
+        "SELECT COUNT(*) AS count FROM notification_deliveries WHERE status = 'failed'",
+      ),
     );
     if (Result.isFailure(failedDeliveries)) return failedDeliveries;
     return Result.succeed({
