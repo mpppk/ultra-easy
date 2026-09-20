@@ -108,16 +108,20 @@ function createRepositories() {
   };
 }
 
-function activatedEvent(target: {
-  type: "user";
-  userId: UserId;
-  sourceKind: "user";
-} | {
-  type: "relation";
-  object: AuthorizationObjectRef;
-  relation: RelationName;
-  sourceKind: "relation";
-}) {
+function activatedEvent(
+  target:
+    | {
+        type: "user";
+        userId: UserId;
+        sourceKind: "user";
+      }
+    | {
+        type: "relation";
+        object: AuthorizationObjectRef;
+        relation: RelationName;
+        sourceKind: "relation";
+      },
+) {
   return actionEventRecord({
     organizationId,
     occurredAt: "2026-09-20T08:00:00.000Z",
