@@ -16,10 +16,7 @@ import type {
   D1RunResultLike,
 } from "./materialized-plan-repository.ts";
 
-export type NotificationRecipientMode =
-  | "direct_user"
-  | "task_candidates"
-  | "action_requester";
+export type NotificationRecipientMode = "direct_user" | "task_candidates" | "action_requester";
 export type NotificationOutboxStatus = "pending" | "dispatched" | "failed";
 export type NotificationDeliveryStatus = "pending" | "sent" | "failed";
 
@@ -107,13 +104,8 @@ export class D1NotificationOutboxRepositoryError extends Error {
   readonly retriable = true;
 }
 
-function repositoryError(
-  error: unknown,
-  fallback: string,
-): D1NotificationOutboxRepositoryError {
-  return new D1NotificationOutboxRepositoryError(
-    error instanceof Error ? error.message : fallback,
-  );
+function repositoryError(error: unknown, fallback: string): D1NotificationOutboxRepositoryError {
+  return new D1NotificationOutboxRepositoryError(error instanceof Error ? error.message : fallback);
 }
 
 const runStatement = Result.fn({
@@ -122,26 +114,48 @@ const runStatement = Result.fn({
     repositoryError(error, "notification outbox statementの実行に失敗しました"),
 });
 
-const firstRow = Result.fn({
-  try: async <T>(statement: D1PreparedStatementLike): Promise<T | null> => statement.first<T>(),
+const firstUnknownRow = Result.fn({
+  try: async (statement: D1PreparedStatementLike): Promise<unknown | null> =>
+    statement.first<unknown>(),
   catch: (error): D1NotificationOutboxRepositoryError =>
     repositoryError(error, "notification outbox rowの取得に失敗しました"),
 });
 
-const allRows = Result.fn({
-  try: async <T>(statement: D1PreparedStatementLike): Promise<T[]> => {
+async function firstRow<T>(
+  statement: D1PreparedStatementLike,
+): Result.ResultAsync<T | null, D1NotificationOutboxRepositoryError> {
+  const row = await firstUnknownRow(statement);
+  return Result.isFailure(row) ? row : Result.succeed(row.value as T | null);
+}
+
+const allUnknownRows = Result.fn({
+  try: async (statement: D1PreparedStatementLike): Promise<unknown[]> => {
     if (!statement.all) return Promise.reject(new Error("D1 all()が利用できません"));
-    return (await statement.all<T>()).results;
+    return (await statement.all<unknown>()).results;
   },
   catch: (error): D1NotificationOutboxRepositoryError =>
     repositoryError(error, "notification outbox rowsの取得に失敗しました"),
 });
 
-const parseJson = Result.fn({
-  try: <T>(value: string): T => JSON.parse(value) as T,
+async function allRows<T>(
+  statement: D1PreparedStatementLike,
+): Result.ResultAsync<T[], D1NotificationOutboxRepositoryError> {
+  const rows = await allUnknownRows(statement);
+  return Result.isFailure(rows) ? rows : Result.succeed(rows.value as T[]);
+}
+
+const parseUnknownJson = Result.fn({
+  try: (value: string): unknown => JSON.parse(value) as unknown,
   catch: (error): D1NotificationOutboxRepositoryError =>
     repositoryError(error, "notification outbox JSONをparseできません"),
 });
+
+function parseJson<T>(
+  value: string,
+): Result.Result<T, D1NotificationOutboxRepositoryError> {
+  const parsed = parseUnknownJson(value);
+  return Result.isFailure(parsed) ? parsed : Result.succeed(parsed.value as T);
+}
 
 function outboxKey(eventKey: string): string {
   return `outbox:${eventKey}`;
