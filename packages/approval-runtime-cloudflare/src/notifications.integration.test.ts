@@ -13,10 +13,7 @@ import {
   type OrganizationId,
   type UserId,
 } from "@app/approval-core";
-import {
-  D1ActionEventRepository,
-  D1NotificationOutboxRepository,
-} from "@app/approval-d1";
+import { D1ActionEventRepository, D1NotificationOutboxRepository } from "@app/approval-d1";
 
 import {
   consumeNotificationMessage,
