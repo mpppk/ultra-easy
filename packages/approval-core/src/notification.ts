@@ -9,6 +9,7 @@ export type NotificationRequest = {
   notificationKey: string;
   eventKey: string;
   eventType: ActionEvent["type"];
+  event: ActionEvent;
   recipientUserId: UserId;
   occurredAt: string;
 };
