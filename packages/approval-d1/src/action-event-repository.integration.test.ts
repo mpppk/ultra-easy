@@ -87,6 +87,9 @@ function createRepository() {
   sqlite.exec(
     readFileSync(new URL("../migrations/0007_action_events.sql", import.meta.url), "utf8"),
   );
+  sqlite.exec(
+    readFileSync(new URL("../migrations/0008_notification_outbox.sql", import.meta.url), "utf8"),
+  );
   return {
     repository: new D1ActionEventRepository(new SqliteD1Database(sqlite)),
     sqlite,
@@ -144,7 +147,7 @@ describe("D1ActionEventRepository", () => {
   });
 
   it("append sequenceでAction auditを再構成できる", async () => {
-    const { repository } = createRepository();
+    const { repository, sqlite } = createRepository();
     const records = [
       actionEventRecord({
         organizationId,
@@ -179,5 +182,18 @@ describe("D1ActionEventRepository", () => {
     expect(loaded.value.map((record) => record.eventKey)).toEqual(
       records.map((record) => record.eventKey),
     );
+
+    const outbox = sqlite
+      .prepare(
+        "SELECT event_type, notification_key, status FROM outbox_events ORDER BY sequence ASC",
+      )
+      .all() as Array<{ event_type: string; notification_key: string; status: string }>;
+    expect(outbox).toEqual([
+      {
+        event_type: "action.completed",
+        notification_key: `notification:${records[2]?.eventKey}`,
+        status: "pending",
+      },
+    ]);
   });
 });

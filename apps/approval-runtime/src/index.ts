@@ -5,18 +5,24 @@ import type {
   ActionRequestId,
   ApprovalDecisionEvent,
   ApprovalTaskId,
+  NotificationSink,
   UserId,
 } from "@app/approval-core";
 import {
   D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
   D1MaterializedPlanRepository,
+  D1NotificationOutboxRepository,
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
   actionWorkflowInstanceId,
+  consumeNotificationMessage,
+  dispatchNotificationOutbox,
   type ActionWorkflowEnv,
   type ActionWorkflowParams,
+  type NotificationQueueMessage,
+  type NotificationQueueProducer,
 } from "@app/approval-runtime-cloudflare";
 
 import { createPreviewPlan, isPreviewScenario, PREVIEW_ORGANIZATION_ID } from "./preview-plan.ts";
@@ -25,6 +31,7 @@ export { ActionWorkflow };
 
 type PreviewRuntimeEnv = ActionWorkflowEnv & {
   ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
+  NOTIFICATION_QUEUE: NotificationQueueProducer;
 };
 
 function json(data: unknown, init?: ResponseInit): Response {
@@ -37,6 +44,12 @@ function errorMessage(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+class PreviewNotificationSink implements NotificationSink {
+  async send() {
+    return Result.succeed(undefined);
+  }
 }
 
 /**
@@ -250,4 +263,35 @@ export default {
       return json({ error: errorMessage(error) }, { status: 500 });
     }
   },
-} satisfies ExportedHandler<PreviewRuntimeEnv>;
+
+  async scheduled(controller, env): Promise<void> {
+    const dispatched = await dispatchNotificationOutbox({
+      repository: new D1NotificationOutboxRepository(env.DB),
+      queue: env.NOTIFICATION_QUEUE,
+      now: new Date(controller.scheduledTime).toISOString(),
+    });
+    if (Result.isFailure(dispatched)) {
+      console.error("notification outbox dispatch failed", {
+        code: dispatched.error.code,
+      });
+    }
+  },
+
+  async queue(batch, env): Promise<void> {
+    const repository = new D1NotificationOutboxRepository(env.DB);
+    const sink = new PreviewNotificationSink();
+    for (const message of batch.messages) {
+      const consumed = await consumeNotificationMessage({
+        repository,
+        sink,
+        message: message.body,
+        now: new Date().toISOString(),
+      });
+      if (Result.isFailure(consumed)) {
+        message.retry();
+      } else {
+        message.ack();
+      }
+    }
+  },
+} satisfies ExportedHandler<PreviewRuntimeEnv, NotificationQueueMessage>;
