@@ -1,11 +1,13 @@
 import { Result } from "@praha/byethrow";
 
-import { sha256CanonicalJson } from "@app/approval-core";
+import { DEFAULT_APPROVAL_DECISION_RATE_LIMIT, sha256CanonicalJson } from "@app/approval-core";
 import type {
   ActionRequestId,
   ApprovalTaskId,
   JsonValue,
   OrganizationId,
+  RateLimiter,
+  RateLimitPolicy,
   UserId,
 } from "@app/approval-core";
 
@@ -48,7 +50,10 @@ function problem(input: {
   title: string;
   detail?: string;
   commandId?: string;
+  headers?: HeadersInit;
 }): Response {
+  const headers = new Headers(input.headers);
+  headers.set("content-type", "application/problem+json");
   return new Response(
     JSON.stringify({
       type: `urn:ultra-easy:problem:${input.code}`,
@@ -60,7 +65,7 @@ function problem(input: {
     }),
     {
       status: input.status,
-      headers: { "content-type": "application/problem+json" },
+      headers,
     },
   );
 }
@@ -288,6 +293,8 @@ export function createPublicHttpApi(input: {
   identityProvider: PublicHttpIdentityProvider;
   idempotencyRepository: IdempotencyRepository;
   clock: PublicHttpClock;
+  rateLimiter?: RateLimiter;
+  approvalDecisionRateLimitPolicy?: RateLimitPolicy;
 }): { fetch(request: Request): Promise<Response> } {
   return {
     async fetch(request: Request): Promise<Response> {
@@ -456,6 +463,36 @@ export function createPublicHttpApi(input: {
           organizationId,
         });
         if (user instanceof Response) return user;
+
+        if (input.rateLimiter) {
+          const limited = await input.rateLimiter.consume({
+            organizationId,
+            principal: { type: "user", id: user },
+            operation: "approval_decision.submit",
+            policy: input.approvalDecisionRateLimitPolicy ?? DEFAULT_APPROVAL_DECISION_RATE_LIMIT,
+            now: input.clock.now(),
+          });
+          if (Result.isFailure(limited)) {
+            return problem({
+              status: 503,
+              code: limited.error.code,
+              title: "Rate limit service unavailable",
+            });
+          }
+          if (!limited.value.allowed) {
+            return problem({
+              status: 429,
+              code: "rate_limit_exceeded",
+              title: "Too Many Requests",
+              headers: {
+                "retry-after": String(limited.value.retryAfterSeconds),
+                "x-ratelimit-limit": String(limited.value.limit),
+                "x-ratelimit-remaining": String(limited.value.remaining),
+                "x-ratelimit-reset": limited.value.resetAt,
+              },
+            });
+          }
+        }
 
         return idempotent({
           request,
