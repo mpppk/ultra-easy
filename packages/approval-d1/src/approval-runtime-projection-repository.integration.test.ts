@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
+import { actionEventRecord } from "@app/approval-core";
 import type {
   ActionRequestId,
   ApprovalPlanChecksum,
@@ -131,6 +132,9 @@ function createRepository() {
       "utf8",
     ),
   );
+  sqlite.exec(
+    readFileSync(new URL("../migrations/0007_action_events.sql", import.meta.url), "utf8"),
+  );
   const database = new SqliteD1Database(sqlite);
   return { repository: new D1ApprovalRuntimeProjectionRepository(database), sqlite };
 }
@@ -152,6 +156,44 @@ describe("D1ApprovalRuntimeProjectionRepository", () => {
       .get(organizationId, taskId) as { status: string; candidate_user_ids: string } | undefined;
     expect(task?.status).toBe("pending");
     expect(JSON.parse(task?.candidate_user_ids ?? "[]")).toEqual(["user:alice"]);
+  });
+
+  it("runtime projectionとdomain eventを同じbatchで保存しreplayを重複させない", async () => {
+    const { repository, sqlite } = createRepository();
+    const event = actionEventRecord({
+      organizationId,
+      occurredAt: "2026-09-13T00:00:00.000Z",
+      event: {
+        type: "workflow.started",
+        actionRequestId,
+        workflowInstanceId: "workflow:m4",
+      },
+    });
+
+    assert(
+      Result.isSuccess(
+        await repository.replace({ organizationId, state: state(), events: [event] }),
+      ),
+    );
+    assert(
+      Result.isSuccess(
+        await repository.replace({ organizationId, state: state(), events: [event] }),
+      ),
+    );
+
+    const audit = sqlite
+      .prepare(
+        "SELECT COUNT(*) AS count FROM action_events WHERE organization_id = ? AND action_request_id = ?",
+      )
+      .get(organizationId, actionRequestId) as { count: number };
+    expect(audit.count).toBe(1);
+
+    const runtime = sqlite
+      .prepare(
+        "SELECT status FROM approval_runtime_projections WHERE organization_id = ? AND action_request_id = ?",
+      )
+      .get(organizationId, actionRequestId) as { status: string };
+    expect(runtime.status).toBe("pending");
   });
 
   it("Decision後のstate/task projectionを更新する", async () => {

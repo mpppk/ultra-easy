@@ -29,6 +29,7 @@ import type {
   UserId,
 } from "@app/approval-core";
 import {
+  D1ActionEventRepository,
   D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
   D1MaterializedPlanRepository,
@@ -52,6 +53,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await testEnv.DB.batch([
+    testEnv.DB.prepare("DELETE FROM action_events"),
     testEnv.DB.prepare("DELETE FROM action_results"),
     testEnv.DB.prepare("DELETE FROM approval_tasks"),
     testEnv.DB.prepare("DELETE FROM approval_runtime_projections"),
@@ -234,6 +236,22 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     assert(Result.isSuccess(projection));
     expect(projection.value?.tasks).toHaveLength(2);
     expect(projection.value?.tasks.every((task) => task.status === "approved")).toBe(true);
+
+    const audit = await new D1ActionEventRepository(testEnv.DB).listForAction({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(audit));
+    expect(audit.value.map((record) => record.event.type)).toEqual([
+      "workflow.started",
+      "step.activated",
+      "step.approved",
+      "step.activated",
+      "step.approved",
+      "action.reauthorized",
+      "action.execution_started",
+      "action.completed",
+    ]);
   });
 
   it("parallel/allとparallel/quorumをhuman Decision eventで完走する", async () => {
@@ -361,6 +379,17 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     assert(Result.isSuccess(projection));
     expect(projection.value?.tasks).toHaveLength(1);
     expect(projection.value?.tasks[0]?.decisions).toHaveLength(1);
+
+    const audit = await new D1ActionEventRepository(testEnv.DB).listForAction({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(audit));
+    expect(audit.value.filter((record) => record.event.type === "workflow.started")).toHaveLength(
+      1,
+    );
+    expect(audit.value.filter((record) => record.event.type === "step.activated")).toHaveLength(1);
+    expect(audit.value.filter((record) => record.event.type === "step.approved")).toHaveLength(1);
     await introspector.dispose();
   });
 

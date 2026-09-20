@@ -1,0 +1,250 @@
+import { Result } from "@praha/byethrow";
+
+import { actionEventKey, ActionEventRepositoryError, canonicalizeJson } from "@app/approval-core";
+import type {
+  ActionEvent,
+  ActionEventRecord,
+  ActionEventRepository,
+  ActionRequestId,
+  JsonValue,
+  OrganizationId,
+} from "@app/approval-core";
+
+import type {
+  D1DatabaseLike,
+  D1PreparedStatementLike,
+  D1RunResultLike,
+} from "./materialized-plan-repository.ts";
+
+type StoredActionEventRow = {
+  sequence: number;
+  organization_id: string;
+  action_request_id: string;
+  event_key: string;
+  event_type: ActionEvent["type"];
+  occurred_at: string;
+  event_json: string;
+};
+
+type D1BatchDatabaseLike = D1DatabaseLike & {
+  batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]>;
+};
+
+export class D1ActionEventRepositoryError extends ActionEventRepositoryError {
+  readonly name = "D1ActionEventRepositoryError";
+
+  constructor(
+    message: string,
+    readonly conflict = false,
+    retriable = !conflict,
+  ) {
+    super(conflict ? "action_event_conflict" : "action_event_repository_error", retriable, message);
+  }
+}
+
+function repositoryError(error: unknown, fallback: string): D1ActionEventRepositoryError {
+  return error instanceof D1ActionEventRepositoryError
+    ? error
+    : new D1ActionEventRepositoryError(error instanceof Error ? error.message : fallback);
+}
+
+function serializeEvent(event: ActionEvent): Result.Result<string, D1ActionEventRepositoryError> {
+  const serialized = canonicalizeJson(event as unknown as JsonValue);
+  return Result.isFailure(serialized)
+    ? Result.fail(new D1ActionEventRepositoryError(serialized.error.message))
+    : Result.succeed(serialized.value);
+}
+
+function validateRecord(
+  record: ActionEventRecord,
+): Result.Result<string, D1ActionEventRepositoryError> {
+  const expected = actionEventKey({ organizationId: record.organizationId, event: record.event });
+  if (record.eventKey !== expected) {
+    return Result.fail(
+      new D1ActionEventRepositoryError(
+        `Action event keyがdomain eventと一致しません: expected=${expected}, actual=${record.eventKey}`,
+      ),
+    );
+  }
+  return serializeEvent(record.event);
+}
+
+export function prepareActionEventInsert(
+  db: D1DatabaseLike,
+  record: ActionEventRecord,
+): Result.Result<D1PreparedStatementLike, D1ActionEventRepositoryError> {
+  const eventJson = validateRecord(record);
+  if (Result.isFailure(eventJson)) return eventJson;
+
+  return Result.succeed(
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO action_events (
+           organization_id, action_request_id, event_key, event_type, occurred_at, event_json
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        record.organizationId,
+        record.event.actionRequestId,
+        record.eventKey,
+        record.event.type,
+        record.occurredAt,
+        eventJson.value,
+      ),
+  );
+}
+
+const runStatement = Result.fn({
+  try: async (statement: D1PreparedStatementLike): Promise<D1RunResultLike> => statement.run(),
+  catch: (error): D1ActionEventRepositoryError =>
+    repositoryError(error, "Action eventのappendに失敗しました"),
+});
+
+const runBatch = Result.fn({
+  try: async (input: {
+    db: D1BatchDatabaseLike;
+    statements: D1PreparedStatementLike[];
+  }): Promise<D1RunResultLike[]> => input.db.batch(input.statements),
+  catch: (error): D1ActionEventRepositoryError =>
+    repositoryError(error, "Action event batchのappendに失敗しました"),
+});
+
+const firstStoredRow = Result.fn({
+  try: async (statement: D1PreparedStatementLike): Promise<StoredActionEventRow | null> =>
+    statement.first<StoredActionEventRow>(),
+  catch: (error): D1ActionEventRepositoryError =>
+    repositoryError(error, "Action eventの取得に失敗しました"),
+});
+
+const allStoredRows = Result.fn({
+  try: async (statement: D1PreparedStatementLike): Promise<StoredActionEventRow[]> => {
+    if (!statement.all) {
+      return Promise.reject(new D1ActionEventRepositoryError("D1 all()が利用できません"));
+    }
+    return (await statement.all<StoredActionEventRow>()).results;
+  },
+  catch: (error): D1ActionEventRepositoryError =>
+    repositoryError(error, "Action event一覧の取得に失敗しました"),
+});
+
+const parseEvent = Result.fn({
+  try: (value: string): ActionEvent => JSON.parse(value) as ActionEvent,
+  catch: (error): D1ActionEventRepositoryError =>
+    repositoryError(error, "保存済みAction eventをparseできません"),
+});
+
+function asBatchDatabase(db: D1DatabaseLike): D1BatchDatabaseLike | null {
+  const candidate = db as Partial<D1BatchDatabaseLike>;
+  return typeof candidate.batch === "function" ? (db as D1BatchDatabaseLike) : null;
+}
+
+export class D1ActionEventRepository implements ActionEventRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async append(
+    record: ActionEventRecord,
+  ): Result.ResultAsync<"created" | "existing", D1ActionEventRepositoryError> {
+    const eventJson = validateRecord(record);
+    if (Result.isFailure(eventJson)) return eventJson;
+
+    const existing = await firstStoredRow(
+      this.db
+        .prepare(
+          `SELECT sequence, organization_id, action_request_id, event_key, event_type,
+                  occurred_at, event_json
+             FROM action_events
+            WHERE organization_id = ? AND event_key = ?`,
+        )
+        .bind(record.organizationId, record.eventKey),
+    );
+    if (Result.isFailure(existing)) return existing;
+    if (existing.value) {
+      const same =
+        existing.value.action_request_id === String(record.event.actionRequestId) &&
+        existing.value.event_type === record.event.type &&
+        existing.value.occurred_at === record.occurredAt &&
+        existing.value.event_json === eventJson.value;
+      return same
+        ? Result.succeed("existing")
+        : Result.fail(
+            new D1ActionEventRepositoryError(
+              `既存Action eventと同じeventKeyの内容が一致しません: ${record.eventKey}`,
+              true,
+            ),
+          );
+    }
+
+    const statement = prepareActionEventInsert(this.db, record);
+    if (Result.isFailure(statement)) return statement;
+    const saved = await runStatement(statement.value);
+    if (Result.isFailure(saved)) return saved;
+    if (!saved.value.success) {
+      return Result.fail(repositoryError(saved.value.error, "Action eventのappendに失敗しました"));
+    }
+    return Result.succeed((saved.value.meta?.changes ?? 0) > 0 ? "created" : "existing");
+  }
+
+  async appendMany(
+    records: readonly ActionEventRecord[],
+  ): Result.ResultAsync<void, D1ActionEventRepositoryError> {
+    const statements: D1PreparedStatementLike[] = [];
+    for (const record of records) {
+      const statement = prepareActionEventInsert(this.db, record);
+      if (Result.isFailure(statement)) return statement;
+      statements.push(statement.value);
+    }
+    if (statements.length === 0) return Result.succeed(undefined);
+
+    const batchDb = asBatchDatabase(this.db);
+    if (batchDb) {
+      const saved = await runBatch({ db: batchDb, statements });
+      if (Result.isFailure(saved)) return saved;
+      const failed = saved.value.find((result) => !result.success);
+      return failed
+        ? Result.fail(repositoryError(failed.error, "Action event batchのappendに失敗しました"))
+        : Result.succeed(undefined);
+    }
+
+    for (const statement of statements) {
+      const saved = await runStatement(statement);
+      if (Result.isFailure(saved)) return saved;
+      if (!saved.value.success) {
+        return Result.fail(
+          repositoryError(saved.value.error, "Action eventのappendに失敗しました"),
+        );
+      }
+    }
+    return Result.succeed(undefined);
+  }
+
+  async listForAction(input: {
+    organizationId: OrganizationId;
+    actionRequestId: ActionRequestId;
+  }): Result.ResultAsync<ActionEventRecord[], D1ActionEventRepositoryError> {
+    const rows = await allStoredRows(
+      this.db
+        .prepare(
+          `SELECT sequence, organization_id, action_request_id, event_key, event_type,
+                  occurred_at, event_json
+             FROM action_events
+            WHERE organization_id = ? AND action_request_id = ?
+            ORDER BY sequence ASC`,
+        )
+        .bind(input.organizationId, input.actionRequestId),
+    );
+    if (Result.isFailure(rows)) return rows;
+
+    const records: ActionEventRecord[] = [];
+    for (const row of rows.value) {
+      const event = parseEvent(row.event_json);
+      if (Result.isFailure(event)) return event;
+      records.push({
+        organizationId: row.organization_id as OrganizationId,
+        eventKey: row.event_key,
+        occurredAt: row.occurred_at,
+        event: event.value,
+      });
+    }
+    return Result.succeed(records);
+  }
+}

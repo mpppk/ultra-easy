@@ -4,6 +4,8 @@ import type { WorkflowEvent, WorkflowSleepDuration, WorkflowStep } from "cloudfl
 import type { D1Database } from "@cloudflare/workers-types";
 
 import {
+  actionEventRecord,
+  actionRuntimeTransitionEvents,
   advanceApprovalRuntime,
   ApproverResolverProviderError,
   expireApprovalRuntime,
@@ -12,6 +14,7 @@ import {
   startApprovalRuntime,
 } from "@app/approval-core";
 import type {
+  ActionEventRecord,
   ActionExecutionGuaranteeLevel,
   ActionExecutionResult,
   ActionRequestId,
@@ -19,6 +22,7 @@ import type {
   ApprovalPlanChecksum,
   ApprovalRuntimeState,
   ApproverResolver,
+  MaterializedApprovalPlan,
   OrganizationId,
 } from "@app/approval-core";
 import {
@@ -206,22 +210,32 @@ function resolverFor(env: ActionWorkflowEnv, organizationId: OrganizationId): Ap
   );
 }
 
-async function persistProjection(
-  env: ActionWorkflowEnv,
-  organizationId: Parameters<D1ApprovalRuntimeProjectionRepository["replace"]>[0]["organizationId"],
-  state: ApprovalRuntimeState,
-): Promise<RuntimeTransition> {
-  const stored = await new D1ApprovalRuntimeProjectionRepository(env.DB).replace({
-    organizationId,
-    state,
+async function persistProjection(input: {
+  env: ActionWorkflowEnv;
+  plan: MaterializedApprovalPlan;
+  previousState: ApprovalRuntimeState | null;
+  state: ApprovalRuntimeState;
+  workflowInstanceId?: string;
+}): Promise<RuntimeTransition> {
+  const events = actionRuntimeTransitionEvents({
+    plan: input.plan,
+    previousState: input.previousState,
+    nextState: input.state,
+    ...(input.workflowInstanceId ? { workflowInstanceId: input.workflowInstanceId } : {}),
   });
-  return Result.isFailure(stored) ? retry(stored.error) : { type: "advanced", state };
+  const stored = await new D1ApprovalRuntimeProjectionRepository(input.env.DB).replace({
+    organizationId: input.plan.organizationId,
+    state: input.state,
+    events,
+  });
+  return Result.isFailure(stored) ? retry(stored.error) : { type: "advanced", state: input.state };
 }
 
 async function initializeRuntime(
   env: ActionWorkflowEnv,
   params: ActionWorkflowParams,
   startedAt: string,
+  workflowInstanceId: string,
 ): Promise<RuntimeTransition> {
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
@@ -237,7 +251,13 @@ async function initializeRuntime(
     startedAt,
   });
   if (Result.isFailure(started)) return interpreterFailure(started.error);
-  return persistProjection(env, loaded.plan.organizationId, started.value);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: null,
+    state: started.value,
+    workflowInstanceId,
+  });
 }
 
 async function recordDecision(
@@ -261,7 +281,12 @@ async function recordDecision(
     event,
   });
   if (Result.isFailure(recorded)) return interpreterFailure(recorded.error);
-  return persistProjection(env, loaded.plan.organizationId, recorded.value.state);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: state,
+    state: recorded.value.state,
+  });
 }
 
 async function advanceRuntime(
@@ -285,7 +310,12 @@ async function advanceRuntime(
     now,
   });
   if (Result.isFailure(advanced)) return interpreterFailure(advanced.error);
-  return persistProjection(env, loaded.plan.organizationId, advanced.value);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: state,
+    state: advanced.value,
+  });
 }
 
 async function expireRuntime(
@@ -309,7 +339,12 @@ async function expireRuntime(
     now,
   });
   if (Result.isFailure(expired)) return interpreterFailure(expired.error);
-  return persistProjection(env, loaded.plan.organizationId, expired.value);
+  return persistProjection({
+    env,
+    plan: loaded.plan,
+    previousState: state,
+    state: expired.value,
+  });
 }
 
 async function runRuntimeStep(
@@ -389,22 +424,104 @@ async function projectActionResult(input: {
     result = parsed.value;
   }
 
-  const saved = await new D1ActionResultProjectionRepository(input.env.DB).save({
-    organizationId: loaded.plan.organizationId,
-    actionRequestId: loaded.plan.actionRequestId,
-    workflowInstanceId: input.workflowInstanceId,
-    status: input.execution.status,
-    ...(input.execution.guaranteeLevel !== undefined
-      ? { guaranteeLevel: input.execution.guaranteeLevel }
-      : {}),
-    ...(input.execution.idempotencyKey !== undefined
-      ? { idempotencyKey: input.execution.idempotencyKey }
-      : {}),
-    ...(result !== undefined ? { result } : {}),
-    ...(input.execution.code !== undefined ? { code: input.execution.code } : {}),
-    ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
-    completedAt: input.completedAt,
-  });
+  const events: ActionEventRecord[] = [];
+  if (input.execution.authorizationEvidence) {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.execution.authorizationEvidence.evaluatedAt,
+        event: {
+          type: "action.reauthorized",
+          actionRequestId: loaded.plan.actionRequestId,
+          evidence: input.execution.authorizationEvidence,
+        },
+      }),
+    );
+  } else if (input.execution.status === "authorization_revoked") {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.reauthorization_denied",
+          actionRequestId: loaded.plan.actionRequestId,
+          code: input.execution.code ?? "authorization_revoked",
+          reason: input.execution.message ?? "Action authorization was revoked",
+        },
+      }),
+    );
+  } else if (input.execution.status === "authorization_check_failed") {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.reauthorization_check_failed",
+          actionRequestId: loaded.plan.actionRequestId,
+          code: input.execution.code ?? "authorization_check_failed",
+        },
+      }),
+    );
+  }
+
+  if (input.execution.idempotencyKey) {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.execution_started",
+          actionRequestId: loaded.plan.actionRequestId,
+          idempotencyKey: input.execution.idempotencyKey,
+        },
+      }),
+    );
+  }
+  if (input.execution.status === "execution_failed") {
+    events.push(
+      actionEventRecord({
+        organizationId: loaded.plan.organizationId,
+        occurredAt: input.completedAt,
+        event: {
+          type: "action.execution_failed",
+          actionRequestId: loaded.plan.actionRequestId,
+          code: input.execution.code ?? "execution_failed",
+          retriable: input.execution.retriable ?? false,
+        },
+      }),
+    );
+  }
+  events.push(
+    actionEventRecord({
+      organizationId: loaded.plan.organizationId,
+      occurredAt: input.completedAt,
+      event: {
+        type: "action.completed",
+        actionRequestId: loaded.plan.actionRequestId,
+        result: input.execution.status,
+      },
+    }),
+  );
+
+  const saved = await new D1ActionResultProjectionRepository(input.env.DB).save(
+    {
+      organizationId: loaded.plan.organizationId,
+      actionRequestId: loaded.plan.actionRequestId,
+      workflowInstanceId: input.workflowInstanceId,
+      status: input.execution.status,
+      ...(input.execution.guaranteeLevel !== undefined
+        ? { guaranteeLevel: input.execution.guaranteeLevel }
+        : {}),
+      ...(input.execution.idempotencyKey !== undefined
+        ? { idempotencyKey: input.execution.idempotencyKey }
+        : {}),
+      ...(result !== undefined ? { result } : {}),
+      ...(input.execution.code !== undefined ? { code: input.execution.code } : {}),
+      ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
+      completedAt: input.completedAt,
+    },
+    events,
+  );
   if (Result.isFailure(saved)) {
     return Result.fail(
       new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
@@ -431,7 +548,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
 
     let logicalNow = event.timestamp.toISOString();
     const initialized = await runRuntimeStep(step, "initialize approval runtime", () =>
-      initializeRuntime(this.env, params, logicalNow),
+      initializeRuntime(this.env, params, logicalNow, event.instanceId),
     );
     if (initialized.type === "failed") return outputFromTransition(params, initialized);
 
