@@ -597,8 +597,11 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     while (state.status === "pending") {
       const nextExpiry = nextApprovalRuntimeExpiry(state);
       if (nextExpiry && Date.parse(nextExpiry) <= Date.parse(logicalNow)) {
-        const expired = await runRuntimeStep(step, `expire approval runtime ${iteration}`, params, () =>
-          expireRuntime(this.env, params, state, nextExpiry),
+        const expired = await runRuntimeStep(
+          step,
+          `expire approval runtime ${iteration}`,
+          params,
+          () => expireRuntime(this.env, params, state, nextExpiry),
         );
         if (expired.type === "failed") return outputFromTransition(params, expired);
         state = expired.state;
@@ -625,8 +628,11 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       }
       if (decision.type === "timeout") {
         if (nextExpiry) {
-          const expired = await runRuntimeStep(step, `expire approval runtime ${iteration}`, params, () =>
-            expireRuntime(this.env, params, state, nextExpiry),
+          const expired = await runRuntimeStep(
+            step,
+            `expire approval runtime ${iteration}`,
+            params,
+            () => expireRuntime(this.env, params, state, nextExpiry),
           );
           if (expired.type === "failed") return outputFromTransition(params, expired);
           state = expired.state;
@@ -638,15 +644,21 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         continue;
       }
 
-      const recorded = await runRuntimeStep(step, `record approval decision ${iteration}`, params, () =>
-        recordDecision(this.env, params, state, decision.event),
+      const recorded = await runRuntimeStep(
+        step,
+        `record approval decision ${iteration}`,
+        params,
+        () => recordDecision(this.env, params, state, decision.event),
       );
       if (recorded.type === "failed") return outputFromTransition(params, recorded);
       state = recorded.state;
       logicalNow = decision.event.decidedAt;
 
-      const advanced = await runRuntimeStep(step, `activate approval runtime ${iteration}`, params, () =>
-        advanceRuntime(this.env, params, state, logicalNow),
+      const advanced = await runRuntimeStep(
+        step,
+        `activate approval runtime ${iteration}`,
+        params,
+        () => advanceRuntime(this.env, params, state, logicalNow),
       );
       if (advanced.type === "failed") return outputFromTransition(params, advanced);
       state = advanced.state;
