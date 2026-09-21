@@ -14,6 +14,7 @@ import { Route as PreviewApprovalRuntimeRouteImport } from './routes/preview.app
 import { Route as ApiPreviewApprovalRunsRouteImport } from './routes/api.preview.approval-runs'
 import { Route as ApiPreviewApprovalRunsIdRouteImport } from './routes/api.preview.approval-runs.$id'
 import { Route as ApiPreviewApprovalRunsIdDecisionsRouteImport } from './routes/api.preview.approval-runs.$id.decisions'
+import { Route as ApiPreviewApprovalRunsIdForceCancelRouteImport } from './routes/api.preview.approval-runs.$id.force-cancel'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -42,6 +43,12 @@ const ApiPreviewApprovalRunsIdDecisionsRoute =
     path: '/decisions',
     getParentRoute: () => ApiPreviewApprovalRunsIdRoute,
   } as any)
+const ApiPreviewApprovalRunsIdForceCancelRoute =
+  ApiPreviewApprovalRunsIdForceCancelRouteImport.update({
+    id: '/force-cancel',
+    path: '/force-cancel',
+    getParentRoute: () => ApiPreviewApprovalRunsIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -49,6 +56,7 @@ export interface FileRoutesByFullPath {
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
+  '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -56,6 +64,7 @@ export interface FileRoutesByTo {
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
+  '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -64,6 +73,7 @@ export interface FileRoutesById {
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
+  '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -73,6 +83,7 @@ export interface FileRouteTypes {
     | '/api/preview/approval-runs'
     | '/api/preview/approval-runs/$id'
     | '/api/preview/approval-runs/$id/decisions'
+    | '/api/preview/approval-runs/$id/force-cancel'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -80,6 +91,7 @@ export interface FileRouteTypes {
     | '/api/preview/approval-runs'
     | '/api/preview/approval-runs/$id'
     | '/api/preview/approval-runs/$id/decisions'
+    | '/api/preview/approval-runs/$id/force-cancel'
   id:
     | '__root__'
     | '/'
@@ -87,6 +99,7 @@ export interface FileRouteTypes {
     | '/api/preview/approval-runs'
     | '/api/preview/approval-runs/$id'
     | '/api/preview/approval-runs/$id/decisions'
+    | '/api/preview/approval-runs/$id/force-cancel'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -132,17 +145,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPreviewApprovalRunsIdDecisionsRouteImport
       parentRoute: typeof ApiPreviewApprovalRunsIdRoute
     }
+    '/api/preview/approval-runs/$id/force-cancel': {
+      id: '/api/preview/approval-runs/$id/force-cancel'
+      path: '/force-cancel'
+      fullPath: '/api/preview/approval-runs/$id/force-cancel'
+      preLoaderRoute: typeof ApiPreviewApprovalRunsIdForceCancelRouteImport
+      parentRoute: typeof ApiPreviewApprovalRunsIdRoute
+    }
   }
 }
 
 interface ApiPreviewApprovalRunsIdRouteChildren {
   ApiPreviewApprovalRunsIdDecisionsRoute: typeof ApiPreviewApprovalRunsIdDecisionsRoute
+  ApiPreviewApprovalRunsIdForceCancelRoute: typeof ApiPreviewApprovalRunsIdForceCancelRoute
 }
 
 const ApiPreviewApprovalRunsIdRouteChildren: ApiPreviewApprovalRunsIdRouteChildren =
   {
     ApiPreviewApprovalRunsIdDecisionsRoute:
       ApiPreviewApprovalRunsIdDecisionsRoute,
+    ApiPreviewApprovalRunsIdForceCancelRoute:
+      ApiPreviewApprovalRunsIdForceCancelRoute,
   }
 
 const ApiPreviewApprovalRunsIdRouteWithChildren =

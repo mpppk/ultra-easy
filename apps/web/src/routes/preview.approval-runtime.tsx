@@ -71,6 +71,24 @@ function PreviewApprovalRuntime() {
     });
   }
 
+  async function forceCancel() {
+    if (!runId) return;
+    const reason = window.prompt("force cancel reason", "stuck workflow recovery drill");
+    if (reason === null || reason.trim().length === 0) return;
+    await run(async () => {
+      const response = await fetch(
+        `/api/preview/approval-runs/${encodeURIComponent(runId)}/force-cancel`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reason }),
+        },
+      );
+      if (!response.ok) return Promise.reject(new Error(await response.text()));
+      await refresh(runId);
+    });
+  }
+
   async function decide(task: RuntimeTask, userId: string, decision: "approve" | "reject") {
     if (!runId) return;
     await run(async () => {
@@ -109,6 +127,9 @@ function PreviewApprovalRuntime() {
         </button>
         <button type="button" disabled={busy || !runId} onClick={() => void run(() => refresh())}>
           Refresh
+        </button>
+        <button type="button" disabled={busy || !runId} onClick={() => void forceCancel()}>
+          Force cancel
         </button>
       </section>
 

@@ -45,6 +45,24 @@ export function getPreviewRun(actionRequestId: string): Promise<Response> {
   return runtimeRequest(`/preview/approval-runs/${encodeURIComponent(actionRequestId)}`);
 }
 
+export function sendPreviewForceCancel(input: {
+  actionRequestId: string;
+  reason: string;
+  actor?: { type: string; id: string };
+}): Promise<Response> {
+  return runtimeRequest(
+    `/preview/approval-runs/${encodeURIComponent(input.actionRequestId)}/force-cancel`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        reason: input.reason,
+        ...(input.actor === undefined ? {} : { actor: input.actor }),
+      }),
+    },
+  );
+}
+
 export function sendPreviewDecision(input: {
   actionRequestId: string;
   taskId: string;
