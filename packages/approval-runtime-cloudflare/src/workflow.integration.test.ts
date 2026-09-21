@@ -4,6 +4,9 @@ import { env } from "cloudflare:workers";
 import { applyD1Migrations, introspectWorkflowInstance } from "cloudflare:test";
 
 import {
+  GOVERNANCE_ACTION_DEFINITIONS,
+  GOVERNANCE_ACTION_TYPES,
+  GovernanceActionExecutor,
   computeActionFingerprint,
   computeApprovalBindingFingerprint,
   computeApprovalPlanChecksum,
@@ -32,9 +35,11 @@ import {
   D1ActionEventRepository,
   D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
+  D1GovernanceRepository,
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
 
+import { CloudflareWorkflowCancellationControl } from "./workflow-cancellation.ts";
 import { actionWorkflowInstanceId, type ActionWorkflowParams } from "./workflow.ts";
 
 const testEnv = env as typeof env & {
@@ -53,6 +58,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await testEnv.DB.batch([
+    testEnv.DB.prepare("DELETE FROM force_cancel_audit"),
     testEnv.DB.prepare("DELETE FROM action_events"),
     testEnv.DB.prepare("DELETE FROM action_results"),
     testEnv.DB.prepare("DELETE FROM approval_tasks"),
@@ -561,5 +567,104 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       expectedApprovalPlanChecksum: planA.approvalPlanChecksum,
     });
     expect(wrongTenantLoad.type).toBe("not_found");
+  });
+
+  it("AC-M7-010: stuck requestをforce cancelしprojection/event/auditで復旧証跡を確認できる", async () => {
+    const approval = await directStep("operator-review", bob, "root");
+    const plan = await validPlan("cf-operational-drill", approval);
+    await savePlan(plan);
+
+    const workflowInstanceId = await actionWorkflowInstanceId(plan);
+    await createInstance(plan, workflowInstanceId);
+
+    const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(testEnv.DB);
+    await vi.waitFor(
+      async () => {
+        const projection = await runtimeRepository.load({
+          organizationId,
+          actionRequestId: plan.actionRequestId,
+        });
+        assert(Result.isSuccess(projection));
+        expect(projection.value?.status).toBe("pending");
+      },
+      { timeout: 1_500 },
+    );
+
+    const definition = GOVERNANCE_ACTION_DEFINITIONS.find(
+      (candidate) =>
+        String(candidate.actionType) === String(GOVERNANCE_ACTION_TYPES.adminForceCancel),
+    );
+    assert(definition);
+    const governanceAction = {
+      definition,
+      type: GOVERNANCE_ACTION_TYPES.adminForceCancel,
+      resource: {
+        type: "governance" as MaterializedApprovalPlan["action"]["resource"]["type"],
+        id: "governance:force-cancel" as MaterializedApprovalPlan["action"]["resource"]["id"],
+      },
+      input: {
+        targetActionRequestId: String(plan.actionRequestId),
+        reason: "stuck workflow recovery drill",
+      },
+    } satisfies MaterializedApprovalPlan["action"];
+    const actionFingerprint = await computeActionFingerprint(governanceAction);
+    assert(Result.isSuccess(actionFingerprint));
+
+    const sourceActionRequestId = "cf-force-cancel-command" as ActionRequestId;
+    const governanceRepository = new D1GovernanceRepository(testEnv.DB);
+    const executor = new GovernanceActionExecutor(
+      governanceRepository,
+      new CloudflareWorkflowCancellationControl(testEnv.DB, testEnv.ACTION_WORKFLOW),
+    );
+    const executed = await executor.execute({
+      organizationId,
+      actionRequestId: sourceActionRequestId,
+      actionFingerprint: actionFingerprint.value,
+      idempotencyKey: "operational-drill-force-cancel",
+      action: governanceAction,
+      authorizationEvidence: {
+        evaluatedAt: "2026-09-21T00:00:00.000Z",
+        consistency: "higher_consistency",
+      },
+      actor: { type: "user", id: alice },
+    });
+    assert(Result.isSuccess(executed));
+    expect(executed.value).toMatchObject({
+      status: "succeeded",
+      output: {
+        targetActionRequestId: String(plan.actionRequestId),
+        postReviewRequired: true,
+      },
+    });
+
+    const projection = await runtimeRepository.load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(projection));
+    expect(projection.value?.status).toBe("cancelled");
+
+    const audit = await new D1ActionEventRepository(testEnv.DB).listForAction({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(audit));
+    expect(audit.value.at(-1)?.event).toMatchObject({
+      type: "action.completed",
+      result: "cancelled",
+    });
+
+    const forceCancelAudit = await governanceRepository.loadForceCancelAudit({
+      organizationId,
+      sourceActionRequestId,
+    });
+    assert(Result.isSuccess(forceCancelAudit));
+    expect(forceCancelAudit.value).toMatchObject({
+      targetActionRequestId: String(plan.actionRequestId),
+      actor: { type: "user", id: alice },
+      reason: "stuck workflow recovery drill",
+      occurredAt: "2026-09-21T00:00:00.000Z",
+      postReviewRequired: true,
+    });
   });
 });
