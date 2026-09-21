@@ -14,6 +14,7 @@ import type {
   ApprovalTaskId,
   MaterializedApprovalPlan,
   NotificationSink,
+  OrganizationId,
   UserId,
 } from "@app/approval-core";
 import {
@@ -36,6 +37,11 @@ import {
   type NotificationQueueProducer,
 } from "@app/approval-runtime-cloudflare";
 
+import {
+  evaluateRecentOrganizationAlerts,
+  loadOperatorDashboardView,
+  readOperatorAlertThresholds,
+} from "./operator-dashboard.ts";
 import { parseForceCancelBody } from "./preview-force-cancel.ts";
 import { createPreviewPlan, isPreviewScenario, PREVIEW_ORGANIZATION_ID } from "./preview-plan.ts";
 
@@ -397,6 +403,23 @@ async function forceCancelRun(
   );
 }
 
+/** Operator dashboard snapshot。organization filter必須、未指定はpreview組織。 */
+async function getOperatorDashboard(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
+  const raw = new URL(request.url).searchParams.get("organizationId")?.trim();
+  if (raw !== undefined && raw.length === 0) {
+    return json({ error: "organizationId must not be empty" }, { status: 400 });
+  }
+  const organizationId = (raw ?? PREVIEW_ORGANIZATION_ID) as OrganizationId;
+  const view = await loadOperatorDashboardView(env.DB, {
+    organizationId,
+    thresholds: readOperatorAlertThresholds(env as unknown as Record<string, string | undefined>),
+  });
+  if (Result.isFailure(view)) {
+    return json({ error: view.error.message, code: view.error.code }, { status: 500 });
+  }
+  return json(view.value, { status: 200 });
+}
+
 async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
   const url = new URL(request.url);
   if (request.method === "POST" && url.pathname === "/preview/approval-runs") {
@@ -411,6 +434,10 @@ async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response
   const forceCancelMatch = /^\/preview\/approval-runs\/([^/]+)\/force-cancel$/.exec(url.pathname);
   if (request.method === "POST" && forceCancelMatch?.[1]) {
     return forceCancelRun(request, decodeURIComponent(forceCancelMatch[1]) as ActionRequestId, env);
+  }
+
+  if (request.method === "GET" && url.pathname === "/operator/dashboard") {
+    return getOperatorDashboard(request, env);
   }
 
   const statusMatch = /^\/preview\/approval-runs\/([^/]+)$/.exec(url.pathname);
@@ -432,15 +459,27 @@ export default {
 
   async scheduled(controller, env): Promise<void> {
     const telemetry = new ConsoleTelemetrySink();
+    const now = new Date(controller.scheduledTime).toISOString();
     const dispatched = await dispatchNotificationOutbox({
       repository: new D1NotificationOutboxRepository(env.DB),
       queue: env.NOTIFICATION_QUEUE,
-      now: new Date(controller.scheduledTime).toISOString(),
+      now,
       telemetry,
     });
     if (Result.isFailure(dispatched)) {
       console.error("notification outbox dispatch failed", {
         code: dispatched.error.code,
+      });
+    }
+    const evaluated = await evaluateRecentOrganizationAlerts({
+      db: env.DB,
+      thresholds: readOperatorAlertThresholds(env as unknown as Record<string, string | undefined>),
+      now,
+      telemetry,
+    });
+    if (Result.isFailure(evaluated)) {
+      console.error("operator alert evaluation failed", {
+        code: evaluated.error.code,
       });
     }
   },

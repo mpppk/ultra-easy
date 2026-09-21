@@ -569,6 +569,40 @@ export class D1NotificationOutboxRepository {
     });
   }
 
+  async healthForOrganization(input: {
+    organizationId: OrganizationId;
+  }): Result.ResultAsync<NotificationOutboxHealth, D1NotificationOutboxRepositoryError> {
+    const pending = await firstRow<StoredCountRow>(
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM outbox_events WHERE organization_id = ? AND status = 'pending'",
+        )
+        .bind(input.organizationId),
+    );
+    if (Result.isFailure(pending)) return pending;
+    const failedOutbox = await firstRow<StoredCountRow>(
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM outbox_events WHERE organization_id = ? AND status = 'failed'",
+        )
+        .bind(input.organizationId),
+    );
+    if (Result.isFailure(failedOutbox)) return failedOutbox;
+    const failedDeliveries = await firstRow<StoredCountRow>(
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM notification_deliveries WHERE organization_id = ? AND status = 'failed'",
+        )
+        .bind(input.organizationId),
+    );
+    if (Result.isFailure(failedDeliveries)) return failedDeliveries;
+    return Result.succeed({
+      pendingOutbox: pending.value?.count ?? 0,
+      failedOutbox: failedOutbox.value?.count ?? 0,
+      failedDeliveries: failedDeliveries.value?.count ?? 0,
+    });
+  }
+
   notificationRequest(input: {
     entry: NotificationOutboxEntry;
     event: ActionEvent;

@@ -6,4 +6,6 @@ export * from "./governance-repository.ts";
 export * from "./materialized-plan-repository.ts";
 export * from "./public-api-repository.ts";
 export * from "./notification-outbox-repository.ts";
+export * from "./operator-dashboard.ts";
+export * from "./operator-alert-state-repository.ts";
 export * from "./rate-limit-repository.ts";

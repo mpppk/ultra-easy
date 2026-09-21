@@ -14,6 +14,8 @@ export * from "./materialization.ts";
 export type * from "./materialized-plan-repository.ts";
 export * from "./notification.ts";
 export * from "./observability.ts";
+export * from "./operator-alerts.ts";
+export * from "./operator-sli.ts";
 export * from "./rate-limit.ts";
 export * from "./policy-evaluator.ts";
 export * from "./schema.ts";
