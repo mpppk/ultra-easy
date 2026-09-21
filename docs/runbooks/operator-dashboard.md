@@ -105,13 +105,33 @@ spike does not re-fire after recovery.
 4. Restore the default, wait for recovery, and confirm `alert.resolved`.
 5. Record the evidence below.
 
-### Evidence — YYYY-MM-DD drill
+### Evidence — 2026-09-21 drill
 
-- Date/time:
-- Environment / runtime version / D1:
-- Release commit:
-- Dashboard snapshot (lead time / dwell / outbox):
-- Alert transitions observed:
-- `alert.firing` / `alert.resolved` log records:
-- Cloudflare notification wiring:
-- Follow-up link:
+- Date/time: 2026-09-21T08:05–08:24Z
+- Environment / runtime version / D1: branch preview web +
+  `ultra-easy-approval-runtime-preview` (feature `2c8932b7`, drill
+  `--var` builds, restored plain `57f6742f`), D1
+  `ad6f0cd7-ab10-40f0-bc8b-5ff251ae350f` (migrations incl. 0011 applied
+  by deploy-time apply)
+- Release commit: this PR (on top of `8e8afbc`, PR #66 merged)
+- Dashboard snapshot (`organization:preview`, 5 actions): dwell
+  `manager` p50 14.6s / `finance` p50 13.1s,
+  `completedByResult={cancelled:3, executed:2}`, outbox all zero.
+  Lead time is `null` (preview plans do not emit `action.received`;
+  empty windows return null by design, never zero).
+- Alert transitions observed: `approval_dwell_p95`
+  `ok → breaching` (08:07:30Z) `→ firing` (08:09:30Z) with drill
+  `OPERATOR_ALERT_DWELL_P95_SLA_MS=1` + trend window 1m, then
+  `→ ok` after restoring defaults (08:11:30Z, again 08:24:30Z).
+  Other three alerts stayed `ok`; cron persisted all states every minute.
+- `alert.firing` / `alert.resolved` log records: `alert.resolved`
+  captured live via `wrangler tail` from the cron tick:
+  `{"kind":"log","level":"info","event":"alert.resolved",
+"correlation":{"organizationId":"organization:preview",
+"correlationId":"operator-alert:organization:preview:approval_dwell_p95"},
+"attributes":{"alertKey":"approval_dwell_p95","status":"ok"}}`.
+  Firing uses the identical emit path; firing states were verified
+  persisted in D1 and served by the dashboard.
+- Cloudflare notification wiring: documented above, not provisioned
+  (manual console step per environment).
+- Follow-up link: M7 parent tracking issue.
