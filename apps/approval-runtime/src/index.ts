@@ -343,7 +343,8 @@ async function forceCancelRun(
     const status =
       executed.error.code === "force_cancel_target_not_found"
         ? 404
-        : executed.error.code === "force_cancel_target_not_pending"
+        : executed.error.code === "force_cancel_target_not_pending" ||
+            executed.error.code === "force_cancel_audit_conflict"
           ? 409
           : 500;
     return json({ error: executed.error.code, message: executed.error.message }, { status });
