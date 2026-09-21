@@ -1,23 +1,33 @@
 import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import { ConsoleTelemetrySink } from "@app/approval-core";
+import {
+  ConsoleTelemetrySink,
+  GOVERNANCE_ACTION_DEFINITIONS,
+  GOVERNANCE_ACTION_TYPES,
+  GovernanceActionExecutor,
+  computeActionFingerprint,
+} from "@app/approval-core";
 import type {
   ActionRequestId,
   ApprovalDecisionEvent,
   ApprovalTaskId,
+  MaterializedApprovalPlan,
   NotificationSink,
   UserId,
 } from "@app/approval-core";
 import {
+  D1ActionEventRepository,
   D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
+  D1GovernanceRepository,
   D1MaterializedPlanRepository,
   D1NotificationOutboxRepository,
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
   actionWorkflowInstanceId,
+  CloudflareWorkflowCancellationControl,
   consumeNotificationMessage,
   dispatchNotificationOutbox,
   type ActionWorkflowEnv,
@@ -26,6 +36,7 @@ import {
   type NotificationQueueProducer,
 } from "@app/approval-runtime-cloudflare";
 
+import { parseForceCancelBody } from "./preview-force-cancel.ts";
 import { createPreviewPlan, isPreviewScenario, PREVIEW_ORGANIZATION_ID } from "./preview-plan.ts";
 
 export { ActionWorkflow };
@@ -242,6 +253,149 @@ async function sendDecision(
   return json({ accepted: true, idempotencyKey: event.idempotencyKey }, { status: 202 });
 }
 
+/**
+ * Preview force-cancel drill。
+ * 本番と同じGovernanceActionExecutor + CloudflareWorkflowCancellationControl経路で
+ * `admin.force_cancel`を実行し、projection/event/auditの復旧証跡をそのまま返す。
+ * Preview専用のためactor/reasonはrequest bodyで受け取る（本番はtransportが供給する）。
+ */
+async function forceCancelRun(
+  request: Request,
+  actionRequestId: ActionRequestId,
+  env: PreviewRuntimeEnv,
+): Promise<Response> {
+  const parsed = parseForceCancelBody(await request.json().catch(() => null));
+  if (Result.isFailure(parsed)) {
+    return json({ error: parsed.error.message, code: parsed.error.code }, { status: 400 });
+  }
+  const { reason, actor } = parsed.value;
+
+  const plan = await new D1MaterializedPlanRepository(env.DB).load({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    actionRequestId,
+  });
+  if (plan.type !== "found") return json({ error: "preview run not found" }, { status: 404 });
+
+  const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(env.DB);
+  const initialProjection = await runtimeRepository.load({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    actionRequestId,
+  });
+  if (Result.isFailure(initialProjection)) {
+    return json({ error: initialProjection.error.message }, { status: 500 });
+  }
+  if (!initialProjection.value) {
+    return json({ error: "preview runtime is not projected yet" }, { status: 409 });
+  }
+
+  const eventRepository = new D1ActionEventRepository(env.DB);
+  const initialEvents = await eventRepository.listForAction({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    actionRequestId,
+  });
+  if (Result.isFailure(initialEvents)) {
+    return json({ error: initialEvents.error.message }, { status: 500 });
+  }
+  const initialLatestEvent = initialEvents.value.at(-1);
+
+  const definition = GOVERNANCE_ACTION_DEFINITIONS.find(
+    (candidate) =>
+      String(candidate.actionType) === String(GOVERNANCE_ACTION_TYPES.adminForceCancel),
+  );
+  if (!definition) {
+    return json({ error: "governance force-cancel definition is not installed" }, { status: 500 });
+  }
+  const governanceAction = {
+    definition,
+    type: GOVERNANCE_ACTION_TYPES.adminForceCancel,
+    resource: {
+      type: "governance" as MaterializedApprovalPlan["action"]["resource"]["type"],
+      id: "governance:force-cancel" as MaterializedApprovalPlan["action"]["resource"]["id"],
+    },
+    input: {
+      targetActionRequestId: String(actionRequestId),
+      reason,
+    },
+  } satisfies MaterializedApprovalPlan["action"];
+  const fingerprint = await computeActionFingerprint(governanceAction);
+  if (Result.isFailure(fingerprint)) {
+    return json({ error: fingerprint.error.message }, { status: 500 });
+  }
+
+  const sourceActionRequestId = `preview-force-cancel:${String(actionRequestId)}`;
+  const executor = new GovernanceActionExecutor(
+    new D1GovernanceRepository(env.DB),
+    new CloudflareWorkflowCancellationControl(env.DB, env.ACTION_WORKFLOW),
+  );
+  const executed = await executor.execute({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    actionRequestId: sourceActionRequestId as ActionRequestId,
+    actionFingerprint: fingerprint.value,
+    idempotencyKey: sourceActionRequestId,
+    action: governanceAction,
+    authorizationEvidence: {
+      evaluatedAt: new Date().toISOString(),
+      consistency: "higher_consistency",
+    },
+    actor,
+  });
+  if (Result.isFailure(executed)) {
+    const status =
+      executed.error.code === "force_cancel_target_not_found"
+        ? 404
+        : executed.error.code === "force_cancel_target_not_pending"
+          ? 409
+          : 500;
+    return json({ error: executed.error.code, message: executed.error.message }, { status });
+  }
+
+  const finalProjection = await runtimeRepository.load({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    actionRequestId,
+  });
+  if (Result.isFailure(finalProjection)) {
+    return json({ error: finalProjection.error.message }, { status: 500 });
+  }
+  const finalEvents = await eventRepository.listForAction({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    actionRequestId,
+  });
+  if (Result.isFailure(finalEvents)) {
+    return json({ error: finalEvents.error.message }, { status: 500 });
+  }
+  const audit = await new D1GovernanceRepository(env.DB).loadForceCancelAudit({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    sourceActionRequestId,
+  });
+  if (Result.isFailure(audit)) {
+    return json({ error: audit.error.message }, { status: 500 });
+  }
+  const workflow = await env.ACTION_WORKFLOW.get(
+    await actionWorkflowInstanceId({
+      organizationId: PREVIEW_ORGANIZATION_ID,
+      actionRequestId,
+    }),
+  );
+  const workflowStatus = await workflow.status().catch(() => ({ status: "unknown" as const }));
+
+  return json(
+    {
+      actionRequestId,
+      sourceActionRequestId,
+      initialStatus: initialProjection.value.status,
+      initialLatestEvent: initialLatestEvent
+        ? { type: initialLatestEvent.event.type, occurredAt: initialLatestEvent.occurredAt }
+        : null,
+      projection: finalProjection.value,
+      lastEvent: finalEvents.value.at(-1),
+      forceCancelAudit: audit.value,
+      workflow: workflowStatus,
+      postReviewRequired: true,
+    },
+    { status: 200 },
+  );
+}
+
 async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
   const url = new URL(request.url);
   if (request.method === "POST" && url.pathname === "/preview/approval-runs") {
@@ -251,6 +405,11 @@ async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response
   const decisionMatch = /^\/preview\/approval-runs\/([^/]+)\/decisions$/.exec(url.pathname);
   if (request.method === "POST" && decisionMatch?.[1]) {
     return sendDecision(request, decodeURIComponent(decisionMatch[1]) as ActionRequestId, env);
+  }
+
+  const forceCancelMatch = /^\/preview\/approval-runs\/([^/]+)\/force-cancel$/.exec(url.pathname);
+  if (request.method === "POST" && forceCancelMatch?.[1]) {
+    return forceCancelRun(request, decodeURIComponent(forceCancelMatch[1]) as ActionRequestId, env);
   }
 
   const statusMatch = /^\/preview\/approval-runs\/([^/]+)$/.exec(url.pathname);
