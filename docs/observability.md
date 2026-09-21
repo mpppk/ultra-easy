@@ -63,6 +63,17 @@ under the retention policy; that does not make those fields valid default log at
 Terminal workflow paths derive approval/executor SLIs from the persisted Action event sequence,
 so the dashboard and audit reconstruction use the same source of truth.
 
+## Implementation
+
+- SLI computation: `packages/approval-core/src/operator-sli.ts` (pure) over D1
+  `action_events`, loaded by `packages/approval-d1/src/operator-dashboard.ts`.
+- Alert evaluation: `packages/approval-core/src/operator-alerts.ts` (pure) with
+  D1-backed states (`operator_alert_states`), evaluated every minute by the
+  runtime Worker cron; transitions emit `alert.firing` / `alert.resolved`.
+- Dashboard API: `GET /operator/dashboard?organizationId=` (Worker),
+  `GET /api/preview/operator-dashboard` + `/preview/operator-dashboard` (web).
+- Operations: `docs/runbooks/operator-dashboard.md`.
+
 ## Minimum operator dashboard
 
 Create one dashboard with an organization filter and these panels:

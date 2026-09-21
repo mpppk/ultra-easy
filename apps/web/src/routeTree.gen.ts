@@ -11,7 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PreviewApprovalRuntimeRouteImport } from './routes/preview.approval-runtime'
+import { Route as PreviewOperatorDashboardRouteImport } from './routes/preview.operator-dashboard'
 import { Route as ApiPreviewApprovalRunsRouteImport } from './routes/api.preview.approval-runs'
+import { Route as ApiPreviewOperatorDashboardRouteImport } from './routes/api.preview.operator-dashboard'
 import { Route as ApiPreviewApprovalRunsIdRouteImport } from './routes/api.preview.approval-runs.$id'
 import { Route as ApiPreviewApprovalRunsIdDecisionsRouteImport } from './routes/api.preview.approval-runs.$id.decisions'
 import { Route as ApiPreviewApprovalRunsIdForceCancelRouteImport } from './routes/api.preview.approval-runs.$id.force-cancel'
@@ -26,11 +28,23 @@ const PreviewApprovalRuntimeRoute = PreviewApprovalRuntimeRouteImport.update({
   path: '/preview/approval-runtime',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PreviewOperatorDashboardRoute =
+  PreviewOperatorDashboardRouteImport.update({
+    id: '/preview/operator-dashboard',
+    path: '/preview/operator-dashboard',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPreviewApprovalRunsRoute = ApiPreviewApprovalRunsRouteImport.update({
   id: '/api/preview/approval-runs',
   path: '/api/preview/approval-runs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPreviewOperatorDashboardRoute =
+  ApiPreviewOperatorDashboardRouteImport.update({
+    id: '/api/preview/operator-dashboard',
+    path: '/api/preview/operator-dashboard',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPreviewApprovalRunsIdRoute =
   ApiPreviewApprovalRunsIdRouteImport.update({
     id: '/$id',
@@ -53,7 +67,9 @@ const ApiPreviewApprovalRunsIdForceCancelRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
+  '/preview/operator-dashboard': typeof PreviewOperatorDashboardRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
+  '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
   '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
@@ -61,7 +77,9 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
+  '/preview/operator-dashboard': typeof PreviewOperatorDashboardRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
+  '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
   '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
@@ -70,7 +88,9 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
+  '/preview/operator-dashboard': typeof PreviewOperatorDashboardRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
+  '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
   '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
@@ -80,7 +100,9 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/preview/approval-runtime'
+    | '/preview/operator-dashboard'
     | '/api/preview/approval-runs'
+    | '/api/preview/operator-dashboard'
     | '/api/preview/approval-runs/$id'
     | '/api/preview/approval-runs/$id/decisions'
     | '/api/preview/approval-runs/$id/force-cancel'
@@ -88,7 +110,9 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/preview/approval-runtime'
+    | '/preview/operator-dashboard'
     | '/api/preview/approval-runs'
+    | '/api/preview/operator-dashboard'
     | '/api/preview/approval-runs/$id'
     | '/api/preview/approval-runs/$id/decisions'
     | '/api/preview/approval-runs/$id/force-cancel'
@@ -96,7 +120,9 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/preview/approval-runtime'
+    | '/preview/operator-dashboard'
     | '/api/preview/approval-runs'
+    | '/api/preview/operator-dashboard'
     | '/api/preview/approval-runs/$id'
     | '/api/preview/approval-runs/$id/decisions'
     | '/api/preview/approval-runs/$id/force-cancel'
@@ -105,7 +131,9 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PreviewApprovalRuntimeRoute: typeof PreviewApprovalRuntimeRoute
+  PreviewOperatorDashboardRoute: typeof PreviewOperatorDashboardRoute
   ApiPreviewApprovalRunsRoute: typeof ApiPreviewApprovalRunsRouteWithChildren
+  ApiPreviewOperatorDashboardRoute: typeof ApiPreviewOperatorDashboardRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -124,11 +152,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PreviewApprovalRuntimeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/preview/operator-dashboard': {
+      id: '/preview/operator-dashboard'
+      path: '/preview/operator-dashboard'
+      fullPath: '/preview/operator-dashboard'
+      preLoaderRoute: typeof PreviewOperatorDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/preview/approval-runs': {
       id: '/api/preview/approval-runs'
       path: '/api/preview/approval-runs'
       fullPath: '/api/preview/approval-runs'
       preLoaderRoute: typeof ApiPreviewApprovalRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/preview/operator-dashboard': {
+      id: '/api/preview/operator-dashboard'
+      path: '/api/preview/operator-dashboard'
+      fullPath: '/api/preview/operator-dashboard'
+      preLoaderRoute: typeof ApiPreviewOperatorDashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/preview/approval-runs/$id': {
@@ -190,17 +232,10 @@ const ApiPreviewApprovalRunsRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PreviewApprovalRuntimeRoute: PreviewApprovalRuntimeRoute,
+  PreviewOperatorDashboardRoute: PreviewOperatorDashboardRoute,
   ApiPreviewApprovalRunsRoute: ApiPreviewApprovalRunsRouteWithChildren,
+  ApiPreviewOperatorDashboardRoute: ApiPreviewOperatorDashboardRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

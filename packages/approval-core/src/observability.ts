@@ -41,6 +41,7 @@ export type SafeLogAttributes = {
   eventType?: string;
   materializedStepId?: string;
   stepKey?: string;
+  alertKey?: string;
   retriable?: boolean;
   retryCount?: number;
   durationMs?: number;
@@ -55,7 +56,9 @@ export type SafeLogEvent =
   | "workflow.failed"
   | "executor.failed"
   | "notification.failed"
-  | "domain.event";
+  | "domain.event"
+  | "alert.firing"
+  | "alert.resolved";
 
 export type SafeLogRecord = {
   kind: "log";

@@ -45,6 +45,10 @@ export function getPreviewRun(actionRequestId: string): Promise<Response> {
   return runtimeRequest(`/preview/approval-runs/${encodeURIComponent(actionRequestId)}`);
 }
 
+export function getOperatorDashboard(organizationId: string): Promise<Response> {
+  return runtimeRequest(`/operator/dashboard?organizationId=${encodeURIComponent(organizationId)}`);
+}
+
 export function sendPreviewForceCancel(input: {
   actionRequestId: string;
   reason: string;
