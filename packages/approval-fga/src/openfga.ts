@@ -1,6 +1,8 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
+import type { FgaAccessTokenSupplier } from "./token-provider.ts";
+
 import {
   ApproverResolverProviderError,
   AuthorizationProviderError,
@@ -102,6 +104,7 @@ export type OpenFgaClientOptions = {
   authorizationModelId: string;
   organizationId: OrganizationId;
   token?: string;
+  tokenSupplier?: FgaAccessTokenSupplier;
   fetch?: typeof globalThis.fetch;
   /**
    * ListUsersのHTTP応答だけではdeadline/max-resultsによる打切りを判定できないため既定は不完全扱い。
@@ -150,6 +153,7 @@ export class OpenFgaClient {
   private readonly storeId: string;
   private readonly organizationId: OrganizationId;
   private readonly token?: string;
+  private readonly tokenSupplier?: FgaAccessTokenSupplier;
   private readonly fetchImplementation: typeof globalThis.fetch;
   private readonly listUsersCompleteness?: OpenFgaListUsersCompleteness;
   private readonly actionRequestId?: ActionRequestId;
@@ -161,7 +165,8 @@ export class OpenFgaClient {
     this.authorizationModelId = options.authorizationModelId;
     this.organizationId = options.organizationId;
     this.token = options.token;
-    this.fetchImplementation = options.fetch ?? globalThis.fetch;
+    this.tokenSupplier = options.tokenSupplier;
+    this.fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.listUsersCompleteness = options.listUsersCompleteness;
     this.actionRequestId = options.actionRequestId;
     this.telemetry = options.telemetry;
@@ -200,12 +205,29 @@ export class OpenFgaClient {
     }
   }
 
+  private async resolveToken(): Result.ResultAsync<string | null, OpenFgaRequestError> {
+    if (!this.tokenSupplier) return Result.succeed(this.token ?? null);
+    const supplied = await this.tokenSupplier.getAccessToken();
+    if (Result.isFailure(supplied)) {
+      return Result.fail(
+        new OpenFgaRequestError({
+          code: supplied.error.code,
+          detail: supplied.error.message,
+          retriable: supplied.error.retriable,
+        }),
+      );
+    }
+    return Result.succeed(supplied.value);
+  }
+
   private async postResponse(
     path: string,
     body: unknown,
   ): Result.ResultAsync<Response, OpenFgaRequestError> {
     const serialized = serializeJson(body);
     if (Result.isFailure(serialized)) return serialized;
+    const token = await this.resolveToken();
+    if (Result.isFailure(token)) return token;
 
     const response = await fetchRequest({
       fetch: this.fetchImplementation,
@@ -214,7 +236,7 @@ export class OpenFgaClient {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+          ...(token.value ? { authorization: `Bearer ${token.value}` } : {}),
         },
         body: serialized.value,
       },

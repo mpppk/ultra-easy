@@ -1,0 +1,62 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ultra-easy-approval-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "migrations_dir": "../../packages/approval-d1/migrations",
+    },
+  ],
+  "vars": {
+    "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
+    "AUTH0_API_AUDIENCE": "https://ultra-easy/approval-api",
+    "AUTH0_ORGANIZATION_ID": "organization:staging",
+    "ACTION_EXECUTION_MODE": "execute",
+    "OPENFGA_API_URL": "https://api.us1.fga.dev",
+    "OPENFGA_STORE_ID": "01M31PMZ0DRBWZQ9D6TZ64E87W",
+    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M31Z81M7BA879QPYCC4TDREF",
+    "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
+  },
+  "services": [
+    {
+      "binding": "ACTION_AUTHORIZER",
+      "service": "ultra-easy-approval-api",
+      "entrypoint": "StagingActionAuthorizer",
+    },
+    {
+      "binding": "ACTION_EXECUTOR",
+      "service": "ultra-easy-approval-api",
+      "entrypoint": "StagingActionExecutor",
+    },
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATION_QUEUE",
+        "queue": "ultra-easy-notifications-staging",
+      },
+    ],
+    "consumers": [
+      {
+        "queue": "ultra-easy-notifications-staging",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "ultra-easy-notifications-staging-dlq",
+      },
+    ],
+  },
+  "triggers": {
+    "crons": ["*/1 * * * *"],
+  },
+  "workflows": [
+    {
+      "binding": "ACTION_WORKFLOW",
+      "name": "ultra-easy-action-workflow-staging",
+      "class_name": "ActionWorkflow",
+    },
+  ],
+}

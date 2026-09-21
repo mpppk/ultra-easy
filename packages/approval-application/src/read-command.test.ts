@@ -140,6 +140,18 @@ class FakeCommandRepository implements ApprovalCommandRepository {
     );
   }
 
+  listPending(input: { organizationId: OrganizationId; limit: number }) {
+    const records = [...this.records.values()]
+      .filter(
+        (record) =>
+          record.command.organizationId === String(input.organizationId) &&
+          record.command.status === "pending",
+      )
+      .slice(0, input.limit)
+      .map((record) => structuredClone(record));
+    return Promise.resolve(Result.succeed(records));
+  }
+
   update(input: {
     organizationId: OrganizationId;
     commandId: string;
@@ -396,6 +408,57 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     expect(second.status).toBe(201);
     expect(await second.json()).toEqual(await first.json());
     expect(harness.createCalls()).toBe(1);
+  });
+
+  it("AC-M6-006: 5xxもcomplete記録し、同key retryをin_progressで詰まらせない", async () => {
+    const harness = createHarness();
+    let calls = 0;
+    const failing = createPublicHttpApi({
+      actionRequestApi: {
+        async fetch() {
+          calls += 1;
+          return new Response(JSON.stringify({ error: "boom" }), {
+            status: 503,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      },
+      readRepository: harness.readRepository,
+      decisionService: harness.decisionService,
+      identityProvider: {
+        resolveSubject() {
+          return Promise.resolve(Result.succeed(String(alice)));
+        },
+        resolveUser() {
+          return Promise.resolve(Result.succeed(alice));
+        },
+      },
+      idempotencyRepository: harness.idempotencyRepository,
+      clock: { now: () => "2026-09-19T00:00:00.000Z" },
+    });
+    const path = "/v1/organizations/org%3Am6/action-requests";
+    const init = {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "create-5xx",
+      },
+      body: JSON.stringify({
+        action: {
+          type: "ticket.priority.change",
+          resource: { type: "ticket", id: "TICKET-1" },
+          input: { priority: "normal" },
+        },
+      }),
+    } satisfies RequestInit;
+
+    const first = await failing.fetch(request(path, init));
+    const second = await failing.fetch(request(path, init));
+
+    expect(first.status).toBe(503);
+    expect(second.status).toBe(503);
+    await expect(second.json()).resolves.toEqual({ error: "boom" });
+    expect(calls).toBe(1);
   });
 
   it("AC-M6-006: 同一key + 異なるpayloadは409にする", async () => {

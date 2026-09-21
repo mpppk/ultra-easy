@@ -31,7 +31,11 @@ import {
   D1ApprovalRuntimeProjectionRepository,
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
-import { OpenFgaApproverResolver, OpenFgaClient } from "@app/approval-fga";
+import {
+  ClientCredentialsTokenProvider,
+  OpenFgaApproverResolver,
+  OpenFgaClient,
+} from "@app/approval-fga";
 
 import {
   runActionExecution,
@@ -87,6 +91,9 @@ export type ActionWorkflowEnv = ActionExecutionWorkflowEnv & {
   OPENFGA_STORE_ID: string;
   OPENFGA_AUTHORIZATION_MODEL_ID: string;
   OPENFGA_ASSUME_LIST_USERS_COMPLETE?: string;
+  OPENFGA_API_TOKEN?: string;
+  FGA_CLIENT_ID?: string;
+  FGA_CLIENT_SECRET?: string;
 };
 
 type RuntimeTransition =
@@ -215,6 +222,17 @@ function resolverFor(
       authorizationModelId: env.OPENFGA_AUTHORIZATION_MODEL_ID,
       organizationId,
       actionRequestId,
+      ...(env.OPENFGA_API_TOKEN ? { token: env.OPENFGA_API_TOKEN } : {}),
+      ...(env.FGA_CLIENT_ID && env.FGA_CLIENT_SECRET
+        ? {
+            tokenSupplier: new ClientCredentialsTokenProvider({
+              tokenUrl: "https://auth.fga.dev/oauth/token",
+              audience: "https://api.us1.fga.dev/",
+              clientId: env.FGA_CLIENT_ID,
+              clientSecret: env.FGA_CLIENT_SECRET,
+            }),
+          }
+        : {}),
       telemetry: new ConsoleTelemetrySink(),
       ...(env.OPENFGA_ASSUME_LIST_USERS_COMPLETE === "true"
         ? { listUsersCompleteness: "assume_complete" as const }
