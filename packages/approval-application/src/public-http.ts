@@ -211,8 +211,8 @@ async function idempotent(input: {
   }
 
   const response = await input.execute();
-  if (response.status >= 500) return response;
-
+  // 5xxもcompleteとして記録する。予約をpendingのまま残すと、
+  // 同じkeyでの正当なretryが永久に409 in_progressになる。
   const body = await response
     .clone()
     .json()
@@ -295,6 +295,10 @@ export function createPublicHttpApi(input: {
   clock: PublicHttpClock;
   rateLimiter?: RateLimiter;
   approvalDecisionRateLimitPolicy?: RateLimitPolicy;
+  onDecisionAccepted?: (command: {
+    organizationId: OrganizationId;
+    commandId: string;
+  }) => Promise<unknown>;
 }): { fetch(request: Request): Promise<Response> } {
   return {
     async fetch(request: Request): Promise<Response> {
@@ -521,9 +525,14 @@ export function createPublicHttpApi(input: {
               ...(body.comment !== undefined ? { comment: body.comment } : {}),
               now: input.clock.now(),
             });
-            return Result.isFailure(accepted)
-              ? commandErrorResponse(accepted.error)
-              : responseJson(accepted.value, 202);
+            if (Result.isFailure(accepted)) return commandErrorResponse(accepted.error);
+            if (input.onDecisionAccepted) {
+              await input.onDecisionAccepted({
+                organizationId,
+                commandId: accepted.value.id,
+              });
+            }
+            return responseJson(accepted.value, 202);
           },
         });
       }

@@ -1,0 +1,116 @@
+// Staging bootstrap seed generator (M8-1).
+// Governance bootstrap rule (docs/governance-bootstrap.md) に従い、
+// version-controlledなSQLとして出力する。出力は冪等（INSERT OR IGNORE / upsert）。
+// 実行: bun run packages/approval-d1/bootstrap/generate-staging-seed.ts
+import { writeFileSync } from "node:fs";
+
+import { Result } from "@praha/byethrow";
+import {
+  always,
+  approve,
+  canonicalizeJson,
+  definePolicy,
+  GOVERNANCE_ACTION_DEFINITIONS,
+  literal,
+  rule,
+  serial,
+  user,
+} from "@app/approval-core";
+
+const ORGANIZATION_ID = "organization:staging";
+const SOURCE = "bootstrap:m8-staging-seed";
+const OCCURRED_AT = "2026-09-22T00:00:00.000Z";
+const ACTOR = { type: "service", id: "service:bootstrap" };
+
+const ALICE = "user:auth0|6ab12807a4ea2a6f7c2ccc09";
+const BOB = "user:auth0|6ab12aa04a279d37e02306c6";
+
+function mustJson(value: unknown): string {
+  const serialized = canonicalizeJson(value as never);
+  if (Result.isFailure(serialized)) {
+    console.error(serialized.error);
+    process.exit(1);
+  }
+  return serialized.value;
+}
+
+function sqlQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+const statements: string[] = [];
+statements.push("-- ultra-easy staging bootstrap seed (M8-1). Idempotent: re-apply safe.");
+statements.push(`-- source: ${SOURCE} at ${OCCURRED_AT}`);
+
+for (const definition of GOVERNANCE_ACTION_DEFINITIONS) {
+  statements.push(`INSERT OR IGNORE INTO published_action_definitions (
+  organization_id, definition_key, version, action_type, definition_json,
+  actor_json, source_action_request_id, published_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, ${sqlQuote(String(definition.key))}, ${definition.version}, ${sqlQuote(String(definition.actionType))},
+  ${sqlQuote(mustJson(definition))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+);`);
+}
+
+const stagingDefinition = {
+  key: "staging:ticket-update",
+  version: 1,
+  actionType: "ticket.update",
+  inputSchema: { key: "staging:ticket-update", version: 1 },
+  executorKey: "staging",
+};
+statements.push(`INSERT OR IGNORE INTO published_action_definitions (
+  organization_id, definition_key, version, action_type, definition_json,
+  actor_json, source_action_request_id, published_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'staging:ticket-update', 1, 'ticket.update',
+  ${sqlQuote(mustJson(stagingDefinition))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+);`);
+
+const policy = definePolicy({
+  key: "policy:staging-serial-two-users",
+  name: "staging-serial-two-users",
+  description: "M8 staging E2E: direct-user serial approval (alice then bob)",
+  rules: [
+    rule("default", {
+      when: always(),
+      flow: serial(
+        approve({ key: "manager", approver: user(literal(ALICE)), purpose: "business_approval" }),
+        approve({ key: "finance", approver: user(literal(BOB)), purpose: "business_approval" }),
+      ),
+    }),
+  ],
+});
+statements.push(`INSERT OR IGNORE INTO published_approval_policy_versions (
+  organization_id, policy_key, version, policy_json, actor_json,
+  source_action_request_id, published_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'policy:staging-serial-two-users', 1,
+  ${sqlQuote(mustJson(policy))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+);`);
+
+const binding = {
+  id: "binding:staging-ticket-update",
+  organizationId: ORGANIZATION_ID,
+  policyKey: "policy:staging-serial-two-users",
+  selector: { actionTypes: ["ticket.update"] },
+  compositionOrder: 100,
+  enabled: true,
+};
+statements.push(`INSERT INTO approval_policy_bindings (
+  organization_id, binding_id, policy_key, enabled, binding_json,
+  actor_json, source_action_request_id, updated_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'binding:staging-ticket-update', 'policy:staging-serial-two-users', 1,
+  ${sqlQuote(mustJson(binding))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+)
+ON CONFLICT(organization_id, binding_id) DO UPDATE SET
+  policy_key = excluded.policy_key,
+  enabled = excluded.enabled,
+  binding_json = excluded.binding_json,
+  actor_json = excluded.actor_json,
+  source_action_request_id = excluded.source_action_request_id,
+  updated_at = excluded.updated_at;`);
+
+writeFileSync(new URL("./staging-seed.sql", import.meta.url), `${statements.join("\n")}\n`);
+console.log(`wrote ${statements.length} statements`);

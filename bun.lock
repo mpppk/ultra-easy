@@ -15,6 +15,24 @@
         "vitest": "4.1.11",
       },
     },
+    "apps/approval-api": {
+      "name": "@app/approval-api",
+      "version": "0.0.0",
+      "dependencies": {
+        "@app/approval-application": "workspace:*",
+        "@app/approval-core": "workspace:*",
+        "@app/approval-d1": "workspace:*",
+        "@app/approval-fga": "workspace:*",
+        "@app/approval-runtime-cloudflare": "workspace:*",
+        "@praha/byethrow": "^0.12.0",
+        "@standard-schema/spec": "^1.1.0",
+        "jose": "^6.1.0",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20260911.1",
+        "wrangler": "^4.70.0",
+      },
+    },
     "apps/approval-runtime": {
       "name": "@app/approval-runtime",
       "version": "0.0.0",
@@ -142,6 +160,8 @@
     "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1",
   },
   "packages": {
+    "@app/approval-api": ["@app/approval-api@workspace:apps/approval-api"],
+
     "@app/approval-application": ["@app/approval-application@workspace:packages/approval-application"],
 
     "@app/approval-core": ["@app/approval-core@workspace:packages/approval-core"],
@@ -795,6 +815,8 @@
     "isexe": ["isexe@4.0.0", "", {}, "sha512-FFUtZMpoZ8RqHS3XeXEmHWLA4thH+ZxCv2lOiPIn1Xc7CxrqhWzNSDzD+/chS/zbYezmiwWLdQC09JdQKmthOw=="],
 
     "jiti": ["jiti@2.7.0", "", { "bin": { "jiti": "lib/jiti-cli.mjs" } }, "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ=="],
+
+    "jose": ["jose@6.2.12", "", {}, "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw=="],
 
     "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
 

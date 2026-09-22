@@ -135,6 +135,11 @@ export interface ApprovalCommandRepository {
     appliedAt?: string;
     error?: PublicApiProblem;
   }): Result.ResultAsync<ApprovalCommandRecord, PublicApiRepositoryError>;
+
+  listPending(input: {
+    organizationId: OrganizationId;
+    limit: number;
+  }): Result.ResultAsync<ApprovalCommandRecord[], PublicApiRepositoryError>;
 }
 
 export interface ApprovalCommandIdGenerator {

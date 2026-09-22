@@ -612,6 +612,32 @@ export class D1PublicApiRepository
     return Result.isFailure(mapped) ? mapped : Result.succeed(mapped.value);
   }
 
+  async listPending(input: {
+    organizationId: OrganizationId;
+    limit: number;
+  }): Result.ResultAsync<ApprovalCommandRecord[], PublicApiRepositoryError> {
+    const rows = await allRows<CommandRow>(
+      this.db
+        .prepare(
+          `SELECT command_id, organization_id, action_request_id, task_id, command_type,
+                  status, actor_user_id, comment, error_json, created_at, applied_at
+             FROM approval_commands
+            WHERE organization_id = ? AND status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT ?`,
+        )
+        .bind(input.organizationId, input.limit),
+    );
+    if (Result.isFailure(rows)) return rows;
+    const records: ApprovalCommandRecord[] = [];
+    for (const row of rows.value) {
+      const mapped = commandRecord(row);
+      if (Result.isFailure(mapped)) return mapped;
+      records.push(mapped.value);
+    }
+    return Result.succeed(records);
+  }
+
   async update(input: {
     organizationId: OrganizationId;
     commandId: string;
