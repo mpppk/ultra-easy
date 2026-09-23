@@ -60,6 +60,8 @@ under the retention policy; that does not make those fields valid default log at
 | `outbox.backlog`                | notification outbox health | pending + failed outbox rows               |
 | `outbox.failure_total`          | outbox dispatcher          | Queue dispatch failures                    |
 
+Staging verification (M8-3, 2026-09-23): `fga.check_latency_ms` is emitted by the staging re-authorization path and was observed at 572ms on real staging traffic (cold isolate, token exchange included). Submit-time checks and `fga.list_users_latency_ms` do not fire on staging yet — see `docs/runbooks/operator-dashboard.md` (Staging verification) for the exact limits and follow-ups.
+
 Terminal workflow paths derive approval/executor SLIs from the persisted Action event sequence,
 so the dashboard and audit reconstruction use the same source of truth.
 

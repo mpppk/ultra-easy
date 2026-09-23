@@ -82,7 +82,9 @@ function PreviewOperatorDashboard() {
       <p>
         D1 append-only eventsとoutbox
         tablesから算出したSLIです。FGAレイテンシ・Workflowリトライ系はWorkers
-        Logs側のクエリ（runbook参照）で確認します。
+        Logs側のクエリ（runbook参照）で確認します。staging実測では再認可Checkで
+        <code>fga.check_latency_ms=572ms</code>（初回token交換込み）を観測済み （M8-3、詳細は{" "}
+        <code>docs/runbooks/operator-dashboard.md</code>）。
       </p>
 
       <section style={{ display: "flex", gap: 12, alignItems: "center", marginBlock: 24 }}>
