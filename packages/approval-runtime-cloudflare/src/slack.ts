@@ -43,6 +43,16 @@ export type SlackAlertNotifyInput = {
 const DEFAULT_SLACK_TIMEOUT_MS = 8_000;
 const MAX_SLACK_TEXT_LENGTH = 2_000;
 
+/**
+ * 既定のfetch実装。bareなfetch参照を保持・呼出するとworkerdで
+ * `TypeError: Illegal invocation` になるため (M8-2再drillで確定)、
+ * 既存規約 (approval-fga) と同じくglobalThisへbindする。
+ * Exported for unit tests (既定経路がbind済みであることの回帰検証用)。
+ */
+export function defaultFetchImpl(): typeof fetch {
+  return globalThis.fetch.bind(globalThis);
+}
+
 function normalizeWebhookUrl(value: string): string {
   return value.trim();
 }
@@ -158,7 +168,7 @@ export class SlackWebhookSink implements NotificationSink {
 
   constructor(input: SlackWebhookSinkInput) {
     this.webhookUrl = input.webhookUrl;
-    this.fetchImpl = input.fetchImpl ?? fetch;
+    this.fetchImpl = input.fetchImpl ?? defaultFetchImpl();
     this.timeoutMs = input.timeoutMs ?? DEFAULT_SLACK_TIMEOUT_MS;
   }
 
@@ -306,7 +316,7 @@ export async function notifyAlertTransitionViaSlack(
       from: input.from,
       to: input.to,
     }),
-    fetchImpl: input.fetchImpl ?? fetch,
+    fetchImpl: input.fetchImpl ?? defaultFetchImpl(),
     timeoutMs: input.timeoutMs ?? DEFAULT_SLACK_TIMEOUT_MS,
   });
 }
