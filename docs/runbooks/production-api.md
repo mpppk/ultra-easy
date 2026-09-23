@@ -45,8 +45,10 @@ Governance bootstrap rule (docs/governance-bootstrap.md) option 1
 
 ## FGA (staging)
 
-- Store `01M31PMZ0DRBWZQ9D6TZ64E87W` (US), model with `ticket`
-  (`can_execute`/`can_approve` by `user`).
+- Store `01M31PMZ0DRBWZQ9D6TZ64E87W` (US), model `01M31Z81M7BA879QPYCC4TDREF`
+  with `ticket` (`can_execute`/`can_approve` by `user`). Verified complete
+  for Check/ListUsers approver resolution + re-auth in M8-3 — no model
+  extension was needed (additive-only rule still applies to future changes).
 - Token endpoint is `https://auth.fga.dev/oauth/token`
   (NOT `api.us1.fga.dev`), audience `https://api.us1.fga.dev/`.
   The worker exchanges client credentials at runtime with in-memory cache
@@ -57,6 +59,41 @@ Governance bootstrap rule (docs/governance-bootstrap.md) option 1
   e.g. `ticket:organization%3Astaging/staging-e2e-1`, or checks deny.
 - Relation map (staging): `ticket.update` → `can_execute`, unknown types
   fall to a nonexistent relation (fail closed).
+- ID mapping (verified M8-3, shared with #70): Auth0 `sub`
+  (`auth0|...`) → `UserId` `user:<sub>` (`auth0-identity.ts`) → FGA subject
+  `user:<sub>` (`normalizeTypedRef`) → tuple user. Staging tuples use
+  `user:auth0|6ab12807…` (alice) / `user:auth0|6ab12aa0…` (bob), identical
+  to the mapped IDs. Staging authorizer + workflow resolver + tuple writes
+  all go through the same `tenantScopedOpenFgaObject` scoping.
+- Telemetry: re-auth checks emit `fga.check_latency_ms` / `fga.error_total`
+  (M8-3 wiring via `x-ue-action-request-id`); submit-time checks and
+  staging `list_users` do not emit yet — see
+  `docs/runbooks/operator-dashboard.md` (Staging verification).
+- Preview/test configs (`apps/approval-runtime/wrangler.jsonc`,
+  `packages/approval-runtime-cloudflare/wrangler.jsonc`) now carry the same
+  staging apiUrl/store/model (M8-3 本番値化). `FGA_CLIENT_ID`/`SECRET` live
+  only as worker secrets, never in files.
+
+## M8-3 staging E2E (2026-09-23, AC-M8-005)
+
+Worker `ultra-easy-approval-api` versions `1b4d3e10` → `f9349dc3`
+(telemetry wiring). FGA tuples are additive-only (new objects
+`staging-m8-3-1` / `staging-m8-3-2`, no existing tuples touched):
+
+- Direct store checks: `Check` allow (alice `can_execute`) → `true`, deny
+  (`user:nobody`) → `false`; `ListUsers` `can_approve` → alice+bob.
+- Resolver probe (production `OpenFgaApproverResolver` +
+  `ClientCredentialsTokenProvider` against the staging store): `list` →
+  both users `complete:true`, `check` alice → `true`, nobody → `false`.
+- Worker flow (alice submit → `pending_approval` → alice approve → bob
+  approve → re-auth → staging executor → `executed`):
+  `action:ef470f50-eced-4df2-8c08-e562d4070844` (pre-telemetry) and
+  `action:fcb9ffd0-2b86-42bb-92bd-82cac9ee8fdd` (post-telemetry, re-auth
+  emitted `fga.check_latency_ms=572ms` captured via `wrangler tail`).
+- API-level deny: bob submit without `can_execute` → 403
+  `fga_check_denied` (no state change).
+- Preview worker `ultra-easy-approval-runtime-preview` (`abb98a5d`) deployed
+  with staging FGA vars + secrets; cron ticks healthy post-deploy.
 
 ## Decisions
 

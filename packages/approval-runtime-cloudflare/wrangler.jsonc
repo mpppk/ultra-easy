@@ -13,9 +13,9 @@
   ],
   "vars": {
     "ACTION_EXECUTION_MODE": "execute",
-    "OPENFGA_API_URL": "http://127.0.0.1:8080",
-    "OPENFGA_STORE_ID": "unused-for-direct-user-tests",
-    "OPENFGA_AUTHORIZATION_MODEL_ID": "unused-for-direct-user-tests",
+    "OPENFGA_API_URL": "https://api.us1.fga.dev",
+    "OPENFGA_STORE_ID": "01M31PMZ0DRBWZQ9D6TZ64E87W",
+    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M31Z81M7BA879QPYCC4TDREF",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
   },
   "workflows": [

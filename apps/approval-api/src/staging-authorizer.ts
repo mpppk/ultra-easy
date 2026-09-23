@@ -1,12 +1,13 @@
 import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import type { ActionType, OrganizationId, RelationName } from "@app/approval-core";
+import type { ActionRequestId, ActionType, OrganizationId, RelationName } from "@app/approval-core";
 import {
   ClientCredentialsTokenProvider,
   OpenFgaActionAuthorizer,
   OpenFgaClient,
 } from "@app/approval-fga";
+import { ConsoleTelemetrySink } from "@app/approval-core";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -73,6 +74,9 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
         request.headers.get("x-ue-organization-id") ??
         "",
     );
+    // Workflow再認可経路ではServiceBindingActionAuthorizerがx-ue-action-request-idを付与する。
+    // 存在する場合のみFGA latency/error telemetryをemitする（submit時は未採番のため対象外）。
+    const actionRequestId = request.headers.get("x-ue-action-request-id")?.trim() || null;
     const authorizer = new OpenFgaActionAuthorizer(
       new OpenFgaClient({
         apiUrl: env["OPENFGA_API_URL"] ?? "https://api.us1.fga.dev",
@@ -80,6 +84,12 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
         authorizationModelId: modelId,
         organizationId: organizationId as OrganizationId,
         tokenSupplier,
+        ...(actionRequestId
+          ? {
+              actionRequestId: actionRequestId as ActionRequestId,
+              telemetry: new ConsoleTelemetrySink(),
+            }
+          : {}),
       }),
       (type: ActionType): RelationName =>
         // staging modelはticket系のみ。未知typeは存在しないrelationへ落としてfail closed.

@@ -39,6 +39,36 @@ Use these Workers Logs queries (filter by time range, replace the org):
   `event:"fga.check_latency_ms" OR event:"fga.list_users_latency_ms"`,
   error count: `event:"fga.error_total"`.
   Correlate with `correlation.organizationId="<org>"`.
+
+### Staging verification (M8-3, 2026-09-23)
+
+Staging worker `ultra-easy-approval-api` (version `f9349dc3`) emits
+`fga.check_latency_ms` from the Workflow re-authorization path
+(`StagingActionAuthorizer` with `x-ue-action-request-id`, telemetry wired
+in M8-3). Observed via `wrangler tail --format json` during the M8-3 E2E:
+
+- `fga.check_latency_ms=572ms` for
+  `action:fcb9ffd0-2b86-42bb-92bd-82cac9ee8fdd` (first check on a cold
+  isolate, includes the client-credentials token exchange against
+  `auth.fga.dev`).
+- Deny path surfaces as `request.denied` with
+  `attributes.errorCode="fga_check_denied"` (submit-time check for a
+  principal without `can_execute`, e.g.
+  `action:f26f0d2c-5b61-4cc0-a300-654df4a9c490`).
+
+Known limits (follow-ups, not M8-3):
+
+- Submit-time checks do not emit `fga.check_latency_ms` yet — the
+  `ActionAuthorizer` contract carries no `actionRequestId` (the ID is minted
+  after authorization), so the staging authorizer only emits when the
+  `x-ue-action-request-id` header is present (Workflow re-auth path).
+- `fga.list_users_latency_ms` never fires on staging: the staging policy
+  uses direct-user approvers, so `OpenFgaApproverResolver.list` short-circuits
+  before ListUsers. ListUsers approver resolution against the staging
+  store/model is verified instead by the M8-3 resolver probe (production
+  `OpenFgaApproverResolver` code path, `can_approve` on
+  `ticket:organization%3Astaging/staging-m8-3-1` → alice+bob,
+  `complete:true`) plus `OPENFGA_TEST_URL` integration tests.
 - Workflow retry/failure:
   `event:"workflow.retry" OR event:"workflow.failed"`,
   correlate with `correlation.actionRequestId="<id>"` for end-to-end tracing.
