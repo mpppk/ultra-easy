@@ -34,6 +34,21 @@ bun --bun run dev
 bun --bun run build
 ```
 
+## Web UI components
+
+`apps/web` uses Tailwind CSS v4 and shadcn/ui. Add shared primitives from the
+repository root with the shadcn CLI:
+
+```bash
+bunx shadcn@latest add button -c apps/web
+```
+
+Generated primitives belong in `apps/web/src/components/ui`; feature-specific
+components belong in `src/components/<feature>`. Use the `#components`,
+`#lib`, and `#hooks` package imports configured in `apps/web/package.json`.
+Keep colors on the semantic CSS variables in `src/styles.css` so light and
+dark themes stay consistent.
+
 ## Cloudflare Workersへのデプロイ
 
 このプロジェクトではCloudflare Vite pluginと`apps/web/wrangler.jsonc`を利用します。
