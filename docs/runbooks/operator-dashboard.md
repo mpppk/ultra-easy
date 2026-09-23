@@ -351,3 +351,5 @@ reference`. The sink stored the bare `fetch` reference as its default
   transition history (`ok → breaching → firing → ok` ×3 drill rounds).
   No D1 destructive operation was performed (read-only SELECT + API-driven
   inserts only).
+- 人間目視確認済み (2026-09-24 00:22〜00:29 JST): 上記AC-M8-003 2件 +
+  AC-M8-004 6件のSlack到達を人間が目視確認 (重複なし)。
