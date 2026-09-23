@@ -293,3 +293,61 @@ Target: `ultra-easy-approval-api` + queue
   kept: no URL/commit). Human follow-up (see PR): register the webhook URL in
   1Password → `wrangler secret put SLACK_WEBHOOK_URL -C apps/approval-api` →
   re-run the §Approval API worker drill and confirm arrival.
+
+### Evidence — 2026-09-23 re-drill (M8-2 fix verification, AC-M8-003/004 real Slack arrival)
+
+- Date/time: 2026-09-23T12:32–15:29Z (all UTC).
+- Worker: `ultra-easy-approval-api`
+  (`https://ultra-easy-approval-api.niboshi.workers.dev`, cron `*/1 * * * *`).
+  Live at end: `e62a53d6` (fix branch `fix/m8-2-slack-fetch-binding` built on
+  main `f63393d`). D1 `ultra-easy-approval-api-db`
+  (`830e02ba-fbc1-4d0d-8dba-e347b723cadb`); queues
+  `ultra-easy-notifications-staging` + `-dlq` (kept).
+- Root cause found by this drill: every Slack POST from the worker failed with
+  `slack_webhook_network_error` / `TypeError` / no HTTP response (18 alert
+  notifies + 12 queue deliveries, 0 successes), while a disposable probe
+  worker on the same account reached `hooks.slack.com` fine and a human `curl`
+  of the webhook URL got Slack `ok`. A temporary instrumented deploy captured
+  the sanitized failure detail:
+  `TypeError :: Illegal invocation: function called with incorrect 'this'
+reference`. The sink stored the bare `fetch` reference as its default
+  `fetchImpl` (`?? fetch` in `SlackWebhookSink` constructor and in
+  `notifyAlertTransitionViaSlack`); workerd requires `fetch` to be called
+  with a valid receiver, so every detached call threw before any network
+  activity. Direct `fetch()` calls (FGA/Auth0 paths, probe worker) and mock
+  `fetchImpl` unit tests never exhibited it — hence the escape. This also
+  explains why `approval-fga` (already `globalThis.fetch.bind(globalThis)`)
+  always worked.
+- Fix (this branch): both `?? fetch` defaults unified to
+  `defaultFetchImpl()` = `globalThis.fetch.bind(globalThis)`, matching the
+  repo convention; regression tests assert the stored default is not the bare
+  reference plus offline loopback (`127.0.0.1:9`) behavioral coverage for the
+  sink and alert default paths (`cloudflare:test` has no `fetchMock` in this
+  toolchain, documented in-test). The temporary message-capture
+  instrumentation was fully reverted; only the fix + tests ship.
+- AC-M8-003 (post-fix, `m8-2-redrill-3`): staging production path
+  `action:df66ec13-36b9-42a2-a607-4e9ae1955957`
+  (resource `ticket:staging-e2e-1`, pre-existing FGA tuples reused —
+  no FGA/Auth0/D1-config changes): submit (alice) 15:21:22Z →
+  alice manager-approve 15:21:43Z → bob finance-approve 15:22:04Z →
+  `executed`. Both `step.activated` notifications went `sent` on attempt 1
+  (`sent_at` 15:22:24.429Z alice-step / 15:22:25.629Z bob-step, stable
+  notificationKeys, no duplicate POSTs). Dashboard `failedDeliveries` did not
+  increase (stays 4 = pre-fix historical rows), backlog 0. Slack arrival of
+  the two `[ultra-easy] notification step.activated …` posts confirmed by
+  human eyes (see PR).
+- AC-M8-004 (post-fix): override `c06248f0` (15:25:08Z,
+  `OPERATOR_ALERT_DWELL_P95_SLA_MS=1` +
+  `OPERATOR_ALERT_FAILURE_TREND_MINUTES=1`) → `breaching` 15:26:21Z →
+  `firing` 15:27:22Z (`alert.firing` warn ×2 orgs, zero
+  `notification.failed`/`notification.skipped` in `wrangler tail` — every
+  transition POST succeeded) → plain restore `e62a53d6` (15:28:13Z) →
+  all `ok` 15:29:30Z with baseline thresholds. Slack arrival of the
+  `[ultra-easy alert] approval_dwell_p95: …` transition posts confirmed by
+  human eyes (see PR).
+- Pre-fix drill artifacts kept for the record: `failedDeliveries=4`
+  (two `step.activated` deliveries ×2 actions, 6 attempts each, last_error
+  `Slack webhook POSTに失敗しました`) and their DLQ messages; alert
+  transition history (`ok → breaching → firing → ok` ×3 drill rounds).
+  No D1 destructive operation was performed (read-only SELECT + API-driven
+  inserts only).

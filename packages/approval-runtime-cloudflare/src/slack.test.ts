@@ -5,6 +5,7 @@ import type { ActionRequestId, OrganizationId, UserId } from "@app/approval-core
 
 import { MemoryTelemetrySink, type TelemetryRecord } from "@app/approval-core";
 import {
+  defaultFetchImpl,
   emitNotificationSkipped,
   notifyAlertTransition,
   SlackWebhookSink,
@@ -213,6 +214,57 @@ describe("SlackWebhookSink", () => {
       telemetry,
     });
     expect(telemetry.records).toHaveLength(0);
+  });
+
+  describe("default fetch binding (Illegal invocation回帰)", () => {
+    it("defaultFetchImplはbare fetchではなくbind済み関数を返す", () => {
+      const impl = defaultFetchImpl();
+      expect(typeof impl).toBe("function");
+      // 修正前はbareなfetch参照が既定値で、workerdでは
+      // `TypeError: Illegal invocation` になっていた (M8-2再drill本番tailで確定)。
+      expect(impl).not.toBe(globalThis.fetch);
+    });
+
+    it("fetchImpl未指定のsinkはbare fetchを保持しない", () => {
+      const sink = new SlackWebhookSink({
+        webhookUrl: "https://hooks.slack.com/services/T/B/X",
+      });
+      const stored = (sink as unknown as { fetchImpl: unknown }).fetchImpl;
+      expect(stored).not.toBe(globalThis.fetch);
+    });
+
+    it("fetchImpl未指定でも実到達試行する (到達不能先はnetwork_error)", async () => {
+      // 127.0.0.1:9 は何もlistenしていない。到達試行が起きること自体を検証する。
+      // 原因の同一性 (Illegal invocationでないこと) は上の2件で担保する。
+      // なお本リポジトリのtoolchainにcloudflare:testのfetchMockは存在しないため、
+      // loopback到達不能によるoffline決定的テストとしている。
+      const sink = new SlackWebhookSink({ webhookUrl: "http://127.0.0.1:9/hook" });
+      const sent = await sink.send(notificationRequest());
+      assert(Result.isFailure(sent));
+      expect(sent.error.code).toBe("slack_webhook_network_error");
+      expect(sent.error.retriable).toBe(true);
+    });
+
+    it("alert既定経路も実到達試行する (到達不能先はnotification.failed)", async () => {
+      const telemetry = new MemoryTelemetrySink();
+      await notifyAlertTransition({
+        webhookUrl: "http://127.0.0.1:9/hook",
+        organizationId,
+        alertKey: "outbox_backlog",
+        from: "ok",
+        to: "firing",
+        telemetry,
+      });
+      const logs = telemetry.records.filter(
+        (record): record is Extract<TelemetryRecord, { kind: "log" }> => record.kind === "log",
+      );
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toMatchObject({
+        level: "error",
+        event: "notification.failed",
+        attributes: expect.objectContaining({ errorCode: "slack_webhook_network_error" }),
+      });
+    });
   });
 
   it("alert通知はwebhookへPOSTする", async () => {
