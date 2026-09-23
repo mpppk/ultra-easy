@@ -9,7 +9,6 @@ import {
 } from "@app/approval-application";
 import {
   ConsoleTelemetrySink,
-  DEFAULT_OPERATOR_ALERT_THRESHOLDS,
   evaluateOperatorAlerts,
   GovernanceActionExecutor,
   safeLogRecord,
@@ -35,8 +34,11 @@ import {
   CloudflareWorkflowCancellationControl,
   consumeNotificationMessage,
   dispatchNotificationOutbox,
+  emitNotificationSkipped,
+  notifyAlertTransition,
   ServiceBindingActionAuthorizer,
   ServiceBindingActionExecutor,
+  SlackWebhookSink,
   type ActionServiceBinding,
   type ActionWorkflowEnv,
   type ActionWorkflowParams,
@@ -45,6 +47,7 @@ import {
 } from "@app/approval-runtime-cloudflare";
 
 import { Auth0IdentityProvider } from "./auth0-identity.ts";
+import { readOperatorAlertThresholds } from "./operator-alert-thresholds.ts";
 import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
 import { DispatchingActionExecutor } from "./dispatching-executor.ts";
 import { StagingSchemaResolver } from "./staging-schema-resolver.ts";
@@ -61,12 +64,34 @@ type ApprovalApiEnv = ActionWorkflowEnv & {
   AUTH0_DOMAIN: string;
   AUTH0_API_AUDIENCE: string;
   AUTH0_ORGANIZATION_ID: string;
+  /** wrangler secret put のみ。平文commit禁止。未設定時は配信をskip (no-op成功) する。 */
+  SLACK_WEBHOOK_URL?: string;
+  /** alert閾値override (staging drill用 --var)。未設定・不正値はbaselineへfallback。 */
+  OPERATOR_ALERT_OUTBOX_BACKLOG?: string;
+  OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES?: string;
+  OPERATOR_ALERT_FAILURE_TREND_MINUTES?: string;
+  OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
 };
 
-class StagingNotificationSink implements NotificationSink {
+function operatorAlertThresholds(env: ApprovalApiEnv) {
+  return readOperatorAlertThresholds({
+    OPERATOR_ALERT_OUTBOX_BACKLOG: env.OPERATOR_ALERT_OUTBOX_BACKLOG,
+    OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES: env.OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES,
+    OPERATOR_ALERT_FAILURE_TREND_MINUTES: env.OPERATOR_ALERT_FAILURE_TREND_MINUTES,
+    OPERATOR_ALERT_DWELL_P95_SLA_MS: env.OPERATOR_ALERT_DWELL_P95_SLA_MS,
+  });
+}
+
+class NoopNotificationSink implements NotificationSink {
   async send() {
     return Result.succeed(undefined);
   }
+}
+
+function createNotificationSink(env: ApprovalApiEnv): NotificationSink {
+  const webhookUrl = env.SLACK_WEBHOOK_URL?.trim() ?? "";
+  if (webhookUrl.length === 0) return new NoopNotificationSink();
+  return new SlackWebhookSink({ webhookUrl });
 }
 
 function stagingOrganizationId(env: ApprovalApiEnv): OrganizationId {
@@ -190,7 +215,7 @@ async function getOperatorDashboard(request: Request, env: ApprovalApiEnv): Prom
     return json({ error: alerts.error.message }, { status: 500 });
   }
   return json(
-    { ...snapshot.value, alerts: alerts.value, thresholds: DEFAULT_OPERATOR_ALERT_THRESHOLDS },
+    { ...snapshot.value, alerts: alerts.value, thresholds: operatorAlertThresholds(env) },
     { status: 200 },
   );
 }
@@ -216,7 +241,7 @@ async function evaluateAlerts(env: ApprovalApiEnv, now: string): Promise<void> {
     }
     const dwellSamples = Object.values(snapshot.value.sli.dwellByStepKey);
     const evaluated = evaluateOperatorAlerts({
-      thresholds: DEFAULT_OPERATOR_ALERT_THRESHOLDS,
+      thresholds: operatorAlertThresholds(env),
       previous: previous.value,
       values: {
         outboxBacklog: snapshot.value.outbox.backlog,
@@ -255,6 +280,14 @@ async function evaluateAlerts(env: ApprovalApiEnv, now: string): Promise<void> {
           attributes: { alertKey: transition.key, status: transition.to },
         }),
       );
+      await notifyAlertTransition({
+        webhookUrl: env.SLACK_WEBHOOK_URL ?? "",
+        organizationId,
+        alertKey: transition.key,
+        from: transition.from,
+        to: transition.to,
+        telemetry,
+      });
     }
   }
 }
@@ -301,7 +334,9 @@ export default {
 
   async queue(batch, env): Promise<void> {
     const repository = new D1NotificationOutboxRepository(env.DB);
-    const sink = new StagingNotificationSink();
+    const sink = createNotificationSink(env);
+    // secret未設定のdegraded動作: 配信skip (ack成功) + warn log/metric。cron/queueは壊さない。
+    const degraded = (env.SLACK_WEBHOOK_URL?.trim() ?? "").length === 0;
     const telemetry = new ConsoleTelemetrySink();
     for (const message of batch.messages) {
       const consumed = await consumeNotificationMessage({
@@ -314,6 +349,12 @@ export default {
       if (Result.isFailure(consumed)) {
         message.retry();
       } else {
+        if (degraded && consumed.value.delivered > 0) {
+          emitNotificationSkipped(telemetry, {
+            organizationId: message.body.organizationId,
+            actionRequestId: message.body.actionRequestId,
+          });
+        }
         message.ack();
       }
     }

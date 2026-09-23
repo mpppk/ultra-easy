@@ -56,6 +56,7 @@ export type SafeLogEvent =
   | "workflow.failed"
   | "executor.failed"
   | "notification.failed"
+  | "notification.skipped"
   | "domain.event"
   | "alert.firing"
   | "alert.resolved";
