@@ -1,12 +1,13 @@
 ---
 description: Orcaの/orchestrationでorchestrator・worker・reviewerの3ロールを協調させて実装を進めるプロトコル。workerの実装・テスト・PR作成と動作確認、reviewerのレビュー・マージ・本番確認、piハーネスとモデル指定、--approve指定、workspace status遷移ルールを定める。「Orcaで実装して」「orchestrationを使って」のようにOrcaでの分散実装を指示された時、またはリポジトリのCLAUDE.md/AGENTS.mdでこのskillの利用が指示されている時に使う。
 metadata:
-    github-path: orca
-    github-ref: refs/heads/main
-    github-repo: https://github.com/mpppk/skills
-    github-tree-sha: c2a8f7b3387c86dadc47bc0ce6f8453f4ef4602a
+  github-path: orca
+  github-ref: refs/heads/main
+  github-repo: https://github.com/mpppk/skills
+  github-tree-sha: c2a8f7b3387c86dadc47bc0ce6f8453f4ef4602a
 name: orca
 ---
+
 # orca
 
 orcaが提供する/orchestrationを利用し、orchestrator, worker, reviewerの3種類のAIエージェントが協調して実装を進めます。
@@ -22,4 +23,3 @@ workerとreviewerのworkspace statusを、以下のルールで適宜orchestrato
 - 作業が完了してレビューを待っているworkerや、レビュー中のreviewerはIn reviewとする
 - レビューを行っていないが再利用の可能性があり待機しているworkerやreviewerはWaitingとする
 - もう利用しないworkerやreviewerはDoneとして、適宜削除する
-
