@@ -1,5 +1,6 @@
 import { defineConfig, lazyPlugins } from "vite-plus";
 
+import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 
 import viteReact from "@vitejs/plugin-react";
@@ -13,6 +14,7 @@ const isCloudflarePreviewBuild =
 export default defineConfig({
   resolve: { tsconfigPaths: true },
   plugins: lazyPlugins(() => [
+    tailwindcss(),
     // Cloudflare Vite plugin is incompatible with Vitest (sets resolve.external in ssr env).
     // Skip it during `vp test` / Vitest runs.
     ...(process.env.VITEST
