@@ -17,11 +17,14 @@ Production domain + custom-domain cutover are follow-ups.
   `read:action-requests` / `write:action-requests`.
 - Staging humans use password-realm grant against
   `Username-Password-Authentication` (staging-only; test users
-  `staging-alice@example.com` / `staging-bob@example.com`).
-  NOTE: their passwords were not persisted to 1Password (create attempts
-  failed silently). Reset them via the Auth0 dashboard (Users → user →
-  Reset Password) and store them as `AUTH0_STAGING_*_PASSWORD` in the
-  `ultra-easy` vault BEFORE running the next staging E2E.
+  `staging-alice@example.com` / `staging-bob@example.com`). Passwords live
+  in 1Password vault `ultra-easy` as `AUTH0_STAGING_ALICE_PASSWORD` /
+  `AUTH0_STAGING_BOB_PASSWORD`.
+  Future resets: the `AUTH0_MGMT_TEST_CLIENT` item in the same vault holds
+  an Auth0 Management API Test Application (client credentials, scopes
+  `read:users` `update:users`, audience
+  `https://dev-67c6cfj2y51bmeyf.us.auth0.com/api/v2/`) — exchange a token
+  and `PATCH /api/v2/users/{id}` with `{password, connection}`.
   Browser login UI is a follow-up.
 - Single staging org: requests outside `organization:staging` get 403.
   Multi-org mapping is a follow-up.
