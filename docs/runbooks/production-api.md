@@ -111,7 +111,33 @@ in `pending` → permanent 409 `in_progress`. (Fixed during M8-1 staging.)
 ## Dashboard / alerts
 
 `GET /operator/dashboard?organizationId=` serves staging SLIs from the same
-D1 (see `docs/runbooks/operator-dashboard.md`). Cron evaluates alerts.
+D1 (see `docs/runbooks/operator-dashboard.md`). Cron evaluates alerts and
+POSTs `firing`/`resolved` transitions to Slack (`SLACK_WEBHOOK_URL` secret).
+
+## Notifications (M8-2)
+
+- Domain events flow: D1 outbox → `dispatchNotificationOutbox` (cron) →
+  Cloudflare Queue → `consumeNotificationMessage` (queue consumer) →
+  `SlackWebhookSink` (`packages/approval-runtime-cloudflare/src/slack.ts`)
+  POSTing the Incoming Webhook. At-least-once; duplicate deliveries reuse
+  the same `notificationKey`/delivery idempotency key and are skipped after
+  `sent`.
+- Slack payload is correlation-only (event type, action/org IDs,
+  notification key, timestamp). No Action input, Decision comments,
+  attachment contents, or credentials — in payload, logs, or dashboard.
+- `SlackWebhookSink` classifies `429`/`5xx`/`408` as retriable (queue retry →
+  DLQ after `max_retries: 5`) and other `4xx` as non-retriable; timeouts
+  (8s) and network errors are retriable.
+- When `SLACK_WEBHOOK_URL` is unset the queue consumer succeeds no-op
+  (pre-provisioning staging behavior) and alert Slack delivery is skipped;
+  both emit the normal structured logs.
+- Queues: staging `ultra-easy-notifications-staging` (+ `-dlq`) is the
+  default in `wrangler.jsonc`; production `ultra-easy-notifications`
+  (+ `-dlq`) lives in the `env.production` block (same `NOTIFICATION_QUEUE`
+  binding). Cutover = `wrangler deploy --env production` in the same window
+  as the production log-alert creation (see `operator-dashboard.md`).
+- Secrets: `SLACK_WEBHOOK_URL` via `wrangler secret put` only (per
+  environment); source of truth is 1Password vault `ultra-easy` (`SLACK`).
 
 ## Known gaps (follow-ups, not M8-1)
 

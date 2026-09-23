@@ -115,7 +115,32 @@ evaluates every recently-active organization:
 Each evaluation also refreshes the last-observed failure counters so a single
 spike does not re-fire after recovery.
 
+### Alert → Slack direct delivery (M8-2)
+
+The cron also POSTs every `firing`/`resolved` transition to the Slack
+Incoming Webhook (`SLACK_WEBHOOK_URL` secret) via
+`notifyAlertTransitionViaSlack` (`packages/approval-runtime-cloudflare/src/slack.ts`).
+Payload is alertKey + transition + org only — no credentials, Action input,
+Decision comments, or attachment contents. A failed POST is recorded as
+`notification.failed` log + `outbox.failure_total` metric and never breaks
+the cron tick. When the secret is unset (e.g. pre-provisioning staging),
+Slack delivery is skipped gracefully; the structured log records above are
+still emitted.
+
+Secret setup (plaintext commit禁止):
+
+1. Source of truth is the 1Password vault `ultra-easy` (`SLACK` item;
+   create it if missing — workspace Incoming Webhook URL).
+2. `op read "op://ultra-easy/SLACK/credential" | wrangler secret put SLACK_WEBHOOK_URL -C apps/approval-api`
+   (staging and production use separate values; repeat per environment).
+3. The URL never appears in logs, dashboard snapshots, or Slack payloads.
+
 ### Cloudflare-side notification setup
+
+Two independent channels (both safe-payload only):
+
+A. Direct Slack delivery (M8-2, automatic once the secret is set) — see above.
+B. Log-based alert (manual console step per environment, staging → production):
 
 1. Workers Logs: save a query for `event:"alert.firing"`.
 2. Create a log-based alert (or external monitor polling
@@ -123,6 +148,25 @@ spike does not re-fire after recovery.
 3. Alert message must link the correlation search
    (`correlationId=operator-alert:<org>:<key>`) and this runbook plus
    `stuck-action-request.md` / `dependency-outage.md` / `migration-rollback.md`.
+
+#### Staging → production log-alert creation procedure
+
+1. Staging: in the Cloudflare dashboard, open Workers Logs for
+   `ultra-easy-approval-api`, save the `event:"alert.firing"` query,
+   and create the log-based alert pointing at the staging Slack channel.
+   Verify with the staging drill below (`firing → Slack` arrival).
+2. Production cutover: duplicate the saved query/alert against the
+   production worker (`ultra-easy-approval-api` production env),
+   re-point the notification target to the production channel, and confirm
+   the first `alert.resolved` (or drill `firing`) arrives post-cutover.
+3. Queue cutover (same change window): switch `NOTIFICATION_QUEUE` from
+   `ultra-easy-notifications-staging` (+ `-dlq`) to
+   `ultra-easy-notifications` (+ `-dlq`) via the `env.production` block in
+   `apps/approval-api/wrangler.jsonc`, then `wrangler deploy --env production`.
+   At-least-once + `notificationKey`/delivery idempotency are preserved
+   because the consumer reuses the same keys across redelivery.
+4. Keep the staging queue + DLQ provisioned for drills; never delete the
+   staging alert — it guards the staging environment independently.
 
 ## Staging drill
 
@@ -133,6 +177,35 @@ spike does not re-fire after recovery.
    wait two cron ticks, and confirm `outbox_backlog` moves
    `ok → breaching → firing` with an `alert.firing` log record.
 4. Restore the default, wait for recovery, and confirm `alert.resolved`.
+5. Record the evidence below.
+
+### Approval API worker drill (M8-2, AC-M8-003/004)
+
+Target: `ultra-easy-approval-api` + queue
+`ultra-easy-notifications-staging` (+ DLQ). Isolate with a dedicated org
+(`organization:m8-2-drill`); never touch `organization:staging` rows.
+
+1. Deploy the branch (`wrangler deploy` from `apps/approval-api`).
+2. AC-M8-003: insert `action.received` + `action.completed` (`m8-2-` keys)
+   plus one `pending` outbox row for the drill org via
+   `wrangler d1 execute DB --remote --file`. Wait two cron ticks and confirm:
+   outbox `pending → dispatched`, `notification_deliveries` → `sent` with a
+   stable `notificationKey`, dashboard backlog → 0, and a
+   `notification.skipped` warn + `outbox.failure_total` metric (secret
+   unprovisioned degraded path). Redelivery skip is covered by the
+   mock-webhook integration test (`slack-delivery.integration.test.ts`).
+3. AC-M8-004: give the drill org dwell data (`step.activated` → `step.approved`,
+   `m8-2-` keys), then drill-deploy with staging-only vars:
+   `wrangler deploy --var OPERATOR_ALERT_DWELL_P95_SLA_MS:1
+--var OPERATOR_ALERT_FAILURE_TREND_MINUTES:1`.
+   Wait two ticks and confirm `approval_dwell_p95` moves
+   `ok → breaching → firing` with `alert.firing` warn records plus a
+   per-transition Slack attempt (`notification.skipped` while the secret is
+   unprovisioned). Note: the threshold override is global, so
+   `organization:staging` fires transiently too — this is expected drill noise.
+4. Restore immediately (`wrangler deploy` without `--var`), wait two ticks,
+   and confirm `firing → ok` with `alert.resolved` info records on every
+   affected org and default thresholds served by the dashboard again.
 5. Record the evidence below.
 
 ### Evidence — 2026-09-21 drill
@@ -165,3 +238,58 @@ spike does not re-fire after recovery.
 - Cloudflare notification wiring: documented above, not provisioned
   (manual console step per environment).
 - Follow-up link: M7 parent tracking issue.
+
+### Evidence — 2026-09-23 drill (M8-2, AC-M8-003/004)
+
+- Date/time: 2026-09-23T06:18–06:43Z.
+- Worker: `ultra-easy-approval-api`
+  (`https://ultra-easy-approval-api.niboshi.workers.dev`, cron `*/1 * * * *`).
+  Versions: `f889ade0` (initial M8-2 deploy) → `b7d5cbb1` (threshold-override
+  support) → `f1f4be98` (final code) → `887c87ec` (drill `--var` #1) →
+  `508ee83d` (restore #1) → `71f3a94b` (drill `--var` #2) → `59c48336`
+  (restore #2, live at drill end). D1 `ultra-easy-approval-api-db`
+  (`830e02ba-fbc1-4d0d-8dba-e347b723cadb`); queues
+  `ultra-easy-notifications-staging` + `-dlq` (pre-existing, kept).
+  Release commit: this PR (on top of `37b5d22`).
+- Isolation: all drill rows use org `organization:m8-2-drill` and `m8-2-`
+  keys. `organization:staging` rows untouched; its `approval_dwell_p95`
+  fired transiently during the global threshold drill (expected, recovered
+  to `ok`). Pre-existing staging activity (action `fcb9ffd0…` completing via
+  the cron decision sweep) is unrelated to the drill.
+- Cross-work note: version `f9349dc3` (2026-09-23T06:22:24Z) is a #72-side
+  deploy (`mpppk/m8-3-openfga-ac-m8-005`, commit `bc1b348`); m8-2 drill
+  evidence below is on m8-2 versions only, live is the m8-2 restore `59c48336`.
+- AC-M8-003 dashboard snapshot (`organization:m8-2-drill`, post-delivery):
+  `leadTimeMs.count=1, p50=30000`, `completedByResult={executed:1}`,
+  `outbox={pending:0, failed:0, failedDeliveries:0, backlog:0}` (was
+  `pending:1` before the 06:22:01Z cron tick). Outbox row
+  `outbox:…:action.completed:m8-2` went `pending → dispatched`
+  (`dispatched_at=2026-09-23T06:22:01.000Z`); delivery row for
+  `user:m8-2-drill` went to `sent`
+  (`sent_at=2026-09-23T06:22:06.737Z`, `attempt_count=1`) under the stable
+  `notification:…:action.completed:m8-2` key. Duplicate-delivery skip is
+  proven by `slack-delivery.integration.test.ts` (mock webhook: 500 once →
+  retry with the same key → `sent`, redelivery → `skipped`, no extra POST).
+- AC-M8-003 log records (`wrangler tail`, worker `b7d5cbb1`):
+  `{"kind":"log","level":"warn","event":"notification.skipped",
+"correlation":{"organizationId":"organization:m8-2-drill",
+"actionRequestId":"action:m8-2-drill-1",…},
+"attributes":{"errorCode":"slack_webhook_missing"}}` plus
+  `outbox.failure_total=1` metric — the degraded path (secret unprovisioned).
+- AC-M8-004 alert transitions (`approval_dwell_p95`, drill `--var`
+  `OPERATOR_ALERT_DWELL_P95_SLA_MS=1` + `OPERATOR_ALERT_FAILURE_TREND_MINUTES=1`):
+  drill org and staging org both moved `ok → breaching → firing` (dashboard
+  showed `firing` with thresholds
+  `{outboxBacklogLimit:100, …, failureTrendMinutes:1, dwellP95SlaMs:1}`),
+  then `firing → ok` after the plain restore deploy (dashboard `ok` at
+  `2026-09-23T06:42:59.000Z` with baseline thresholds,
+  `dwellP95SlaMs:null`). Live-captured (`wrangler tail`) transition logs:
+  `alert.firing` (warn) ×2, `alert.resolved` (info, `status:breaching` then
+  `status:ok`) ×4, each transition accompanied by `notification.skipped`
+  (warn, `errorCode:slack_webhook_missing`) — the per-transition Slack
+  attempt without a provisioned secret.
+- Slack real arrival: NOT verified — no `SLACK` item exists in 1Password vault
+  `ultra-easy`, so `SLACK_WEBHOOK_URL` was never set (payload-secret hygiene
+  kept: no URL/commit). Human follow-up (see PR): register the webhook URL in
+  1Password → `wrangler secret put SLACK_WEBHOOK_URL -C apps/approval-api` →
+  re-run the §Approval API worker drill and confirm arrival.

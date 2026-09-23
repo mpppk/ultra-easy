@@ -32,6 +32,11 @@
       "entrypoint": "StagingActionExecutor",
     },
   ],
+  // Notifications: at-least-once + notificationKey/delivery idempotency。
+  // Top-level = staging (ultra-easy-notifications-staging + DLQ)。
+  // 本番は env.production の別queue名へ切替 (binding名NOTIFICATION_QUEUEは共通)。
+  // Secrets (平文commit禁止): SLACK_WEBHOOK_URL は `wrangler secret put` のみ
+  // (staging/productionで別値。1Password vault ultra-easy の SLACK 項目がsource of truth)。
   "queues": {
     "producers": [
       {
@@ -48,6 +53,37 @@
         "dead_letter_queue": "ultra-easy-notifications-staging-dlq",
       },
     ],
+  },
+  "env": {
+    "production": {
+      "vars": {
+        "AUTH0_ORGANIZATION_ID": "organization:production",
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATION_QUEUE",
+            "queue": "ultra-easy-notifications",
+          },
+        ],
+        "consumers": [
+          {
+            "queue": "ultra-easy-notifications",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 5,
+            "dead_letter_queue": "ultra-easy-notifications-dlq",
+          },
+        ],
+      },
+      "workflows": [
+        {
+          "binding": "ACTION_WORKFLOW",
+          "name": "ultra-easy-action-workflow",
+          "class_name": "ActionWorkflow",
+        },
+      ],
+    },
   },
   "triggers": {
     "crons": ["*/1 * * * *"],
