@@ -15,6 +15,9 @@ export function stagingActionRelation(action: {
   type: ActionType;
   resource: ResourceRef;
 }): RelationName | null {
-  if (String(action.type) === "ticket.update") return "can_execute" as RelationName;
+  // ticket.escalate is a staging fixture for parallel (any/all/quorum) approval flows.
+  if (String(action.type) === "ticket.update" || String(action.type) === "ticket.escalate") {
+    return "can_execute" as RelationName;
+  }
   return authorizationAdminActionRelation({ actionType: action.type, resource: action.resource });
 }

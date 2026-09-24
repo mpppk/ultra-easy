@@ -84,3 +84,31 @@ ON CONFLICT(organization_id, binding_id) DO UPDATE SET
   actor_json = excluded.actor_json,
   source_action_request_id = excluded.source_action_request_id,
   updated_at = excluded.updated_at;
+INSERT OR IGNORE INTO published_action_definitions (
+  organization_id, definition_key, version, action_type, definition_json,
+  actor_json, source_action_request_id, published_at
+) VALUES (
+  'organization:staging', 'staging:ticket-escalate', 1, 'ticket.escalate',
+  '{"actionType":"ticket.escalate","executorKey":"staging","inputSchema":{"key":"staging:ticket-update","version":1},"key":"staging:ticket-escalate","version":1}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
+);
+INSERT OR IGNORE INTO published_approval_policy_versions (
+  organization_id, policy_key, version, policy_json, actor_json,
+  source_action_request_id, published_at
+) VALUES (
+  'organization:staging', 'policy:staging-parallel-escalation', 1,
+  '{"description":"M9 staging E2E: serial of any / all / quorum parallel groups","key":"policy:staging-parallel-escalation","name":"staging-parallel-escalation","rules":[{"flow":{"children":[{"children":[{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12807a4ea2a6f7c2ccc09"}},"key":"triage-alice","type":"approval"},{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12aa04a279d37e02306c6"}},"key":"triage-bob","type":"approval"}],"strategy":"any","type":"parallel"},{"children":[{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12807a4ea2a6f7c2ccc09"}},"key":"review-alice","purpose":"business_approval","type":"approval"},{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12aa04a279d37e02306c6"}},"key":"review-bob","purpose":"security_approval","type":"approval"}],"strategy":"all","type":"parallel"},{"children":[{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12807a4ea2a6f7c2ccc09"}},"key":"board-alice","type":"approval"},{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12aa04a279d37e02306c6"}},"key":"board-bob","type":"approval"},{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12807a4ea2a6f7c2ccc09"}},"key":"board-alice-2","resolution":"snapshot","type":"approval"}],"quorum":2,"strategy":"quorum","type":"parallel"}],"type":"serial"},"key":"default","when":{"type":"always"}}],"schemaVersion":1}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
+);
+INSERT INTO approval_policy_bindings (
+  organization_id, binding_id, policy_key, enabled, binding_json,
+  actor_json, source_action_request_id, updated_at
+) VALUES (
+  'organization:staging', 'binding:staging-ticket-escalate', 'policy:staging-parallel-escalation', 1,
+  '{"compositionOrder":100,"enabled":true,"id":"binding:staging-ticket-escalate","organizationId":"organization:staging","policyKey":"policy:staging-parallel-escalation","selector":{"actionTypes":["ticket.escalate"]}}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
+)
+ON CONFLICT(organization_id, binding_id) DO UPDATE SET
+  policy_key = excluded.policy_key,
+  enabled = excluded.enabled,
+  binding_json = excluded.binding_json,
+  actor_json = excluded.actor_json,
+  source_action_request_id = excluded.source_action_request_id,
+  updated_at = excluded.updated_at;

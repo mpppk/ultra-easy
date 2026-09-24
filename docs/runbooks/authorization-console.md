@@ -195,3 +195,68 @@ Routes on the `ultra-easy` web worker: `/admin/authorization/{explorer,relations
 - Explorer renders the simulation approval flow with React Flow + Dagre
   (read-only, graph on md+ screens) plus an equivalent keyboard-accessible
   tree, which is the only view on narrow screens. It is never runtime progress.
+
+## Audit (M9-4)
+
+- `GET /v1/admin/authorization/audit` (and Console → Audit) reads only the
+  append-only `authorization_relationship_events` table. DB triggers reject
+  UPDATE/DELETE, and the mutable relationship projection is never used as the
+  audit source. Filters: actor, event, operation, subject, relation, object,
+  ActionRequest, mutation key, revision, from/to, and an opaque cursor.
+- Phases: `requested` (intent, durable before FGA), `apply_started`,
+  `confirmed` (effect observed), `indeterminate`, `superseded`, `failed`,
+  `drift_repaired`. The UI never presents requested or indeterminate as
+  success.
+- Payloads carry actor, time, tuple, source ActionRequest, mutation key and
+  revision, desired state, model ID, and error code. They never carry the
+  Action input body, decision comments, credentials, or PII display values.
+  The correlation ID is the source ActionRequest ID.
+
+## Break-glass
+
+Emergency direct FGA tuple changes (IaC credentials, bypassing the console)
+are allowed only to restore service or remove access during an incident, and
+must be audited:
+
+1. Record the incident ticket, operator, reason, and exact tuples before
+   acting.
+2. Prefer the console path (an ActionRequest with approval) whenever the
+   console works. For console-managed tuples, afterwards submit an
+   `authorization.relationship.update` with the same end state so the D1
+   desired state and audit match the provider. Otherwise reconciliation will
+   repair the provider back to the journal's desired state.
+3. `authorization_admin` membership changes always go through
+   `bootstrap/admins.json` + PR, including emergency removals, which may be
+   applied first and reviewed post hoc within 24h.
+
+## Staging E2E (AC-M9-011, 2026-09-24)
+
+`op run --env-file=<refs> -- bun tests/staging/m9-authorization-console.e2e.ts`
+against approval-api `25736a73` (model `01M38K1Q55CCNETS1V6XHJZJTB`),
+run `m9-muf2he79`: **31/31 passed**:
+
+- Read / Explorer: viewer reads and non-viewer 403; allowed / denied /
+  approval-required; serial order (manager → finance); `ticket.escalate`
+  fixture with any 1/2, all 2/2, quorum 2/3 and step metadata; missing input,
+  invalid input, and provider error (invalid principal rejected by FGA) all
+  return `evaluation_error`.
+- Governed mutation: write with no approval → confirmed; `can_approve` grant
+  → pending (FGA unchanged) → bob approves → Workflow → executor → confirmed;
+  Check (Explorer + direct) reflects writes and deletes; editor revoked during
+  approval → `authorization_revoked` with no mutation (membership restored);
+  cross-org request 403 and object injection 422, with no foreign rows listed;
+  admin `editor`/`viewer` and non-catalog relations → 422.
+- Retry / ordering / crash: Idempotency-Key replay → same ActionRequest, 1
+  mutation, 1 `requested`; A (grant applied, response lost) → B revoke
+  confirmed → the cron reconciler supersedes A without resending, and the
+  final state is revoke; FGA-success-then-crash intent stays durable and is
+  confirmed by the cron; the ambiguous (unapplied) indeterminate mutation is
+  applied and confirmed; concurrent write/delete gets revisions 1 and 2 and
+  converges to the latest.
+- Model read-only (pinned = GitOps, matches the Git source; PUT/POST/DELETE →
+  404); audit carries actor, time, tuple, ActionRequest, and revision in
+  requested → apply_started → confirmed order; superseded is visible; no input
+  body or credentials.
+- Web (`ultra-easy` worker): server-side login → encrypted session →
+  `APPROVAL_API` binding → session, relationships, Explorer (any/all/quorum),
+  and model all verified. Anonymous → 401, POST without the console header → 403.
