@@ -7,7 +7,7 @@ model
 # relations are never removed or narrowed in place.
 #
 # Objects are tenant-scoped by the runtime (`tenantScopedOpenFgaObject`):
-# ticket:<org>/<id>, authorization_admin:<org>/root.
+# ticket:<org>/<id>, authorization_admin:<org>/root, mcp_tool:<org>/<actionType>.
 
 type user
 
@@ -22,3 +22,10 @@ type authorization_admin
   relations
     define editor: [user]
     define viewer: [user] or editor
+
+# MCP Gateway Tool Exposure (M10). Which authority principals may see and call
+# the MCP tool bound to an ActionType. Exposure is not execution permission:
+# every tools/call still runs Full Action Authorization (ticket#can_execute ...).
+type mcp_tool
+  relations
+    define can_use: [user]

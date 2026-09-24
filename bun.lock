@@ -108,6 +108,7 @@
       "dependencies": {
         "@app/approval-application": "workspace:*",
         "@app/approval-core": "workspace:*",
+        "@app/approval-mcp": "workspace:*",
         "@praha/byethrow": "^0.12.0",
       },
     },
@@ -130,6 +131,9 @@
         "@app/approval-application": "workspace:*",
         "@app/approval-core": "workspace:*",
         "@praha/byethrow": "^0.12.0",
+      },
+      "devDependencies": {
+        "@standard-schema/spec": "^1.1.0",
       },
     },
     "packages/approval-runtime-cloudflare": {

@@ -66,6 +66,7 @@ type IdempotencyRow = {
   idempotency_key: string;
   request_hash: string;
   status: "pending" | "completed";
+  locked_until: string | null;
   response_status: number | null;
   response_body: string | null;
   response_location: string | null;
@@ -218,6 +219,7 @@ function idempotencyRecord(
     key: row.idempotency_key,
     requestHash: row.request_hash,
     status: row.status,
+    ...(row.locked_until !== null ? { lockedUntil: row.locked_until } : {}),
     ...(row.response_status !== null ? { responseStatus: row.response_status } : {}),
     ...(responseBody !== undefined ? { responseBody } : {}),
     ...(row.response_location !== null ? { responseLocation: row.response_location } : {}),
@@ -695,7 +697,7 @@ export class D1PublicApiRepository
     const row = await firstRow<IdempotencyRow>(
       this.db
         .prepare(
-          `SELECT organization_id, operation, idempotency_key, request_hash, status,
+          `SELECT organization_id, operation, idempotency_key, request_hash, status, locked_until,
                   response_status, response_body, response_location, created_at, updated_at
              FROM api_idempotency_keys
             WHERE organization_id = ? AND operation = ? AND idempotency_key = ?`,
@@ -715,15 +717,16 @@ export class D1PublicApiRepository
       this.db
         .prepare(
           `INSERT OR IGNORE INTO api_idempotency_keys (
-             organization_id, operation, idempotency_key, request_hash, status,
+             organization_id, operation, idempotency_key, request_hash, status, locked_until,
              response_status, response_body, response_location, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, NULL, ?, ?)`,
         )
         .bind(
           record.organizationId,
           record.operation,
           record.key,
           record.requestHash,
+          record.lockedUntil ?? null,
           record.createdAt,
           record.updatedAt,
         ),
@@ -756,9 +759,44 @@ export class D1PublicApiRepository
     if (existing.value.requestHash !== record.requestHash) {
       return Result.succeed({ type: "conflict", record: existing.value });
     }
+    if (existing.value.status === "completed") {
+      return Result.succeed({ type: "replay", record: existing.value });
+    }
+    const lockedUntil = existing.value.lockedUntil;
+    if (lockedUntil !== undefined && lockedUntil > record.updatedAt) {
+      return Result.succeed({ type: "in_progress", record: existing.value });
+    }
+    // 期限切れ（またはlease導入前）のpendingを、同じrequestの再送がcompare-and-setで引き継ぐ。
+    const taken = await runStatement(
+      this.db
+        .prepare(
+          `UPDATE api_idempotency_keys
+              SET locked_until = ?, updated_at = ?
+            WHERE organization_id = ? AND operation = ? AND idempotency_key = ?
+              AND request_hash = ? AND status = 'pending'
+              AND COALESCE(locked_until, '') = ?`,
+        )
+        .bind(
+          record.lockedUntil ?? null,
+          record.updatedAt,
+          record.organizationId,
+          record.operation,
+          record.key,
+          record.requestHash,
+          lockedUntil ?? "",
+        ),
+    );
+    if (Result.isFailure(taken)) return taken;
+    if (!taken.value.success || (taken.value.meta?.changes ?? 0) === 0) {
+      return Result.succeed({ type: "in_progress", record: existing.value });
+    }
     return Result.succeed({
-      type: existing.value.status === "completed" ? "replay" : "in_progress",
-      record: existing.value,
+      type: "acquired",
+      record: {
+        ...existing.value,
+        ...(record.lockedUntil !== undefined ? { lockedUntil: record.lockedUntil } : {}),
+        updatedAt: record.updatedAt,
+      },
     });
   }
 

@@ -44,6 +44,17 @@ export const AUTHORIZATION_MODEL_SOURCE: OpenFgaAuthorizationModelJson = {
       },
     },
     {
+      type: "mcp_tool",
+      relations: {
+        can_use: { this: {} },
+      },
+      metadata: {
+        relations: {
+          can_use: { directly_related_user_types: [{ type: "user" }] },
+        },
+      },
+    },
+    {
       type: "authorization_admin",
       relations: {
         editor: { this: {} },

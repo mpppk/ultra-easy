@@ -106,9 +106,19 @@ New `listPending` on `ApprovalCommandRepository` + D1 implementation.
 
 ## Idempotency
 
-`Idempotency-Key` header required on POSTs. 5xx responses are ALSO recorded
-as completed (replay the error) so a transient failure never wedges the key
-in `pending` → permanent 409 `in_progress`. (Fixed during M8-1 staging.)
+`Idempotency-Key` header required on POSTs (#92):
+
+- A reservation is `pending` with a lease (`locked_until`, default 60s). While
+  the lease is live, a retry of the same key gets 409 `idempotency_request_in_progress`
+  with `Retry-After`. After it expires (crash / timeout, or a legacy row with
+  `locked_until IS NULL`), a retry of the same payload takes the reservation over.
+- Retriable responses (429 / 502 / 503 / 504) are NOT recorded: the reservation
+  is released so the same key re-executes. Only non-retriable responses
+  (2xx / 4xx / a definitive 500) are stored as `completed` and replayed.
+- Replays do not consume the rate limit (the decision limiter runs after the
+  reservation is acquired).
+- Non-JSON bodies are hashed by raw text, so different payloads never collide.
+- Migration `0014_api_idempotency_lease.sql` adds `locked_until`.
 
 ## Dashboard / alerts
 

@@ -91,6 +91,7 @@ it("AC-M1-004 fails closed when a field is missing", ...)
 | M5 Safe Action Execution               | 承認後に再認可し、冪等性を保って最終Actionを実行できる                                |
 | M6 Public API & MCP                    | Application/AIがActionRequestだけを入口として一連の処理を利用できる                   |
 | M7 Production Readiness                | multi-tenant、audit、notification、force cancel、observabilityを含め本番運用できる    |
+| M10 MCP Gateway                        | MCP tool firewall + approval gatewayとしてtool公開・承認・downstream実行を制御できる  |
 
 各Milestoneは前段のAcceptance Suiteを壊さないことを完了条件に含む。
 
@@ -744,6 +745,74 @@ runbookに従い、原因確認 → force cancel → audit確認まで実施で�
 - production migration / rollback procedureが文書化される
 - force cancel drillをstagingで完了
 - critical-path E2E suiteがproduction-equivalent environmentでgreen
+
+---
+
+# M10 — MCP Gateway（tool visibility / approval / downstream execution）
+
+設計とwire contractは [`docs/mcp-gateway.md`](./mcp-gateway.md)。Epic #129（#130〜#134、#98）。
+
+## 目標
+
+AI Agentから見えるMCP toolをActionType単位のポリシーで制御し、`tools/call` を既存ActionRequest pipelineへ正規化して、
+Authorization / Approval / Re-Authorization完了後にdownstream MCP serverへproxyする。Gatewayは独自のApproval state machineを持たない。
+
+## スコープ
+
+- ActionType ↔ MCP Tool Binding / Registry
+- Tool Exposure（`tools/list` filter + `tools/call` admission）
+- logical invocation idempotency / replay / lease回収
+- ActionRequest prepare → admission → commit
+- downstream MCP ActionExecutor / route snapshot
+- MCP Tasks capability / durable Task reservation / ownership / projection（MCP 2026-07-28 + SEP-2663）
+
+## Acceptance Scenarios
+
+`tests/acceptance/m10-mcp-gateway.test.ts` と各packageのunit / contract testで検証する。
+
+### AC-M10-001 — tools/listはtrusted identityに応じてtoolをfilterする
+
+principal / organization / client identityごとにExposure allowのtoolだけを、Binding由来のdescription / input schemaで返す。
+
+### AC-M10-002 — Exposure denyのtoolはActionRequestを開始しない
+
+`exposure=deny / ActionAuthorizer=allow` でもActionRequest / Workflow / Executor / auditは0件。hidden toolとunknown toolは同じerrorになる。
+
+### AC-M10-003 — approval後にRe-Authorizationを通してdownstream MCP toolを実行する
+
+`tools/call` → Task → approve → Re-Authorization（higher consistency）→ downstream `tools/call` → Task `completed + result`。
+
+### AC-M10-004 — approval待機中のrouting変更で別targetへすり替わらない
+
+admission時のroute snapshotで実行し、新しいcallだけが新bindingを使う。
+
+### AC-M10-005 — approval後のauthority revokeではdownstreamを実行しない
+
+Taskは `completed + result.isError=true`。
+
+### AC-M10-006 — Tasks非対応clientで孤立ActionRequest / Workflowを生成しない（#98）
+
+approval-requiredなPrepared ActionRequestはTasks admission成功後にだけcommitする。
+
+### AC-M10-007 — 同じlogical invocationは同じActionRequest / Taskへ収束する
+
+same key + same requestは同じTask、same key + different requestはconflict、同時再送でActionRequestを重複させない。
+
+### AC-M10-008 — HTTPとMCPでAuthorization / Approval semanticsを分岐させない
+
+同じActionは同じFlowになり、originだけが異なる。
+
+### AC-M10-009 — MCP invocation → ActionRequest → approval → downstream executionを追跡できる
+
+auditはactor / authority / caller / delegation chainを持ち、telemetryは `mcpInvocationId` / `actionRequestId` / tool / serverで相関する。
+
+### AC-M10-010 — OpenFGAの `mcp_tool#can_use` でTool Exposureを判定できる
+
+## 完了条件
+
+- AC-M10-001〜010がgreen
+- invocation / route snapshot repositoryのcontract testがin-memoryとD1でgreen
+- M6 critical-path E2EがGateway経由でgreen
 
 ---
 

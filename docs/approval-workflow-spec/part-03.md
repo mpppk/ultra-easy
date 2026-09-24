@@ -28,7 +28,7 @@ apps/
 
 ## **4.2 MCP / Input Adapter**
 
-# **@app/approval-mcpはMCP requestをActionRequestへ正規化し、ActionAuthorizer / Approval Policy / Generic ActionWorkflowへ接続するAdapterを提供する。MCP method/tool/argumentsやclient metadataをcoreへ直接漏らさず、origin/actionへ変換する。MCP Tasks extensionを利用する場合もTask lifecycleはprotocol projectionとしてこのpackageで扱う。**
+# **@app/approval-mcpはMCP requestをActionRequestへ正規化し、ActionAuthorizer / Approval Policy / Generic ActionWorkflowへ接続するAdapterを提供する。MCP method/tool/argumentsやclient metadataをcoreへ直接漏らさず、origin/actionへ変換する。MCP Tasks extensionを利用する場合もTask lifecycleはprotocol projectionとしてこのpackageで扱う。** **MCP Gateway（ActionType ↔ MCP tool binding、Tool Exposure、logical invocation idempotency、prepare → admission → commit、downstream MCP ActionExecutor）の設計とwire contractは [docs/mcp-gateway.md](../mcp-gateway.md) を正本とする。**
 
 # **HTTP/UI/System Triggerも同じ方針でInput Adapterを実装し、coreのActionRequest contractへ変換する。Adapter固有のsession、requestState、task handle、transport errorはapproval-coreのPolicy/Flow ASTへ含めない。**
 

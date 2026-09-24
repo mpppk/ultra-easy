@@ -69,3 +69,26 @@ tests:
         object: ticket:organization%3Astaging/t-1
         assertions:
           can_execute: false
+
+  - name: mcp_tool exposure (M10 MCP Gateway)
+    tuples:
+      - user: user:alice
+        relation: can_use
+        object: mcp_tool:organization%3Astaging/ticket.priority.change
+    check:
+      - user: user:alice
+        object: mcp_tool:organization%3Astaging/ticket.priority.change
+        assertions:
+          can_use: true
+      - user: user:bob
+        object: mcp_tool:organization%3Astaging/ticket.priority.change
+        assertions:
+          can_use: false
+      - user: user:alice
+        object: mcp_tool:organization%3Aother/ticket.priority.change
+        assertions:
+          can_use: false
+      - user: user:alice
+        object: ticket:organization%3Astaging/t-1
+        assertions:
+          can_execute: false

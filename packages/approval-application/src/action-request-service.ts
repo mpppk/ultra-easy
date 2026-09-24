@@ -6,11 +6,13 @@ import {
   ActionAuthorizationCheckFailedError,
   ActionExecutorError,
   authorizeActionRequest,
+  canonicalizeJson,
   createActionExecutionIdempotencyKey,
   evaluateApprovalPlan,
   executeActionRequest,
   materializeApprovalPlan,
   validateActionInput,
+  verifyMaterializedApprovalPlan,
 } from "@app/approval-core";
 import type {
   Action,
@@ -27,6 +29,7 @@ import type {
   JsonValue,
   MaterializedApprovalPlan,
   MaterializedPlanRepository,
+  OrganizationId,
   PolicyEvaluationContext,
   PolicyEvaluationOrganization,
   PrincipalRef,
@@ -132,6 +135,32 @@ export type ActionRequestSubmitResult =
       reason: string;
     };
 
+/**
+ * `prepare` が1回の評価で確定したActionRequest。JSON serializableで、
+ * adapterはadmission / crash recoveryのためにこれを永続化してから `commit` できる。
+ */
+export type PreparedActionRequest = {
+  actionRequestId: ActionRequestId;
+  organizationId: OrganizationId;
+  request: ActionRequest;
+  plan: MaterializedApprovalPlan;
+  authorizationEvidence: AuthorizationEvidence;
+  /** prepared planのflowがnone以外か。admission判断用で、callerに委ねない。 */
+  approvalRequired: boolean;
+  preparedAt: string;
+};
+
+export type ActionRequestPreparation =
+  | { type: "prepared"; prepared: PreparedActionRequest }
+  | {
+      type: "authorization_denied";
+      actionRequestId: ActionRequestId;
+      organizationId: OrganizationId;
+      code: string;
+      reason: string;
+      deniedAt: string;
+    };
+
 export type ActionRequestApplicationErrorCode =
   | "action_definition_resolution_failed"
   | "schema_resolution_failed"
@@ -145,7 +174,8 @@ export type ActionRequestApplicationErrorCode =
   | "audit_persistence_failed"
   | "action_request_already_exists"
   | "workflow_start_failed"
-  | "execution_failed";
+  | "execution_failed"
+  | "prepared_action_request_invalid";
 
 export type ActionRequestValidationIssue = {
   message: string;
@@ -161,6 +191,8 @@ export class ActionRequestApplicationError extends Error {
     message: string,
     /** Structured schema validation issues (input validation failures only). */
     readonly issues?: readonly ActionRequestValidationIssue[],
+    /** immediate executionでActionExecutorが返したerror code（execution_failedのみ）。 */
+    readonly executionErrorCode?: string,
   ) {
     super(message);
   }
@@ -264,6 +296,53 @@ async function appendAudit(
       ),
     );
   }
+  return Result.succeed(undefined);
+}
+
+/**
+ * adapterが永続化・復元したPrepared ActionRequestが、prepare時のPlanから改変されていないことを確認する。
+ * checksumはMaterialized Plan自身が持つため、ここではPlanの自己整合とrequest/ID/組織の一致を検証する。
+ */
+async function verifyPreparedActionRequest(
+  prepared: PreparedActionRequest,
+): Result.ResultAsync<void, ActionRequestApplicationError> {
+  const invalid = (message: string) =>
+    Result.fail(
+      new ActionRequestApplicationError("prepared_action_request_invalid", false, message),
+    );
+  const { plan, request } = prepared;
+  if (String(plan.actionRequestId) !== String(prepared.actionRequestId)) {
+    return invalid("Prepared ActionRequest IDとPlanのActionRequest IDが一致しません");
+  }
+  if (String(plan.organizationId) !== String(prepared.organizationId)) {
+    return invalid("Prepared ActionRequestとPlanのorganizationが一致しません");
+  }
+  if (prepared.approvalRequired !== (plan.flow.type !== "none")) {
+    return invalid("Prepared ActionRequestのapproval要否がPlanと一致しません");
+  }
+  const snapshot = plan.evaluationSnapshot;
+  const requested = canonicalizeJson([
+    request.actor,
+    request.authority,
+    request.origin,
+  ] as unknown as JsonValue);
+  const planned = canonicalizeJson([
+    snapshot.actor,
+    snapshot.authority,
+    snapshot.origin,
+  ] as unknown as JsonValue);
+  if (
+    Result.isFailure(requested) ||
+    Result.isFailure(planned) ||
+    requested.value !== planned.value ||
+    String(request.action.type) !== String(plan.action.type) ||
+    String(request.action.resource.type) !== String(plan.action.resource.type) ||
+    String(request.action.resource.id) !== String(plan.action.resource.id)
+  ) {
+    return invalid("Prepared ActionRequestのrequestがPlanのsnapshotと一致しません");
+  }
+  const verification = await verifyMaterializedApprovalPlan(plan);
+  if (verification.type !== "valid") return invalid(verification.message);
   return Result.succeed(undefined);
 }
 
@@ -432,48 +511,101 @@ export class ActionRequestApplicationService {
     });
   }
 
-  async submit(input: {
+  /**
+   * ActionRequestを1回だけ評価し、immutableなPrepared ActionRequestを確定する。
+   *
+   * Authorization / Policy評価 / Materialized Plan確定 / ActionRequest ID確定までを行い、
+   * Plan保存・audit・Workflow開始・Executor呼び出しといった副作用は一切起こさない。
+   * adapterはprepared planを見てadmission（例: MCP Tasks capability / Task予約）を判断し、
+   * 成功した場合だけ `commit` へ同じpreparationを渡す。
+   */
+  async prepare(input: {
     action: Action;
     trustedContext: TrustedActionRequestContext;
-    idempotencyKey?: string;
-    clientReference?: string;
-  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
-    const evaluated = await this.evaluate({
-      action: input.action,
-      trustedContext: input.trustedContext,
-    });
+  }): Result.ResultAsync<ActionRequestPreparation, ActionRequestApplicationError> {
+    const evaluated = await this.evaluate(input);
     if (Result.isFailure(evaluated)) return evaluated;
     if (evaluated.value.type === "authorization_denied") {
+      return Result.succeed({
+        ...evaluated.value,
+        organizationId: input.trustedContext.organization.id,
+        deniedAt: input.trustedContext.now,
+      });
+    }
+    const { actionRequestId, request, plan, authorizationEvidence } = evaluated.value;
+    return Result.succeed({
+      type: "prepared",
+      prepared: {
+        actionRequestId,
+        organizationId: plan.organizationId,
+        request,
+        plan,
+        authorizationEvidence,
+        approvalRequired: plan.flow.type !== "none",
+        preparedAt: input.trustedContext.now,
+      },
+    });
+  }
+
+  /**
+   * `prepare` で確定したpreparationをそのままcommitする。
+   *
+   * Policyを再評価せず、prepared planと同一checksumのPlanだけを保存する。
+   * `resume: true` はadmission後のcommit failureからの復旧用で、同じPlanが既に保存済みなら
+   * 続きのaudit（eventKeyで重複排除）/ Workflow開始（instance IDは決定的）を再試行する。
+   */
+  async commit(input: {
+    preparation: ActionRequestPreparation;
+    /** immediate execution時のRe-Authorization評価時刻。省略時はpreparedAt。 */
+    now?: string;
+    resume?: boolean;
+  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
+    const preparation = input.preparation;
+    if (preparation.type === "authorization_denied") {
       const audited = await appendAudit(this.dependencies.eventRepository, [
         actionEventRecord({
-          organizationId: input.trustedContext.organization.id,
-          occurredAt: input.trustedContext.now,
+          organizationId: preparation.organizationId,
+          occurredAt: preparation.deniedAt,
           event: {
             type: "action.authorization_denied",
-            actionRequestId: evaluated.value.actionRequestId,
-            code: evaluated.value.code,
-            reason: evaluated.value.reason,
+            actionRequestId: preparation.actionRequestId,
+            code: preparation.code,
+            reason: preparation.reason,
           },
         }),
       ]);
       if (Result.isFailure(audited)) return audited;
-      return Result.succeed(evaluated.value);
+      return Result.succeed({
+        type: "authorization_denied",
+        actionRequestId: preparation.actionRequestId,
+        code: preparation.code,
+        reason: preparation.reason,
+      });
     }
 
-    const { actionRequestId, request, plan, authorizationEvidence } = evaluated.value;
+    const { actionRequestId, request, plan } = preparation.prepared;
+    const integrity = await verifyPreparedActionRequest(preparation.prepared);
+    if (Result.isFailure(integrity)) return integrity;
+
     const saved = await this.dependencies.planRepository.save(plan);
-    if (saved.type !== "created") return Result.fail(planPersistenceError(saved));
+    if (saved.type !== "created" && !(saved.type === "existing" && input.resume === true)) {
+      return Result.fail(planPersistenceError(saved));
+    }
 
     const initialAudit = await appendAudit(
       this.dependencies.eventRepository,
-      actionPlanAuditEvents({ plan, authorizationEvidence }),
+      actionPlanAuditEvents({
+        plan,
+        authorizationEvidence: preparation.prepared.authorizationEvidence,
+      }),
     );
     if (Result.isFailure(initialAudit)) return initialAudit;
 
+    const now = input.now ?? preparation.prepared.preparedAt;
     if (plan.flow.type !== "none") {
       const started = await this.dependencies.workflowStarter.start({
         plan,
-        startedAt: input.trustedContext.now,
+        startedAt: now,
       });
       if (Result.isFailure(started)) {
         return Result.fail(mapDependencyError(started.error, "workflow_start_failed"));
@@ -488,11 +620,35 @@ export class ActionRequestApplicationService {
           request,
           plan,
           status: "pending_approval",
-          now: input.trustedContext.now,
+          now,
         }),
       });
     }
 
+    return this.executeImmediately({ actionRequestId, request, plan, now });
+  }
+
+  async submit(input: {
+    action: Action;
+    trustedContext: TrustedActionRequestContext;
+    idempotencyKey?: string;
+    clientReference?: string;
+  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
+    const prepared = await this.prepare({
+      action: input.action,
+      trustedContext: input.trustedContext,
+    });
+    if (Result.isFailure(prepared)) return prepared;
+    return this.commit({ preparation: prepared.value, now: input.trustedContext.now });
+  }
+
+  private async executeImmediately(input: {
+    actionRequestId: ActionRequestId;
+    request: ActionRequest;
+    plan: MaterializedApprovalPlan;
+    now: string;
+  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
+    const { actionRequestId, request, plan, now } = input;
     const execution = await executeActionRequest({
       authorizer: this.dependencies.authorizer,
       executor: this.dependencies.executor,
@@ -501,7 +657,7 @@ export class ActionRequestApplicationService {
       request,
       actionFingerprint: plan.actionFingerprint,
       action: plan.action,
-      evaluatedAt: input.trustedContext.now,
+      evaluatedAt: now,
     });
     if (Result.isFailure(execution)) {
       const failedEvents: ActionEventRecord[] = [];
@@ -509,7 +665,7 @@ export class ActionRequestApplicationService {
         failedEvents.push(
           actionEventRecord({
             organizationId: plan.organizationId,
-            occurredAt: input.trustedContext.now,
+            occurredAt: now,
             event: {
               type: "action.reauthorization_check_failed",
               actionRequestId,
@@ -520,7 +676,7 @@ export class ActionRequestApplicationService {
         failedEvents.push(
           actionEventRecord({
             organizationId: plan.organizationId,
-            occurredAt: input.trustedContext.now,
+            occurredAt: now,
             event: {
               type: "action.completed",
               actionRequestId,
@@ -537,7 +693,7 @@ export class ActionRequestApplicationService {
         failedEvents.push(
           actionEventRecord({
             organizationId: plan.organizationId,
-            occurredAt: input.trustedContext.now,
+            occurredAt: now,
             event: {
               type: "action.execution_started",
               actionRequestId,
@@ -546,7 +702,7 @@ export class ActionRequestApplicationService {
           }),
           actionEventRecord({
             organizationId: plan.organizationId,
-            occurredAt: input.trustedContext.now,
+            occurredAt: now,
             event: {
               type: "action.execution_failed",
               actionRequestId,
@@ -556,7 +712,7 @@ export class ActionRequestApplicationService {
           }),
           actionEventRecord({
             organizationId: plan.organizationId,
-            occurredAt: input.trustedContext.now,
+            occurredAt: now,
             event: {
               type: "action.completed",
               actionRequestId,
@@ -573,6 +729,8 @@ export class ActionRequestApplicationService {
           "execution_failed",
           execution.error.retriable,
           execution.error.message,
+          undefined,
+          execution.error instanceof ActionExecutorError ? execution.error.code : undefined,
         ),
       );
     }
@@ -581,7 +739,7 @@ export class ActionRequestApplicationService {
       const audited = await appendAudit(this.dependencies.eventRepository, [
         actionEventRecord({
           organizationId: plan.organizationId,
-          occurredAt: input.trustedContext.now,
+          occurredAt: now,
           event: {
             type: "action.reauthorization_denied",
             actionRequestId,
@@ -591,7 +749,7 @@ export class ActionRequestApplicationService {
         }),
         actionEventRecord({
           organizationId: plan.organizationId,
-          occurredAt: input.trustedContext.now,
+          occurredAt: now,
           event: {
             type: "action.completed",
             actionRequestId,
@@ -610,7 +768,7 @@ export class ActionRequestApplicationService {
           request,
           plan,
           status: "authorization_revoked",
-          now: input.trustedContext.now,
+          now,
           result: {
             status: "authorization_revoked",
             code: execution.value.code,
@@ -632,7 +790,7 @@ export class ActionRequestApplicationService {
       }),
       actionEventRecord({
         organizationId: plan.organizationId,
-        occurredAt: input.trustedContext.now,
+        occurredAt: now,
         event: {
           type: "action.execution_started",
           actionRequestId,
@@ -641,7 +799,7 @@ export class ActionRequestApplicationService {
       }),
       actionEventRecord({
         organizationId: plan.organizationId,
-        occurredAt: input.trustedContext.now,
+        occurredAt: now,
         event: {
           type: "action.completed",
           actionRequestId,
@@ -660,7 +818,7 @@ export class ActionRequestApplicationService {
         request,
         plan,
         status: "executed",
-        now: input.trustedContext.now,
+        now,
         result: {
           status: "executed",
           ...(execution.value.result.output !== undefined
