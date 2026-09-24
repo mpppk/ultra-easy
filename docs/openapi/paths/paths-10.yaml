@@ -1,0 +1,232 @@
+# M9 Authorization Administration Console (read-only).
+# The organization is resolved from the authenticated identity (no
+# organizationId parameter). Every route except /session requires
+# authorization_admin:root#viewer; provider errors fail closed (503).
+# There is NO relationship mutation or model write endpoint: relationship
+# add/delete is an `authorization.relationship.update` ActionRequest
+# (POST /v1/organizations/{organizationId}/action-requests).
+/v1/admin/authorization/session:
+  get:
+    tags:
+    - AuthorizationAdmin
+    operationId: getAuthorizationAdminSession
+    summary: Console callerとviewer/editor権限（viewer不要）
+    responses:
+      '200':
+        description: caller / organization / permissions。providerはviewerのみ。
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organizationId, principal, permissions, provider]
+              properties:
+                organizationId: { type: string }
+                principal: { $ref: ../components/schemas-01.yaml#/PrincipalRef }
+                permissions:
+                  type: object
+                  properties:
+                    viewer: { type: boolean }
+                    editor: { type: boolean }
+                provider:
+                  type: [object, 'null']
+                  properties:
+                    apiHost: { type: string }
+                    storeId: { type: string }
+                    authorizationModelId: { type: string }
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+/v1/admin/authorization/explain:
+  post:
+    tags:
+    - AuthorizationAdmin
+    operationId: explainAuthorization
+    summary: Explorer — complete Actionをside-effectなしで評価しsimulation approval flowを返す
+    description: |
+      実ActionRequestと同じAction Definition / schema validation / Authorization /
+      Policy Binding / Policy evaluation / Plan materialization経路を再利用する。
+      永続化・Workflow起動・Executor呼び出しは行わない。
+      schema不正・input不足・必要attribute不足・provider障害は
+      `effectiveOutcome=evaluation_error`（承認不要へ倒さない）。
+      任意のtrusted contextは注入できず、`simulationOverrides`はallow-list項目のみ。
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [principal, action]
+            properties:
+              principal: { $ref: ../components/schemas-01.yaml#/PrincipalRef }
+              action:
+                type: object
+                additionalProperties: false
+                required: [type, resource]
+                properties:
+                  type: { type: string }
+                  resource:
+                    type: object
+                    additionalProperties: false
+                    required: [type, id]
+                    properties:
+                      type: { type: string }
+                      id: { type: string }
+                  input:
+                    description: 実Actionと同じschemaでvalidateされる。不足/不正はevaluation_error。
+              simulationOverrides:
+                type: object
+                description: server-side allow-list項目のみ（GET /catalogのsimulationOverrides）。
+    responses:
+      '200':
+        description: Explain結果
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [effectiveOutcome, authorization, approvalFlow, caller, simulatedPrincipal]
+              properties:
+                effectiveOutcome:
+                  type: string
+                  enum: [deny, allowed_no_approval, allowed_requires_approval, evaluation_error]
+                caller: { $ref: ../components/schemas-01.yaml#/PrincipalRef }
+                simulatedPrincipal: { $ref: ../components/schemas-01.yaml#/PrincipalRef }
+                authorization:
+                  type: object
+                  properties:
+                    outcome: { type: string, enum: [allow, deny, error, not_evaluated] }
+                    relation: { type: [string, 'null'] }
+                    logicalObject: { type: [string, 'null'] }
+                    providerObject: { type: [string, 'null'] }
+                    consistency: { type: string, enum: [minimize_latency] }
+                    authorizationModelId: { type: [string, 'null'] }
+                approvalFlow:
+                  description: MaterializedApprovalPlan.flowのread-only presentation（none/approval/serial/all/any/quorum）。runtime進捗は含まない。
+                  type: [object, 'null']
+                error:
+                  type: object
+                  properties:
+                    code: { type: string }
+                    message: { type: string }
+                    issues:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          message: { type: string }
+                          path: { type: string }
+                proof:
+                  type: 'null'
+                  description: OpenFGA proof/path graphは返さない。
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+/v1/admin/authorization/catalog:
+  get:
+    tags:
+    - AuthorizationAdmin
+    operationId: getAuthorizationAdminCatalog
+    summary: Managed Relationship Catalog / simulation override allow-list / Explorer action types
+    responses:
+      '200':
+        description: Catalog
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+/v1/admin/authorization/relationships:
+  get:
+    tags:
+    - AuthorizationAdmin
+    operationId: listAuthorizationRelationships
+    summary: tenant-scoped D1 desired/read projectionからrelationship一覧（FGA store scanなし）
+    parameters:
+    - { name: subject, in: query, schema: { type: string } }
+    - { name: relation, in: query, schema: { type: string } }
+    - { name: object, in: query, description: logical object (type:id), schema: { type: string } }
+    - name: syncStatus
+      in: query
+      schema: { type: string, enum: [prepared, applying, confirmed, indeterminate, failed] }
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    responses:
+      '200':
+        description: desired state / revision / confirmed revision / sync status。opaque cursor。
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+/v1/admin/authorization/relationships/{tupleKey}:
+  get:
+    tags:
+    - AuthorizationAdmin
+    operationId: getAuthorizationRelationship
+    summary: relationship詳細とmutation journal（observe=trueでprovider exact read）
+    parameters:
+    - { name: tupleKey, in: path, required: true, schema: { type: string } }
+    - { name: observe, in: query, schema: { type: boolean } }
+    responses:
+      '200':
+        description: relationship / mutations / provider observed state
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+/v1/admin/authorization/model:
+  get:
+    tags:
+    - AuthorizationAdmin
+    operationId: getAuthorizationModel
+    summary: active model（read-only）とGit source比較
+    description: model write endpointは存在しない。変更はGit PR → CI (`fga model test`) → publish。
+    responses:
+      '200':
+        description: activeModelId / normalized provider model / Git source path・checksum・matchesProvider
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+/v1/admin/authorization/audit:
+  get:
+    tags:
+    - AuthorizationAdmin
+    operationId: listAuthorizationAudit
+    summary: append-only relationship mutation audit（requested / confirmed等を区別）
+    parameters:
+    - { name: actor, in: query, schema: { type: string } }
+    - name: eventType
+      in: query
+      schema:
+        type: string
+        enum:
+        - authorization.relationship_change_requested
+        - authorization.relationship_apply_started
+        - authorization.relationship_change_confirmed
+        - authorization.relationship_change_indeterminate
+        - authorization.relationship_change_superseded
+        - authorization.relationship_change_failed
+        - authorization.relationship_drift_repaired
+    - { name: operation, in: query, schema: { type: string, enum: [write, delete] } }
+    - { name: subject, in: query, schema: { type: string } }
+    - { name: relation, in: query, schema: { type: string } }
+    - { name: object, in: query, schema: { type: string } }
+    - { name: actionRequestId, in: query, schema: { type: string } }
+    - { name: mutationKey, in: query, schema: { type: string } }
+    - { name: revision, in: query, schema: { type: integer, minimum: 1 } }
+    - { name: from, in: query, schema: { type: string, format: date-time } }
+    - { name: to, in: query, schema: { type: string, format: date-time } }
+    - $ref: ../components/common.yaml#/parameters/Cursor
+    - name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    responses:
+      '200':
+        description: Action input全文・Decision comment・credential・PII display値は含まない。
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden

@@ -10,6 +10,11 @@ import type {
 import { createHumanActionRequest } from "@app/approval-core/testing";
 
 import {
+  AUTHORIZATION_MODEL_SOURCE,
+  authorizationModelChecksum,
+  normalizeAuthorizationModel,
+} from "./authorization-model.ts";
+import {
   OpenFgaActionAuthorizer,
   OpenFgaApproverResolver,
   OpenFgaClient,
@@ -115,5 +120,80 @@ describeOpenFga("OpenFGA test store/model integration", () => {
     });
     assert(Result.isSuccess(checked));
     expect(checked.value).toBe(true);
+  });
+
+  it("GitOps model: authorization_admin viewer/editor, tenant-scoped exact read, model read parity", async () => {
+    assert(openFgaApiUrl);
+    const store = await postJson<{ id: string }>(`${openFgaApiUrl}/stores`, {
+      name: `ultra-easy-m9-${Date.now()}`,
+    });
+    const model = await postJson<{ authorization_model_id: string }>(
+      `${openFgaApiUrl}/stores/${store.id}/authorization-models`,
+      AUTHORIZATION_MODEL_SOURCE as unknown as Record<string, unknown>,
+    );
+    const clientFor = (organizationId: string) =>
+      new OpenFgaClient({
+        apiUrl: openFgaApiUrl,
+        storeId: store.id,
+        authorizationModelId: model.authorization_model_id,
+        organizationId: branded<OrganizationId>(organizationId),
+      });
+    const tenantA = clientFor("organization:tenant-a");
+    const tenantB = clientFor("organization:tenant-b");
+
+    const written = await tenantA.writeTuples({
+      writes: [
+        { user: "user:editor", relation: "editor", object: "authorization_admin:root" },
+        { user: "user:alice", relation: "can_execute", object: "ticket:T-1" },
+      ],
+    });
+    assert(Result.isSuccess(written));
+
+    const check = (client: OpenFgaClient, user: string, relation: string) =>
+      client.check({
+        user,
+        relation,
+        object: "authorization_admin:root",
+        consistency: "higher_consistency",
+      });
+    for (const [client, user, relation, expected] of [
+      [tenantA, "user:editor", "viewer", true],
+      [tenantA, "user:editor", "editor", true],
+      [tenantA, "user:alice", "viewer", false],
+      [tenantB, "user:editor", "viewer", false],
+    ] as const) {
+      const result = await check(client, user, relation);
+      assert(Result.isSuccess(result));
+      expect(result.value, `${user} ${relation}`).toBe(expected);
+    }
+
+    const tuple = { user: "user:alice", relation: "can_execute", object: "ticket:T-1" };
+    const presentA = await tenantA.readTuple({ tuple, consistency: "higher_consistency" });
+    const presentB = await tenantB.readTuple({ tuple, consistency: "higher_consistency" });
+    assert(Result.isSuccess(presentA) && Result.isSuccess(presentB));
+    expect([presentA.value, presentB.value]).toEqual([true, false]);
+
+    const deleted = await tenantA.writeTuples({ deletes: [tuple] });
+    assert(Result.isSuccess(deleted));
+    const absent = await tenantA.readTuple({ tuple, consistency: "higher_consistency" });
+    assert(Result.isSuccess(absent));
+    expect(absent.value).toBe(false);
+
+    const duplicateDelete = await tenantA.writeTuples({ deletes: [tuple] });
+    assert(Result.isFailure(duplicateDelete));
+    expect(duplicateDelete.error.status).toBe(400);
+
+    const read = await tenantA.readAuthorizationModel();
+    assert(Result.isSuccess(read));
+    expect(read.value.id).toBe(model.authorization_model_id);
+    const provider = normalizeAuthorizationModel(read.value.model);
+    const source = normalizeAuthorizationModel(AUTHORIZATION_MODEL_SOURCE);
+    assert(provider && source);
+    const [providerChecksum, sourceChecksum] = await Promise.all([
+      authorizationModelChecksum(provider),
+      authorizationModelChecksum(source),
+    ]);
+    assert(Result.isSuccess(providerChecksum) && Result.isSuccess(sourceChecksum));
+    expect(providerChecksum.value).toBe(sourceChecksum.value);
   });
 });

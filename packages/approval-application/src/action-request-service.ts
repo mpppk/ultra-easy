@@ -147,6 +147,11 @@ export type ActionRequestApplicationErrorCode =
   | "workflow_start_failed"
   | "execution_failed";
 
+export type ActionRequestValidationIssue = {
+  message: string;
+  path?: string;
+};
+
 export class ActionRequestApplicationError extends Error {
   readonly name = "ActionRequestApplicationError";
 
@@ -154,9 +159,19 @@ export class ActionRequestApplicationError extends Error {
     readonly code: ActionRequestApplicationErrorCode,
     readonly retriable: boolean,
     message: string,
+    /** Structured schema validation issues (input validation failures only). */
+    readonly issues?: readonly ActionRequestValidationIssue[],
   ) {
     super(message);
   }
+}
+
+function issuePath(path: ReadonlyArray<PropertyKey | { key: PropertyKey }> | undefined): string {
+  return (path ?? [])
+    .map((segment) =>
+      typeof segment === "object" && segment !== null ? String(segment.key) : String(segment),
+    )
+    .join(".");
 }
 
 export type ActionRequestApplicationServiceDependencies = {
@@ -311,6 +326,10 @@ export class ActionRequestApplicationService {
           "action_input_validation_failed",
           false,
           validated.value.issues.map((issue) => issue.message).join("; "),
+          validated.value.issues.map((issue) => {
+            const path = issuePath(issue.path);
+            return path ? { message: issue.message, path } : { message: issue.message };
+          }),
         ),
       );
     }

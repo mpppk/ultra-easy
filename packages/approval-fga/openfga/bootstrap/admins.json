@@ -1,0 +1,9 @@
+{
+  "$comment": "Version-controlled authorization_admin membership (bootstrap-only, never changed from the console). Apply with `bun packages/approval-fga/openfga/bootstrap-admins.ts <environment>`. Stable UserIds only (Auth0 sub mapping), never emails.",
+  "staging": {
+    "organizationId": "organization:staging",
+    "viewers": [],
+    "editors": ["user:auth0|6ab12807a4ea2a6f7c2ccc09"],
+    "$comment": "alice = editor (implies viewer). bob intentionally has no console membership (non-viewer E2E principal)."
+  }
+}

@@ -46,6 +46,7 @@ import {
   type NotificationQueueProducer,
 } from "@app/approval-runtime-cloudflare";
 
+import { buildAdminAuthorizationApi } from "./admin-authorization.ts";
 import { Auth0IdentityProvider } from "./auth0-identity.ts";
 import { readOperatorAlertThresholds } from "./operator-alert-thresholds.ts";
 import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
@@ -59,6 +60,8 @@ import { StagingActionExecutor } from "./staging-executor.ts";
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 
 type ApprovalApiEnv = ActionWorkflowEnv & {
+  /** Non-secret Git revision the FGA model was published from (Model view). */
+  AUTHORIZATION_MODEL_SOURCE_REVISION?: string;
   ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
   NOTIFICATION_QUEUE: NotificationQueueProducer;
   AUTH0_DOMAIN: string;
@@ -179,7 +182,8 @@ function buildApi(input: {
     telemetry,
   });
   const processor = decisionProcessor(env);
-  return createPublicHttpApi({
+  const adminApi = buildAdminAuthorizationApi({ env, identity, organizationId, service });
+  const publicApi = createPublicHttpApi({
     actionRequestApi,
     readRepository,
     decisionService,
@@ -198,6 +202,10 @@ function buildApi(input: {
       }
     },
   });
+  return {
+    fetch: (request: Request) =>
+      adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request),
+  };
 }
 
 async function getOperatorDashboard(request: Request, env: ApprovalApiEnv): Promise<Response> {

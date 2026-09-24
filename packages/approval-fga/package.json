@@ -7,11 +7,17 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "vp test"
+    "test": "vp test",
+    "test:model": "fga model test --tests openfga/store.fga.yaml",
+    "model:publish": "bun openfga/publish-model.ts",
+    "admins:bootstrap": "bun openfga/bootstrap-admins.ts"
   },
   "dependencies": {
     "@app/approval-core": "workspace:*",
     "@praha/byethrow": "^0.12.0",
     "@praha/error-factory": "^1.4.1"
+  },
+  "devDependencies": {
+    "@openfga/syntax-transformer": "^0.2.2"
   }
 }

@@ -65,4 +65,24 @@ describe("Auth0IdentityProvider", () => {
     expect(Result.isFailure(other)).toBe(true);
     if (Result.isFailure(other)) expect(other.error.status).toBe(403);
   });
+
+  it("admin caller: organization comes from deployment config; machine tokens are rejected", async () => {
+    const { provider, sign } = await harness();
+    const human = await provider.resolve(requestWith(await sign({ sub: "auth0|staging-alice" })));
+    assert(Result.isSuccess(human));
+    expect(human.value).toEqual({
+      organizationId,
+      principal: { type: "user", id: "user:auth0|staging-alice" },
+    });
+
+    const machine = await provider.resolve(
+      requestWith(await sign({ sub: "client-1@clients", gty: "client-credentials" })),
+    );
+    assert(Result.isFailure(machine));
+    expect(machine.error).toMatchObject({ status: 403, code: "machine_principal_not_allowed" });
+
+    const anonymous = await provider.resolve(requestWith(null));
+    assert(Result.isFailure(anonymous));
+    expect(anonymous.error.status).toBe(401);
+  });
 });

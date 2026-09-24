@@ -18,6 +18,10 @@ jobs:
         run: vp install
       - name: Check
         run: vp check
+      - name: OpenFGA model tests (GitOps model source)
+        run: |
+          curl -fsSL https://github.com/openfga/cli/releases/download/v0.8.0/fga_0.8.0_linux_amd64.tar.gz | tar xz fga
+          ./fga model test --tests packages/approval-fga/openfga/store.fga.yaml
       - name: Build Web Preview
         run: vp -C apps/web run build:preview
       - name: Dry-run Approval Runtime Preview
