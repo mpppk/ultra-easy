@@ -9,11 +9,18 @@
   },
   "vars": {
     "PREVIEW_HARNESS_ENABLED": "true",
+    "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
+    "AUTH0_API_AUDIENCE": "https://ultra-easy/approval-api",
+    "STAGING_PASSWORD_LOGIN": "true",
   },
   "services": [
     {
       "binding": "APPROVAL_RUNTIME_PREVIEW",
       "service": "ultra-easy-approval-runtime-preview",
+    },
+    {
+      "binding": "APPROVAL_API",
+      "service": "ultra-easy-approval-api",
     },
   ],
 }

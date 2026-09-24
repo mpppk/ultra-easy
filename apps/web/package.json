@@ -20,8 +20,12 @@
     "deploy:preview": "CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=./wrangler.preview.jsonc vp build && wrangler versions upload"
   },
   "dependencies": {
+    "@app/approval-application": "workspace:*",
+    "@app/approval-core": "workspace:*",
+    "@dagrejs/dagre": "^3.1.1",
     "@tanstack/react-router": "latest",
     "@tanstack/react-start": "latest",
+    "@xyflow/react": "^12.11.6",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "lucide-react": "^1.47.0",

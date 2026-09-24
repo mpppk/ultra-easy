@@ -168,3 +168,30 @@ effectConfirmed` tells whether the effect was observed.
   `FGA_TUPLE_WRITER_CLIENT_SECRET`, falling back to `FGA_CLIENT_ID/SECRET`
   in staging. The admin read API only receives read ports.
 - No runtime component can write authorization models.
+
+## Web console (M9-3)
+
+Routes on the `ultra-easy` web worker: `/admin/authorization/{explorer,relationships,model,audit}`
+(`/admin/authorization` redirects to Explorer), plus `/login`.
+
+- The web worker proxies to approval-api over the `APPROVAL_API` service
+  binding: `/api/admin/authorization/*` → `/v1/admin/authorization/*`, and
+  `/api/action-requests[/:id]` → `/v1/organizations/{org}/action-requests[/:id]`,
+  where the org is resolved server-side from the caller identity and only
+  `authorization.relationship.update` may be created.
+- Session: the Auth0 access token is stored AES-GCM encrypted in the
+  `ue_console_session` cookie (HttpOnly, Secure, SameSite=Strict). Browser
+  JavaScript never sees the token or any FGA credential. POSTs require the
+  `x-ue-console: 1` header (CSRF).
+- Staging sign-in uses the Auth0 password-realm grant (`STAGING_PASSWORD_LOGIN=true`)
+  with the `ultra-easy-web` application. Universal Login is a follow-up.
+- Secrets (`wrangler secret put` on `ultra-easy`, values from 1Password
+  `ultra-easy`): `AUTH0_WEB_CLIENT_ID`, `AUTH0_WEB_CLIENT_SECRET`,
+  `SESSION_SECRET` (random 32+ bytes). Rotating `SESSION_SECRET` signs
+  everyone out.
+- Local development: create `apps/web/.dev.vars` (gitignored) containing
+  `SESSION_SECRET`, and run a worker named `ultra-easy-approval-api`
+  (`wrangler dev`) so the dev registry resolves the binding.
+- Explorer renders the simulation approval flow with React Flow + Dagre
+  (read-only, graph on md+ screens) plus an equivalent keyboard-accessible
+  tree, which is the only view on narrow screens. It is never runtime progress.

@@ -7,4 +7,20 @@
   "observability": {
     "enabled": true,
   },
+  // Authorization Console (M9): the web worker proxies to approval-api over a
+  // service binding. The browser never receives FGA credentials or the Auth0
+  // access token (encrypted HttpOnly session cookie).
+  // Secrets (wrangler secret put, 1Password `ultra-easy`): AUTH0_WEB_CLIENT_ID,
+  // AUTH0_WEB_CLIENT_SECRET, SESSION_SECRET.
+  "vars": {
+    "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
+    "AUTH0_API_AUDIENCE": "https://ultra-easy/approval-api",
+    "STAGING_PASSWORD_LOGIN": "true",
+  },
+  "services": [
+    {
+      "binding": "APPROVAL_API",
+      "service": "ultra-easy-approval-api",
+    },
+  ],
 }
