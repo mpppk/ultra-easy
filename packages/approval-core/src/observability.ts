@@ -14,7 +14,13 @@ export type TelemetryComponent =
 
 export type CorrelationContext = {
   organizationId: OrganizationId;
-  actionRequestId: ActionRequestId;
+  /**
+   * correlation root。MCP Gatewayのtools/list / Exposure deny等、
+   * ActionRequestを作る前に終わる操作だけが省略し、代わりにmcpInvocationIdで相関する。
+   */
+  actionRequestId?: ActionRequestId;
+  /** MCP Gatewayのlogical invocation ID（tenant/principal/client scope済みkeyのdigest）。 */
+  mcpInvocationId?: string;
   correlationId: string;
   component: TelemetryComponent;
   operation: string;
@@ -34,8 +40,41 @@ export function actionCorrelation(input: {
   };
 }
 
+/**
+ * MCP Gateway用のcorrelation。ActionRequest確定後はactionRequestIdをrootにし、
+ * それ以前（Exposure deny / invalid arguments等）はlogical invocation IDで相関する。
+ */
+export function mcpInvocationCorrelation(input: {
+  organizationId: OrganizationId;
+  mcpInvocationId?: string;
+  actionRequestId?: ActionRequestId;
+  operation: string;
+  principal?: PrincipalRef;
+}): CorrelationContext {
+  const correlationId =
+    input.actionRequestId !== undefined
+      ? String(input.actionRequestId)
+      : input.mcpInvocationId !== undefined
+        ? `mcp-invocation:${input.mcpInvocationId}`
+        : "mcp";
+  return {
+    organizationId: input.organizationId,
+    ...(input.actionRequestId !== undefined ? { actionRequestId: input.actionRequestId } : {}),
+    ...(input.mcpInvocationId !== undefined ? { mcpInvocationId: input.mcpInvocationId } : {}),
+    correlationId,
+    component: "mcp",
+    operation: input.operation,
+    ...(input.principal ? { principal: input.principal } : {}),
+  };
+}
+
 export type SafeLogAttributes = {
   status?: string;
+  /** MCP Gateway上の公開tool名（binding設定値。tool argumentsは含めない）。 */
+  toolName?: string;
+  /** downstream MCP server ID（binding設定値）。 */
+  mcpServerId?: string;
+  bindingVersion?: number;
   result?: string;
   errorCode?: string;
   eventType?: string;
@@ -50,10 +89,12 @@ export type SafeLogAttributes = {
 
 export type SafeLogEvent =
   | "request.accepted"
+  | "request.replayed"
   | "request.denied"
   | "request.failed"
   | "workflow.retry"
   | "workflow.failed"
+  | "executor.completed"
   | "executor.failed"
   | "notification.failed"
   | "notification.skipped"

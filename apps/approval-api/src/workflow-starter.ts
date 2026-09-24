@@ -12,11 +12,15 @@ import {
 
 type WorkflowBinding = {
   create(options: { id: string; params: ActionWorkflowParams }): Promise<unknown>;
+  get(id: string): Promise<unknown>;
 };
 
 /**
  * Cloudflare Workflows bindingへAction実行系Workflowを起動するadapter。
  * instance IDはplanから決定的に導出する（preview workerと同一方式）。
+ *
+ * startは同じActionRequestに対して冪等である。commit再開（MCP Gatewayのcrash recovery等）で
+ * createが「既に存在する」で失敗した場合も、決定的IDのinstanceが存在すれば起動済みとして扱う。
  */
 export class CloudflareActionWorkflowStarter implements ActionWorkflowStarter {
   constructor(private readonly workflow: WorkflowBinding) {}
@@ -46,7 +50,13 @@ export class CloudflareActionWorkflowStarter implements ActionWorkflowStarter {
           error instanceof Error ? error.message : String(error),
         ),
     })();
-    if (Result.isFailure(created)) return created;
+    if (Result.isFailure(created)) {
+      const existing = await Result.fn({
+        try: () => this.workflow.get(instanceId),
+        catch: () => created.error,
+      })();
+      if (Result.isFailure(existing)) return created;
+    }
     return Result.succeed({ workflowInstanceId: instanceId });
   }
 }

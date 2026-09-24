@@ -32,6 +32,10 @@ export interface VersionedPolicyBindingResolver {
   }): Result.ResultAsync<readonly VersionedApprovalPolicyBinding[], ActionRequestDependencyError>;
 }
 
+/**
+ * approval-required ActionRequestのWorkflowを起動するPort。
+ * 同じActionRequestに対するstartは冪等でなければならない（commit再開で再度呼ばれうる）。
+ */
 export interface ActionWorkflowStarter {
   start(input: {
     plan: MaterializedApprovalPlan;

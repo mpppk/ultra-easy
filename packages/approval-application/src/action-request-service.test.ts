@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
@@ -15,6 +15,8 @@ import {
 import type {
   Action,
   ActionAuthorizer,
+  ActionEventRecord,
+  ActionEventRepository,
   ActionDefinition,
   ActionDefinitionKey,
   ActionExecutionRequest,
@@ -158,10 +160,11 @@ class FakeExecutor implements ActionExecutor {
 
 class FakePlanRepository implements MaterializedPlanRepository {
   saved: MaterializedApprovalPlan[] = [];
+  saveResult: "created" | "existing" = "created";
 
   save(plan: MaterializedApprovalPlan) {
     this.saved.push(plan);
-    return Promise.resolve({ type: "created" as const });
+    return Promise.resolve({ type: this.saveResult });
   }
 
   load() {
@@ -181,10 +184,26 @@ class FakeWorkflowStarter implements ActionWorkflowStarter {
 }
 
 class FakePolicyResolver implements VersionedPolicyBindingResolver {
-  constructor(private readonly bindings: readonly VersionedApprovalPolicyBinding[]) {}
+  calls = 0;
+
+  constructor(public bindings: readonly VersionedApprovalPolicyBinding[]) {}
 
   resolve() {
+    this.calls += 1;
     return Promise.resolve(Result.succeed(this.bindings));
+  }
+}
+
+class FakeEventRepository implements ActionEventRepository {
+  records: ActionEventRecord[] = [];
+
+  appendMany(records: readonly ActionEventRecord[]) {
+    this.records.push(...records);
+    return Promise.resolve(Result.succeed(undefined));
+  }
+
+  listForAction() {
+    return Promise.resolve(Result.succeed(this.records));
   }
 }
 
@@ -204,6 +223,7 @@ function createHarness(
     input.approvalRequired ? [approvalPolicy()] : [],
   );
   const schemaResolver: SchemaResolver = { resolve: () => schema };
+  const eventRepository = new FakeEventRepository();
   const service = new ActionRequestApplicationService({
     actionDefinitionResolver: { resolve: () => definition },
     schemaResolver,
@@ -211,6 +231,7 @@ function createHarness(
     authorizer,
     executor,
     planRepository,
+    eventRepository,
     workflowStarter,
     idGenerator: { next: () => actionRequestId },
   });
@@ -236,6 +257,9 @@ function createHarness(
 
   return {
     api,
+    service,
+    eventRepository,
+    policyBindingResolver,
     authorizer,
     executor,
     planRepository,
@@ -363,5 +387,113 @@ describe("M6-1 ActionRequest unified entrypoint", () => {
     expect(limited.headers.get("retry-after")).toBe("60");
     expect(limited.headers.get("x-ratelimit-limit")).toBe("1");
     expect(limited.headers.get("x-ratelimit-remaining")).toBe("0");
+  });
+});
+
+describe("MCP Gateway 3: ActionRequest prepare → admission → commit", () => {
+  async function prepared(harness: ReturnType<typeof createHarness>) {
+    const result = await harness.service.prepare({ action, trustedContext });
+    assert(Result.isSuccess(result));
+    return result.value;
+  }
+
+  it("prepareはPlan保存 / audit / Workflow / Executorの副作用を起こさない", async () => {
+    for (const approvalRequired of [true, false]) {
+      const harness = createHarness({ approvalRequired });
+
+      const preparation = await prepared(harness);
+
+      expect(preparation).toMatchObject({
+        type: "prepared",
+        prepared: { actionRequestId, organizationId, approvalRequired },
+      });
+      expect(harness.planRepository.saved).toHaveLength(0);
+      expect(harness.eventRepository.records).toHaveLength(0);
+      expect(harness.workflowStarter.plans).toHaveLength(0);
+      expect(harness.executor.calls).toHaveLength(0);
+    }
+  });
+
+  it("commitはprepare済みの同一Planを保存しPolicyを再評価しない", async () => {
+    const harness = createHarness({ approvalRequired: true });
+    const preparation = await prepared(harness);
+    assert(preparation.type === "prepared");
+
+    // admission中にPolicyが変更されても、commit対象Planは変化しない。
+    harness.policyBindingResolver.bindings = [];
+    const committed = await harness.service.commit({ preparation });
+
+    expect(Result.isSuccess(committed)).toBe(true);
+    expect(harness.policyBindingResolver.calls).toBe(1);
+    expect(harness.planRepository.saved).toEqual([preparation.prepared.plan]);
+    expect(harness.planRepository.saved[0]?.approvalPlanChecksum).toBe(
+      preparation.prepared.plan.approvalPlanChecksum,
+    );
+    expect(harness.workflowStarter.plans).toHaveLength(1);
+    expect(harness.executor.calls).toHaveLength(0);
+  });
+
+  it("no-approval preparationはcommit後に既存executor pathで実行される", async () => {
+    const harness = createHarness({ approvalRequired: false });
+    const preparation = await prepared(harness);
+
+    const committed = await harness.service.commit({ preparation });
+
+    expect(Result.isSuccess(committed) && committed.value).toMatchObject({
+      type: "accepted",
+      view: { status: "executed" },
+    });
+    expect(harness.executor.calls).toHaveLength(1);
+    expect(harness.authorizer.calls).toBe(2);
+  });
+
+  it("authorization denyのpreparationはcommitでdenial auditだけを残す", async () => {
+    const harness = createHarness({ allowed: false, approvalRequired: true });
+    const preparation = await prepared(harness);
+    expect(preparation.type).toBe("authorization_denied");
+    expect(harness.eventRepository.records).toHaveLength(0);
+
+    const committed = await harness.service.commit({ preparation });
+
+    expect(Result.isSuccess(committed) && committed.value.type).toBe("authorization_denied");
+    expect(harness.eventRepository.records.map((record) => record.event.type)).toEqual([
+      "action.authorization_denied",
+    ]);
+    expect(harness.planRepository.saved).toHaveLength(0);
+    expect(harness.workflowStarter.plans).toHaveLength(0);
+  });
+
+  it("改変されたprepared planはcommitできない", async () => {
+    const harness = createHarness({ approvalRequired: true });
+    const preparation = await prepared(harness);
+    assert(preparation.type === "prepared");
+
+    const tampered = structuredClone(preparation);
+    tampered.prepared.plan = { ...tampered.prepared.plan, flow: { type: "none" } };
+    tampered.prepared.approvalRequired = false;
+    const committed = await harness.service.commit({ preparation: tampered });
+
+    expect(Result.isFailure(committed) && committed.error.code).toBe(
+      "prepared_action_request_invalid",
+    );
+    expect(harness.planRepository.saved).toHaveLength(0);
+    expect(harness.workflowStarter.plans).toHaveLength(0);
+  });
+
+  it("保存済みPlanはresume指定時だけ同じpreparationのcommitを再開できる", async () => {
+    const harness = createHarness({ approvalRequired: true });
+    const preparation = await prepared(harness);
+    harness.planRepository.saveResult = "existing";
+
+    const strict = await harness.service.commit({ preparation });
+    expect(Result.isFailure(strict) && strict.error.code).toBe("action_request_already_exists");
+    expect(harness.workflowStarter.plans).toHaveLength(0);
+
+    const resumed = await harness.service.commit({ preparation, resume: true });
+    expect(Result.isSuccess(resumed) && resumed.value).toMatchObject({
+      type: "accepted",
+      view: { status: "pending_approval" },
+    });
+    expect(harness.workflowStarter.plans).toHaveLength(1);
   });
 });

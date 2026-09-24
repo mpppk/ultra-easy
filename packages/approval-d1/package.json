@@ -13,6 +13,7 @@
   "dependencies": {
     "@app/approval-application": "workspace:*",
     "@app/approval-core": "workspace:*",
+    "@app/approval-mcp": "workspace:*",
     "@praha/byethrow": "^0.12.0"
   }
 }

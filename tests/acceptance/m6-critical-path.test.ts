@@ -68,9 +68,12 @@ import type {
   VersionedPolicyBindingResolver,
 } from "@app/approval-application";
 import {
-  ApprovalMcpAdapter,
-  InMemoryMcpTaskProjectionRepository,
-  MCP_TASKS_EXTENSION,
+  InMemoryMcpInvocationRepository,
+  InMemoryMcpRouteSnapshotRepository,
+  McpGateway,
+  StaticMcpToolBindingRegistry,
+  StaticMcpToolExposurePolicy,
+  tasksCapableMeta,
 } from "@app/approval-mcp";
 import { InMemoryApprovalRuntime } from "@app/approval-runtime-memory";
 
@@ -418,9 +421,10 @@ function createHarness() {
     },
   });
 
-  const capturingService: Pick<ActionRequestApplicationService, "submit"> = {
-    async submit(input) {
-      const result = await service.submit(input);
+  const capturingService: Pick<ActionRequestApplicationService, "prepare" | "commit"> = {
+    prepare: (input) => service.prepare(input),
+    async commit(input) {
+      const result = await service.commit(input);
       if (Result.isSuccess(result) && result.value.type === "accepted") {
         views.set(String(result.value.actionRequestId), result.value.view);
       }
@@ -437,25 +441,42 @@ function createHarness() {
     },
   });
 
-  const mcp = new ApprovalMcpAdapter({
-    applicationService: capturingService,
-    actionMapper: {
-      map(call) {
-        return Promise.resolve(Result.succeed(action(call.arguments ?? {})));
+  const registry = StaticMcpToolBindingRegistry.create([
+    {
+      id: "binding:ticket-priority",
+      version: 1,
+      organizationId: org,
+      status: "active",
+      actionType,
+      exposedTool: {
+        name: "ticket_set_priority",
+        inputSchema: {
+          type: "object",
+          properties: { ticketId: { type: "string" } },
+          required: ["ticketId"],
+        },
       },
+      target: { mcpServerId: "ticket-server", toolName: "set_priority" },
+      argumentMapping: { resourceType, resourceIdArgument: "ticketId" },
     },
+  ]);
+  assert(Result.isSuccess(registry));
+  const mcp = new McpGateway({
+    applicationService: capturingService,
+    bindingRegistry: registry.value,
+    exposureAuthorizer: new StaticMcpToolExposurePolicy([{ organizationIds: [org] }]),
     trustedContextProvider: {
       resolve() {
         return Promise.resolve(Result.succeed(currentContext));
       },
     },
-    taskRepository: new InMemoryMcpTaskProjectionRepository(),
+    invocationRepository: new InMemoryMcpInvocationRepository(),
+    routeSnapshotRepository: new InMemoryMcpRouteSnapshotRepository(),
     actionRequestReader: {
       getActionRequest(input) {
         return Promise.resolve(Result.succeed(views.get(String(input.actionRequestId)) ?? null));
       },
     },
-    taskIdGenerator: { next: () => `task:e2e-${id}` },
     clock: { now: () => now },
   });
 
@@ -480,8 +501,11 @@ function createHarness() {
     currentContext = context;
     return mcp.callTool({
       organizationId: org,
-      toolCall: { name: "ticket_set_priority", arguments: input },
-      extensions: { [MCP_TASKS_EXTENSION]: {} },
+      params: {
+        name: "ticket_set_priority",
+        arguments: { ticketId: String(resourceId), ...input },
+        _meta: tasksCapableMeta(),
+      },
     });
   }
 
