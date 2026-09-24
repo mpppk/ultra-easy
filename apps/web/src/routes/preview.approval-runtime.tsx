@@ -107,7 +107,10 @@ function PreviewApprovalRuntime() {
   }
 
   return (
-    <main style={{ maxWidth: 920, margin: "0 auto", padding: 32, fontFamily: "sans-serif" }}>
+    <main
+      className="legacy-page"
+      style={{ maxWidth: 920, margin: "0 auto", padding: 32, fontFamily: "sans-serif" }}
+    >
       <h1>Approval Runtime Preview</h1>
       <p>Cloudflare Workflows + D1 + Safe Action Execution のPreview E2E確認用ハーネスです。</p>
 
