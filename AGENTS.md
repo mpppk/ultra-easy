@@ -56,6 +56,17 @@ tests/                    @app/tests — milestone-spanning acceptance suite (se
 - Build everything with `bun run build` (`vp run -r build`); build just the app with `vp -C apps/web build`.
 - Dev server: `bun run dev` (`vp run @app/web#dev`, port 3000). Deploy: `bun run deploy` (`vp build && wrangler deploy` inside `apps/web`).
 
+## Web UI (`apps/web`)
+
+Stack: TanStack Start + React 19 + Tailwind CSS v4 (`@tailwindcss/vite`) + shadcn/ui (`apps/web/components.json`, style `new-york`, base `neutral`).
+
+- Imports use `apps/web/package.json#imports` only (`#/*`, `#components/*`, `#lib/*`, `#hooks/*`). There are no tsconfig `paths`; do not add an `@/*` alias.
+- Add a shadcn component with `cd apps/web && bunx --bun shadcn@latest add <name>`, then `vp check --fix` to apply repo formatting. Generated sources are normal repo code and get reviewed. Add only components you actually use.
+- `src/components/ui/` holds generated primitives only. They import nothing app-specific (only `#components/ui/*`), which a test enforces. Feature components go in `src/components/<feature>/` (e.g. `authorization/`), and shell primitives (page/section/toolbar, empty/error/loading) live in `src/components/layout/`.
+- Use semantic tokens from `src/styles.css` (`bg-background`, `text-muted-foreground`, `bg-destructive`, `text-success`, ...), never raw colors. Dark mode follows the OS via `prefers-color-scheme`, which avoids theme flash and SSR hydration mismatch. Light and dark must define the same tokens, which a test also enforces.
+- `cn()` comes from shadcn's `cn` package; feature code imports it from `#lib/utils`.
+- Feature-specific heavy dependencies (e.g. `@xyflow/react`, `@dagrejs/dagre`) are added by the feature that needs them, not by the foundation.
+
 ## エラー処理
 
 - `throw`文は禁止する。失敗可能な処理は原則として`@praha/byethrow`の`Result` / `ResultAsync`で表現する。

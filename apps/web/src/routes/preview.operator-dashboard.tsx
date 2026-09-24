@@ -77,7 +77,10 @@ function PreviewOperatorDashboard() {
   }
 
   return (
-    <main style={{ maxWidth: 920, margin: "0 auto", padding: 32, fontFamily: "sans-serif" }}>
+    <main
+      className="legacy-page"
+      style={{ maxWidth: 920, margin: "0 auto", padding: 32, fontFamily: "sans-serif" }}
+    >
       <h1>Operator Dashboard (Preview)</h1>
       <p>
         D1 append-only eventsとoutbox

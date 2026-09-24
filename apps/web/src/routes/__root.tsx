@@ -1,5 +1,7 @@
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 
+import { TooltipProvider } from "#components/ui/tooltip";
+
 import appCss from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -13,7 +15,11 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "TanStack Start Starter",
+        name: "color-scheme",
+        content: "light dark",
+      },
+      {
+        title: "ultra-easy",
       },
     ],
     links: [
@@ -33,7 +39,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
 
         <Scripts />
       </body>
