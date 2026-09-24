@@ -1,6 +1,11 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
-import type { SchemaReference, SchemaResolver } from "@app/approval-core";
+import {
+  AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY,
+  relationshipUpdateInputSchema,
+  type SchemaReference,
+  type SchemaResolver,
+} from "@app/approval-core";
 
 function stagingTicketUpdateSchema(): StandardSchemaV1 {
   return {
@@ -43,6 +48,9 @@ export class StagingSchemaResolver implements SchemaResolver {
   resolve(ref: SchemaReference): StandardSchemaV1 | Promise<StandardSchemaV1> {
     const key = String(ref.key);
     if (key === "staging:ticket-update") return stagingTicketUpdateSchema();
+    if (key === String(AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY)) {
+      return relationshipUpdateInputSchema() as StandardSchemaV1;
+    }
     return unknownSchema(key);
   }
 }

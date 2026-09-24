@@ -1,0 +1,83 @@
+import {
+  AuthorizationRelationshipCoordinator,
+  AuthorizationRelationshipExecutor,
+  ConsoleTelemetrySink,
+  type OrganizationId,
+} from "@app/approval-core";
+import { D1AuthorizationRelationshipStore, type D1DatabaseLike } from "@app/approval-d1";
+import {
+  ClientCredentialsTokenProvider,
+  OpenFgaClient,
+  OpenFgaRelationshipTupleGateway,
+} from "@app/approval-fga";
+
+export type RelationshipMutationEnv = {
+  DB: D1DatabaseLike;
+  OPENFGA_API_URL?: string;
+  OPENFGA_STORE_ID?: string;
+  OPENFGA_AUTHORIZATION_MODEL_ID?: string;
+  /**
+   * Tuple-write credential for the relationship executor/reconciler only.
+   * Falls back to FGA_CLIENT_ID/SECRET where a separate writer client has not
+   * been provisioned yet (staging). Never exposed to the web app.
+   */
+  FGA_TUPLE_WRITER_CLIENT_ID?: string;
+  FGA_TUPLE_WRITER_CLIENT_SECRET?: string;
+  FGA_CLIENT_ID?: string;
+  FGA_CLIENT_SECRET?: string;
+};
+
+const writerTokens = new Map<string, ClientCredentialsTokenProvider>();
+
+function writerCredentials(env: RelationshipMutationEnv) {
+  const clientId = env.FGA_TUPLE_WRITER_CLIENT_ID ?? env.FGA_CLIENT_ID;
+  const clientSecret = env.FGA_TUPLE_WRITER_CLIENT_SECRET ?? env.FGA_CLIENT_SECRET;
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+/**
+ * Composition root for the governed relationship mutation capability
+ * (executor + reconciler). This is the only place a tuple-write capable FGA
+ * client is constructed.
+ */
+export function relationshipCoordinator(
+  env: RelationshipMutationEnv,
+): AuthorizationRelationshipCoordinator | null {
+  const credentials = writerCredentials(env);
+  const storeId = env.OPENFGA_STORE_ID;
+  const modelId = env.OPENFGA_AUTHORIZATION_MODEL_ID;
+  if (!credentials || !storeId || !modelId) return null;
+  let tokens = writerTokens.get(credentials.clientId);
+  if (!tokens) {
+    tokens = new ClientCredentialsTokenProvider({
+      tokenUrl: "https://auth.fga.dev/oauth/token",
+      audience: "https://api.us1.fga.dev/",
+      ...credentials,
+    });
+    writerTokens.set(credentials.clientId, tokens);
+  }
+  const tokenSupplier = tokens;
+  return new AuthorizationRelationshipCoordinator({
+    store: new D1AuthorizationRelationshipStore(env.DB),
+    gateway: new OpenFgaRelationshipTupleGateway({
+      authorizationModelId: modelId,
+      clientFor: (organizationId: OrganizationId) =>
+        new OpenFgaClient({
+          apiUrl: env.OPENFGA_API_URL ?? "https://api.us1.fga.dev",
+          storeId,
+          authorizationModelId: modelId,
+          organizationId,
+          tokenSupplier,
+          telemetry: new ConsoleTelemetrySink(),
+        }),
+    }),
+    clock: { now: () => new Date().toISOString() },
+  });
+}
+
+export function relationshipExecutor(
+  env: RelationshipMutationEnv,
+): AuthorizationRelationshipExecutor | null {
+  const coordinator = relationshipCoordinator(env);
+  return coordinator ? new AuthorizationRelationshipExecutor(coordinator) : null;
+}

@@ -8,6 +8,7 @@ export * from "./attachment.ts";
 export * from "./authorization.ts";
 export * from "./authorization-admin.ts";
 export * from "./authorization-relationship.ts";
+export * from "./authorization-relationship-coordinator.ts";
 export * from "./builder.ts";
 export * from "./canonical-json.ts";
 export * from "./condition-evaluator.ts";

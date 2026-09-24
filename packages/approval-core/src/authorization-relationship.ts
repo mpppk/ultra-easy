@@ -185,3 +185,146 @@ export interface AuthorizationRelationshipReadRepository {
     AuthorizationRelationshipRepositoryError
   >;
 }
+
+/** How a failed provider call relates to the side effect (see OpenFGA adapter). */
+export type RelationshipGatewayFailureEffect = "not_sent" | "rejected" | "ambiguous";
+
+export class RelationshipGatewayError extends Error {
+  readonly name = "RelationshipGatewayError";
+
+  constructor(
+    readonly code: string,
+    readonly effect: RelationshipGatewayFailureEffect,
+    readonly retriable: boolean,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Provider port for console-managed tuples. Implementations scope the logical
+ * object to the organization. Only the relationship executor / reconciler
+ * holds this capability; the admin read API never does.
+ */
+export interface RelationshipTupleGateway {
+  readonly authorizationModelId: string;
+  /** Exact, higher-consistency read of the provider state. */
+  read(input: {
+    organizationId: OrganizationId;
+    tuple: RelationshipTuple;
+  }): Result.ResultAsync<boolean, RelationshipGatewayError>;
+  /** Makes the tuple present (write) or absent (delete). */
+  apply(input: {
+    organizationId: OrganizationId;
+    tuple: RelationshipTuple;
+    present: boolean;
+  }): Result.ResultAsync<void, RelationshipGatewayError>;
+}
+
+export type PrepareRelationshipMutationInput = {
+  organizationId: OrganizationId;
+  mutationKey: string;
+  actionRequestId: ActionRequestId;
+  tupleKey: string;
+  tuple: RelationshipTuple;
+  objectType: string;
+  operation: RelationshipOperation;
+  desiredPresent: boolean;
+  actor: PrincipalRef;
+  authorizationModelId: string;
+  requestedAt: string;
+};
+
+export type LoadedRelationshipMutation = {
+  mutation: RelationshipMutationRecord;
+  relationship: AuthorizationRelationshipRecord;
+};
+
+export type ReconcilableTuple = { organizationId: OrganizationId; tupleKey: string };
+
+/**
+ * Write side of the relationship journal. Every transition is a single D1
+ * atomic batch (state + audit event) guarded by the per-tuple revision, so a
+ * stale mutation can never overwrite a newer desired state.
+ */
+export interface AuthorizationRelationshipStore {
+  /**
+   * Phase 1 (before any provider call): allocate the next per-tuple revision,
+   * persist the `prepared` intent, update the desired state and append the
+   * `requested` audit event atomically. Idempotent per mutationKey: a retry
+   * returns the existing mutation and never issues a new revision.
+   */
+  prepare(
+    input: PrepareRelationshipMutationInput,
+  ): Result.ResultAsync<LoadedRelationshipMutation, AuthorizationRelationshipRepositoryError>;
+
+  load(input: {
+    organizationId: OrganizationId;
+    mutationKey: string;
+  }): Result.ResultAsync<
+    LoadedRelationshipMutation | null,
+    AuthorizationRelationshipRepositoryError
+  >;
+
+  /** Mutation whose revision equals the tuple's latest desired revision. */
+  loadLatest(input: {
+    organizationId: OrganizationId;
+    tupleKey: string;
+  }): Result.ResultAsync<
+    LoadedRelationshipMutation | null,
+    AuthorizationRelationshipRepositoryError
+  >;
+
+  /** Only the latest revision may enter `applying`. */
+  markApplying(input: {
+    mutation: RelationshipMutationRecord;
+    at: string;
+  }): Result.ResultAsync<
+    "applying" | "not_latest" | "terminal",
+    AuthorizationRelationshipRepositoryError
+  >;
+
+  /** Confirms only while still latest; also advances the tuple's confirmed revision. */
+  markConfirmed(input: {
+    mutation: RelationshipMutationRecord;
+    observedPresent: boolean;
+    at: string;
+  }): Result.ResultAsync<"confirmed" | "not_latest", AuthorizationRelationshipRepositoryError>;
+
+  /** Supersedes every open mutation of the tuple older than its latest revision. */
+  supersedeStale(input: {
+    organizationId: OrganizationId;
+    tupleKey: string;
+    at: string;
+  }): Result.ResultAsync<number, AuthorizationRelationshipRepositoryError>;
+
+  markIndeterminate(input: {
+    mutation: RelationshipMutationRecord;
+    errorCode: string;
+    at: string;
+  }): Result.ResultAsync<void, AuthorizationRelationshipRepositoryError>;
+
+  markFailed(input: {
+    mutation: RelationshipMutationRecord;
+    errorCode: string;
+    at: string;
+  }): Result.ResultAsync<void, AuthorizationRelationshipRepositoryError>;
+
+  /** Records a provider drift repair of an already-confirmed latest revision. */
+  recordDriftRepaired(input: {
+    mutation: RelationshipMutationRecord;
+    at: string;
+  }): Result.ResultAsync<void, AuthorizationRelationshipRepositoryError>;
+
+  /**
+   * Tuples needing reconciliation: indeterminate mutations immediately, and
+   * prepared/applying mutations idle longer than the grace period (crash or
+   * lost response; the grace period avoids racing a live execution).
+   */
+  listReconcilable(input: {
+    organizationId: OrganizationId;
+    idleBefore: string;
+    limit: number;
+  }): Result.ResultAsync<ReconcilableTuple[], AuthorizationRelationshipRepositoryError>;
+}
