@@ -56,6 +56,7 @@ import { StagingTrustedContextProvider } from "./trusted-context.ts";
 import { WorkflowDecisionSink } from "./decision-sink.ts";
 import { StagingActionAuthorizer } from "./staging-authorizer.ts";
 import { StagingActionExecutor } from "./staging-executor.ts";
+import { relationshipCoordinator, relationshipExecutor } from "./relationship-mutation.ts";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 
@@ -157,12 +158,14 @@ function buildApi(input: {
     next: () => `command:${crypto.randomUUID()}`,
   });
   const authorizer = new ServiceBindingActionAuthorizer(input.authorizerBinding, organizationId);
+  const authorizationExecutor = relationshipExecutor(env);
   const dispatcher = new DispatchingActionExecutor({
     governance: new GovernanceActionExecutor(
       new D1GovernanceRepository(env.DB),
       new CloudflareWorkflowCancellationControl(env.DB, env.ACTION_WORKFLOW),
     ),
     staging: new ServiceBindingActionExecutor(input.executorBinding, "staging" as ExecutorKey),
+    ...(authorizationExecutor ? { authorization: authorizationExecutor } : {}),
   });
   const service = new ActionRequestApplicationService({
     actionDefinitionResolver: new D1PublishedActionDefinitionResolver(env.DB, organizationId),
@@ -226,6 +229,32 @@ async function getOperatorDashboard(request: Request, env: ApprovalApiEnv): Prom
     { ...snapshot.value, alerts: alerts.value, thresholds: operatorAlertThresholds(env) },
     { status: 200 },
   );
+}
+
+/**
+ * Converges console-managed relationships whose mutation is indeterminate or
+ * stuck in prepared/applying (crash / lost response) to the latest desired
+ * revision. Stale revisions are superseded and never re-sent.
+ */
+async function reconcileRelationships(env: ApprovalApiEnv): Promise<void> {
+  const coordinator = relationshipCoordinator(env);
+  if (!coordinator) return;
+  const reconciled = await coordinator.reconcilePending({
+    organizationId: stagingOrganizationId(env),
+  });
+  if (Result.isFailure(reconciled)) {
+    console.error("relationship reconcile failed", { code: reconciled.error.code });
+    return;
+  }
+  if (reconciled.value.reconciled > 0) {
+    console.log(
+      JSON.stringify({
+        event: "authorization.relationship_reconciled",
+        count: reconciled.value.reconciled,
+        statuses: reconciled.value.outcomes.map((outcome) => outcome.status),
+      }),
+    );
+  }
 }
 
 async function evaluateAlerts(env: ApprovalApiEnv, now: string): Promise<void> {
@@ -338,6 +367,7 @@ export default {
     }
     await evaluateAlerts(env, now);
     await sweepPendingDecisions(env, now);
+    await reconcileRelationships(env);
   },
 
   async queue(batch, env): Promise<void> {

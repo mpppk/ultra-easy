@@ -56,7 +56,16 @@ export class SqliteD1Database implements D1DatabaseLike {
     return prepared;
   }
 
-  async batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]> {
+  private queue: Promise<unknown> = Promise.resolve();
+
+  /** D1 executes each batch as one serialized transaction; model that here. */
+  batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]> {
+    const run = this.queue.then(() => this.runBatch(statements));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async runBatch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]> {
     if (this.failNextBatchAt !== null) {
       this.failNextBatchAt -= 1;
       if (this.failNextBatchAt <= 0) {

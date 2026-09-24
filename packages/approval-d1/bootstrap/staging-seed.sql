@@ -32,6 +32,13 @@ INSERT OR IGNORE INTO published_action_definitions (
   organization_id, definition_key, version, action_type, definition_json,
   actor_json, source_action_request_id, published_at
 ) VALUES (
+  'organization:staging', 'authorization:relationship-update', 1, 'authorization.relationship.update',
+  '{"actionType":"authorization.relationship.update","executorKey":"authorization","inputSchema":{"key":"authorization:relationship-update","version":1},"key":"authorization:relationship-update","version":1}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
+);
+INSERT OR IGNORE INTO published_action_definitions (
+  organization_id, definition_key, version, action_type, definition_json,
+  actor_json, source_action_request_id, published_at
+) VALUES (
   'organization:staging', 'staging:ticket-update', 1, 'ticket.update',
   '{"actionType":"ticket.update","executorKey":"staging","inputSchema":{"key":"staging:ticket-update","version":1},"key":"staging:ticket-update","version":1}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
 );
@@ -48,6 +55,27 @@ INSERT INTO approval_policy_bindings (
 ) VALUES (
   'organization:staging', 'binding:staging-ticket-update', 'policy:staging-serial-two-users', 1,
   '{"compositionOrder":100,"enabled":true,"id":"binding:staging-ticket-update","organizationId":"organization:staging","policyKey":"policy:staging-serial-two-users","selector":{"actionTypes":["ticket.update"]}}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
+)
+ON CONFLICT(organization_id, binding_id) DO UPDATE SET
+  policy_key = excluded.policy_key,
+  enabled = excluded.enabled,
+  binding_json = excluded.binding_json,
+  actor_json = excluded.actor_json,
+  source_action_request_id = excluded.source_action_request_id,
+  updated_at = excluded.updated_at;
+INSERT OR IGNORE INTO published_approval_policy_versions (
+  organization_id, policy_key, version, policy_json, actor_json,
+  source_action_request_id, published_at
+) VALUES (
+  'organization:staging', 'policy:staging-authorization-relationship', 1,
+  '{"description":"M9 staging E2E: can_approve grants need approval, others do not","key":"policy:staging-authorization-relationship","name":"staging-authorization-relationship","rules":[{"flow":{"approver":{"type":"user","userId":{"type":"literal","value":"user:auth0|6ab12aa04a279d37e02306c6"}},"key":"security","purpose":"security_approval","type":"approval"},"key":"approver-rights","when":{"left":{"path":"action.input.tuple.relation","type":"field"},"operator":"eq","right":{"type":"literal","value":"can_approve"},"type":"comparison"}},{"flow":{"type":"none"},"key":"default","when":{"type":"always"}}],"schemaVersion":1}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
+);
+INSERT INTO approval_policy_bindings (
+  organization_id, binding_id, policy_key, enabled, binding_json,
+  actor_json, source_action_request_id, updated_at
+) VALUES (
+  'organization:staging', 'binding:staging-authorization-relationship', 'policy:staging-authorization-relationship', 1,
+  '{"compositionOrder":100,"enabled":true,"id":"binding:staging-authorization-relationship","organizationId":"organization:staging","policyKey":"policy:staging-authorization-relationship","selector":{"actionTypes":["authorization.relationship.update"]}}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
 )
 ON CONFLICT(organization_id, binding_id) DO UPDATE SET
   policy_key = excluded.policy_key,

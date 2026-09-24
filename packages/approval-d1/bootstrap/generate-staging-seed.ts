@@ -8,10 +8,14 @@ import { Result } from "@praha/byethrow";
 import {
   always,
   approve,
+  AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION,
   canonicalizeJson,
   definePolicy,
+  eq,
+  field,
   GOVERNANCE_ACTION_DEFINITIONS,
   literal,
+  none,
   rule,
   serial,
   user,
@@ -42,7 +46,11 @@ const statements: string[] = [];
 statements.push("-- ultra-easy staging bootstrap seed (M8-1). Idempotent: re-apply safe.");
 statements.push(`-- source: ${SOURCE} at ${OCCURRED_AT}`);
 
-for (const definition of GOVERNANCE_ACTION_DEFINITIONS) {
+// M9-2: governed relationship mutation (bootstrap-installed like governance definitions).
+for (const definition of [
+  ...GOVERNANCE_ACTION_DEFINITIONS,
+  AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION,
+]) {
   statements.push(`INSERT OR IGNORE INTO published_action_definitions (
   organization_id, definition_key, version, action_type, definition_json,
   actor_json, source_action_request_id, published_at
@@ -103,6 +111,56 @@ statements.push(`INSERT INTO approval_policy_bindings (
 ) VALUES (
   ${sqlQuote(ORGANIZATION_ID)}, 'binding:staging-ticket-update', 'policy:staging-serial-two-users', 1,
   ${sqlQuote(mustJson(binding))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+)
+ON CONFLICT(organization_id, binding_id) DO UPDATE SET
+  policy_key = excluded.policy_key,
+  enabled = excluded.enabled,
+  binding_json = excluded.binding_json,
+  actor_json = excluded.actor_json,
+  source_action_request_id = excluded.source_action_request_id,
+  updated_at = excluded.updated_at;`);
+
+// M9-2: granting approver rights (can_approve) requires bob's security approval;
+// other catalog changes (e.g. can_execute) run without approval. Approval never
+// overrides the editor authorization check.
+const relationshipPolicy = definePolicy({
+  key: "policy:staging-authorization-relationship",
+  name: "staging-authorization-relationship",
+  description: "M9 staging E2E: can_approve grants need approval, others do not",
+  rules: [
+    rule("approver-rights", {
+      when: eq(field("action.input.tuple.relation"), literal("can_approve")),
+      flow: approve({
+        key: "security",
+        approver: user(literal(BOB)),
+        purpose: "security_approval",
+      }),
+    }),
+    rule("default", { when: always(), flow: none() }),
+  ],
+});
+statements.push(`INSERT OR IGNORE INTO published_approval_policy_versions (
+  organization_id, policy_key, version, policy_json, actor_json,
+  source_action_request_id, published_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'policy:staging-authorization-relationship', 1,
+  ${sqlQuote(mustJson(relationshipPolicy))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+);`);
+
+const relationshipBinding = {
+  id: "binding:staging-authorization-relationship",
+  organizationId: ORGANIZATION_ID,
+  policyKey: "policy:staging-authorization-relationship",
+  selector: { actionTypes: ["authorization.relationship.update"] },
+  compositionOrder: 100,
+  enabled: true,
+};
+statements.push(`INSERT INTO approval_policy_bindings (
+  organization_id, binding_id, policy_key, enabled, binding_json,
+  actor_json, source_action_request_id, updated_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'binding:staging-authorization-relationship', 'policy:staging-authorization-relationship', 1,
+  ${sqlQuote(mustJson(relationshipBinding))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
 )
 ON CONFLICT(organization_id, binding_id) DO UPDATE SET
   policy_key = excluded.policy_key,

@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import type { ActionDefinition } from "./action-definition.ts";
 import { sha256CanonicalJson, type CanonicalJsonError } from "./canonical-json.ts";
@@ -307,4 +308,30 @@ export function isManagedRelationship(
       (entry) => entry.objectType === input.objectType && entry.relation === input.relation,
     )
   );
+}
+
+/**
+ * Standard Schema for `authorization.relationship.update` input, so the
+ * normal ActionRequest submit path (and Explorer) validates against the
+ * Managed Relationship Catalog before any ActionRequest is created.
+ */
+export function relationshipUpdateInputSchema(
+  catalog: ManagedRelationshipCatalog = DEFAULT_MANAGED_RELATIONSHIP_CATALOG,
+): StandardSchemaV1<unknown, AuthorizationRelationshipUpdateInput> {
+  return {
+    "~standard": {
+      version: 1,
+      vendor: "ultra-easy",
+      validate(value: unknown) {
+        const validated = validateRelationshipUpdateInput(value, catalog);
+        if (validated.type === "valid") return { value: validated.input };
+        return {
+          issues: validated.issues.map((entry) => ({
+            message: `${entry.code}: ${entry.message}`,
+            ...(entry.path ? { path: entry.path.split(".") } : {}),
+          })),
+        };
+      },
+    },
+  };
 }

@@ -159,6 +159,8 @@
       "devDependencies": {
         "@app/approval-application": "workspace:*",
         "@app/approval-core": "workspace:*",
+        "@app/approval-d1": "workspace:*",
+        "@app/approval-fga": "workspace:*",
         "@app/approval-mcp": "workspace:*",
         "@app/approval-runtime-memory": "workspace:*",
         "@praha/byethrow": "^0.12.0",

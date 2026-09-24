@@ -1,12 +1,20 @@
+import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
+
+import { AUTHORIZATION_EXECUTOR_KEY, type ActionExecutionRequest } from "@app/approval-core";
+
+import { relationshipExecutor, type RelationshipMutationEnv } from "./relationship-mutation.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 /**
- * Staging用のside-effect sink。外部副作用を持たず、idempotencyとcorrelationの
- * 契約検証後に成功を返す。Workflow側がaction_resultsへ永続化する。
+ * Workflow経路のAction Executor registry (service binding)。
+ * - `authorization`: governed relationship mutation (M9-2, 実FGA tuple write)
+ * - それ以外: staging用side-effect sink。外部副作用を持たず、idempotencyと
+ *   correlationの契約検証後に成功を返す。
+ * Workflow側がaction_resultsへ永続化する。
  */
 export class StagingActionExecutor extends WorkerEntrypoint {
   override async fetch(request: Request): Promise<Response> {
@@ -38,6 +46,9 @@ export class StagingActionExecutor extends WorkerEntrypoint {
         { status: 400 },
       );
     }
+    if (decodeURIComponent(match[1]) === String(AUTHORIZATION_EXECUTOR_KEY)) {
+      return this.executeRelationshipMutation(body as ActionExecutionRequest);
+    }
     return Response.json(
       {
         status: "succeeded",
@@ -50,5 +61,28 @@ export class StagingActionExecutor extends WorkerEntrypoint {
       },
       { status: 200 },
     );
+  }
+
+  private async executeRelationshipMutation(request: ActionExecutionRequest): Promise<Response> {
+    const executor = relationshipExecutor(this.env as unknown as RelationshipMutationEnv);
+    if (!executor) {
+      return Response.json(
+        { code: "fga_not_configured", retriable: true, detail: "FGA接続設定がありません" },
+        { status: 503 },
+      );
+    }
+    const executed = await executor.execute(request);
+    if (Result.isFailure(executed)) {
+      return Response.json(
+        {
+          code: executed.error.code,
+          retriable: executed.error.retriable,
+          detail: executed.error.detail,
+          ...(executed.error.details !== undefined ? { details: executed.error.details } : {}),
+        },
+        { status: executed.error.retriable ? 503 : 422 },
+      );
+    }
+    return Response.json(executed.value, { status: 200 });
   }
 }
