@@ -17,7 +17,10 @@
     "ACTION_EXECUTION_MODE": "execute",
     "OPENFGA_API_URL": "https://api.us1.fga.dev",
     "OPENFGA_STORE_ID": "01M31PMZ0DRBWZQ9D6TZ64E87W",
-    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M31Z81M7BA879QPYCC4TDREF",
+    // Pinned GitOps model (packages/approval-fga/openfga/model.fga) published from
+    // AUTHORIZATION_MODEL_SOURCE_REVISION. Update both via PR after publish-model.ts.
+    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M38K1Q55CCNETS1V6XHJZJTB",
+    "AUTHORIZATION_MODEL_SOURCE_REVISION": "319bcda",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
   },
   "services": [

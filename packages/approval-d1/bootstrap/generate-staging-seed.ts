@@ -16,6 +16,9 @@ import {
   GOVERNANCE_ACTION_DEFINITIONS,
   literal,
   none,
+  parallelAll,
+  parallelAny,
+  parallelQuorum,
   rule,
   serial,
   user,
@@ -161,6 +164,86 @@ statements.push(`INSERT INTO approval_policy_bindings (
 ) VALUES (
   ${sqlQuote(ORGANIZATION_ID)}, 'binding:staging-authorization-relationship', 'policy:staging-authorization-relationship', 1,
   ${sqlQuote(mustJson(relationshipBinding))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+)
+ON CONFLICT(organization_id, binding_id) DO UPDATE SET
+  policy_key = excluded.policy_key,
+  enabled = excluded.enabled,
+  binding_json = excluded.binding_json,
+  actor_json = excluded.actor_json,
+  source_action_request_id = excluded.source_action_request_id,
+  updated_at = excluded.updated_at;`);
+
+// M9-4: staging fixture exercising parallel completion semantics in Explorer
+// simulation (serial of any / all / quorum groups). Same input schema as ticket.update.
+const escalateDefinition = {
+  key: "staging:ticket-escalate",
+  version: 1,
+  actionType: "ticket.escalate",
+  inputSchema: { key: "staging:ticket-update", version: 1 },
+  executorKey: "staging",
+};
+statements.push(`INSERT OR IGNORE INTO published_action_definitions (
+  organization_id, definition_key, version, action_type, definition_json,
+  actor_json, source_action_request_id, published_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'staging:ticket-escalate', 1, 'ticket.escalate',
+  ${sqlQuote(mustJson(escalateDefinition))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+);`);
+const escalatePolicy = definePolicy({
+  key: "policy:staging-parallel-escalation",
+  name: "staging-parallel-escalation",
+  description: "M9 staging E2E: serial of any / all / quorum parallel groups",
+  rules: [
+    rule("default", {
+      when: always(),
+      flow: serial(
+        parallelAny(
+          approve({ key: "triage-alice", approver: user(literal(ALICE)) }),
+          approve({ key: "triage-bob", approver: user(literal(BOB)) }),
+        ),
+        parallelAll(
+          approve({
+            key: "review-alice",
+            approver: user(literal(ALICE)),
+            purpose: "business_approval",
+          }),
+          approve({
+            key: "review-bob",
+            approver: user(literal(BOB)),
+            purpose: "security_approval",
+          }),
+        ),
+        parallelQuorum(
+          2,
+          approve({ key: "board-alice", approver: user(literal(ALICE)) }),
+          approve({ key: "board-bob", approver: user(literal(BOB)) }),
+          approve({ key: "board-alice-2", approver: user(literal(ALICE)), resolution: "snapshot" }),
+        ),
+      ),
+    }),
+  ],
+});
+statements.push(`INSERT OR IGNORE INTO published_approval_policy_versions (
+  organization_id, policy_key, version, policy_json, actor_json,
+  source_action_request_id, published_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'policy:staging-parallel-escalation', 1,
+  ${sqlQuote(mustJson(escalatePolicy))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
+);`);
+const escalateBinding = {
+  id: "binding:staging-ticket-escalate",
+  organizationId: ORGANIZATION_ID,
+  policyKey: "policy:staging-parallel-escalation",
+  selector: { actionTypes: ["ticket.escalate"] },
+  compositionOrder: 100,
+  enabled: true,
+};
+statements.push(`INSERT INTO approval_policy_bindings (
+  organization_id, binding_id, policy_key, enabled, binding_json,
+  actor_json, source_action_request_id, updated_at
+) VALUES (
+  ${sqlQuote(ORGANIZATION_ID)}, 'binding:staging-ticket-escalate', 'policy:staging-parallel-escalation', 1,
+  ${sqlQuote(mustJson(escalateBinding))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
 )
 ON CONFLICT(organization_id, binding_id) DO UPDATE SET
   policy_key = excluded.policy_key,

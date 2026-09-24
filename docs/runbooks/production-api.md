@@ -45,8 +45,10 @@ Governance bootstrap rule (docs/governance-bootstrap.md) option 1
 
 ## FGA (staging)
 
-- Store `01M31PMZ0DRBWZQ9D6TZ64E87W` (US), model `01M31Z81M7BA879QPYCC4TDREF`
-  with `ticket` (`can_execute`/`can_approve` by `user`). Verified complete
+- Store `01M31PMZ0DRBWZQ9D6TZ64E87W` (US). M8 model `01M31Z81M7BA879QPYCC4TDREF`
+  was superseded additively by the M9 GitOps model `01M38K1Q55CCNETS1V6XHJZJTB`
+  (`packages/approval-fga/openfga/model.fga` @ 319bcda: `ticket` + `authorization_admin`).
+  `ticket` (`can_execute`/`can_approve` by `user`). Verified complete
   for Check/ListUsers approver resolution + re-auth in M8-3 — no model
   extension was needed (additive-only rule still applies to future changes).
 - Token endpoint is `https://auth.fga.dev/oauth/token`
