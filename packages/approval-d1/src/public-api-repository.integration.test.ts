@@ -109,6 +109,7 @@ function database(): SqliteD1Database {
     "0004_action_requests_workflow_lookup.sql",
     "0005_action_results.sql",
     "0006_public_api.sql",
+    "0014_api_idempotency_lease.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
   }
@@ -325,6 +326,80 @@ describe("D1PublicApiRepository", () => {
     });
     assert(Result.isSuccess(conflict));
     expect(conflict.value.type).toBe("conflict");
+  });
+
+  it("#92: pending予約はlease中in_progress、期限切れ / lease未設定なら同じrequestが引き継ぐ", async () => {
+    const db = database();
+    const repository = new D1PublicApiRepository(db);
+    const base = {
+      organizationId,
+      operation: "action-request:create",
+      key: "idem:lease",
+      requestHash: "sha256:first",
+      status: "pending" as const,
+      lockedUntil: "2026-09-19T00:01:00.000Z",
+      createdAt: "2026-09-19T00:00:00.000Z",
+      updatedAt: "2026-09-19T00:00:00.000Z",
+    };
+
+    const acquired = await repository.reserve(base);
+    const locked = await repository.reserve({ ...base, updatedAt: "2026-09-19T00:00:30.000Z" });
+    const otherPayload = await repository.reserve({
+      ...base,
+      requestHash: "sha256:second",
+      updatedAt: "2026-09-19T00:02:00.000Z",
+    });
+    const takenOver = await repository.reserve({
+      ...base,
+      lockedUntil: "2026-09-19T00:03:00.000Z",
+      updatedAt: "2026-09-19T00:02:00.000Z",
+    });
+    const raced = await repository.reserve({
+      ...base,
+      lockedUntil: "2026-09-19T00:03:00.000Z",
+      updatedAt: "2026-09-19T00:02:00.000Z",
+    });
+
+    assert(Result.isSuccess(acquired) && Result.isSuccess(locked));
+    expect(acquired.value.type).toBe("acquired");
+    expect(locked.value.type).toBe("in_progress");
+    assert(Result.isSuccess(otherPayload));
+    expect(otherPayload.value.type).toBe("conflict");
+    assert(Result.isSuccess(takenOver) && Result.isSuccess(raced));
+    expect(takenOver.value).toMatchObject({
+      type: "acquired",
+      record: { lockedUntil: "2026-09-19T00:03:00.000Z" },
+    });
+    expect(raced.value.type).toBe("in_progress");
+
+    // lease導入前のpending（locked_until NULL）も永久in_progressにしない。
+    db.db
+      .prepare("UPDATE api_idempotency_keys SET locked_until = NULL WHERE idempotency_key = ?")
+      .run("idem:lease");
+    const legacy = await repository.reserve({ ...base, updatedAt: "2026-09-19T00:02:30.000Z" });
+    assert(Result.isSuccess(legacy));
+    expect(legacy.value.type).toBe("acquired");
+  });
+
+  it("#92: releaseしたpending予約は同じkeyで再予約できる", async () => {
+    const repository = new D1PublicApiRepository(database());
+    const base = {
+      organizationId,
+      operation: "action-request:create",
+      key: "idem:release",
+      requestHash: "sha256:first",
+      status: "pending" as const,
+      lockedUntil: "2026-09-19T00:01:00.000Z",
+      createdAt: "2026-09-19T00:00:00.000Z",
+      updatedAt: "2026-09-19T00:00:00.000Z",
+    };
+
+    await repository.reserve(base);
+    await repository.release(base);
+    const again = await repository.reserve(base);
+
+    assert(Result.isSuccess(again));
+    expect(again.value.type).toBe("acquired");
   });
 
   it("AC-M7-001: ActionRequest/task/command/idempotencyをorganization境界で分離する", async () => {

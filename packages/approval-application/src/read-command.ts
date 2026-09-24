@@ -419,6 +419,11 @@ export type IdempotencyRecord = {
   key: string;
   requestHash: string;
   status: "pending" | "completed";
+  /**
+   * pending予約のlease期限。期限切れ（または未設定の旧record）のpendingは、
+   * 同じkey + 同じrequest hashの再送が引き継げる（crash / timeoutで永久in_progressにしない）。
+   */
+  lockedUntil?: string;
   responseStatus?: number;
   responseBody?: JsonValue;
   responseLocation?: string;
@@ -433,6 +438,10 @@ export type IdempotencyReserveResult =
   | { type: "conflict"; record: IdempotencyRecord };
 
 export interface IdempotencyRepository {
+  /**
+   * keyを予約する。既存pendingのlockedUntilが `record.updatedAt` 以前なら、
+   * 同じrequest hashの予約をcompare-and-setで引き継ぎ `acquired` を返す。
+   */
   reserve(
     record: IdempotencyRecord,
   ): Result.ResultAsync<IdempotencyReserveResult, PublicApiRepositoryError>;

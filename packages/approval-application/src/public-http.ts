@@ -131,14 +131,30 @@ function asJsonValue(value: unknown): JsonValue {
 }
 
 async function hashRequest(operation: string, request: Request) {
-  const body = await request
+  const text = await request
     .clone()
-    .json()
-    .catch(() => null);
-  return sha256CanonicalJson({
-    operation,
-    body: asJsonValue(body),
-  });
+    .text()
+    .catch(() => "");
+  const parsed = parseJsonText(text);
+  // JSONとして読めないbodyはraw textでhashし、別payload同士がnullとして衝突しないようにする。
+  return sha256CanonicalJson(
+    Result.isSuccess(parsed)
+      ? { operation, body: asJsonValue(parsed.value) }
+      : { operation, rawBody: text },
+  );
+}
+
+const parseJsonText = Result.fn({
+  try: (text: string): unknown => JSON.parse(text),
+  catch: () => null,
+});
+
+/** 同じkeyで再試行すれば成功しうる応答。予約をreleaseしてcompletedとして再生しない。 */
+const RETRIABLE_RESPONSE_STATUSES = new Set([429, 502, 503, 504]);
+export const DEFAULT_IDEMPOTENCY_LEASE_MS = 60_000;
+
+function addMs(iso: string, ms: number): string {
+  return new Date(Date.parse(iso) + ms).toISOString();
 }
 
 async function idempotent(input: {
@@ -147,6 +163,7 @@ async function idempotent(input: {
   operation: string;
   repository: IdempotencyRepository;
   clock: PublicHttpClock;
+  leaseMs?: number;
   execute: () => Promise<Response>;
 }): Promise<Response> {
   const key = input.request.headers.get("idempotency-key");
@@ -174,6 +191,7 @@ async function idempotent(input: {
     key,
     requestHash: String(hashed.value),
     status: "pending",
+    lockedUntil: addMs(now, input.leaseMs ?? DEFAULT_IDEMPOTENCY_LEASE_MS),
     createdAt: now,
     updatedAt: now,
   };
@@ -188,10 +206,16 @@ async function idempotent(input: {
     });
   }
   if (reserved.value.type === "in_progress") {
+    const lockedUntil = reserved.value.record.lockedUntil;
+    const retryAfterSeconds =
+      lockedUntil === undefined
+        ? 1
+        : Math.max(1, Math.ceil((Date.parse(lockedUntil) - Date.parse(now)) / 1000));
     return problem({
       status: 409,
       code: "idempotency_request_in_progress",
       title: "同じlogical operationを処理中です",
+      headers: { "retry-after": String(retryAfterSeconds) },
     });
   }
   if (reserved.value.type === "replay") {
@@ -211,8 +235,18 @@ async function idempotent(input: {
   }
 
   const response = await input.execute();
-  // 5xxもcompleteとして記録する。予約をpendingのまま残すと、
-  // 同じkeyでの正当なretryが永久に409 in_progressになる。
+  if (RETRIABLE_RESPONSE_STATUSES.has(response.status)) {
+    // 一時障害は記録せず予約を解放し、同じkeyでの再試行で処理を再実行できるようにする。
+    // releaseに失敗してもlease期限後には引き継げるため、応答はそのまま返す。
+    await input.repository.release({
+      organizationId: input.organizationId,
+      operation: input.operation,
+      key,
+      requestHash: String(hashed.value),
+    });
+    return response;
+  }
+  // 非retriableな応答（2xx / 4xx / 確定した500）だけをcompletedとして再生する。
   const body = await response
     .clone()
     .json()
@@ -468,36 +502,6 @@ export function createPublicHttpApi(input: {
         });
         if (user instanceof Response) return user;
 
-        if (input.rateLimiter) {
-          const limited = await input.rateLimiter.consume({
-            organizationId,
-            principal: { type: "user", id: user },
-            operation: "approval_decision.submit",
-            policy: input.approvalDecisionRateLimitPolicy ?? DEFAULT_APPROVAL_DECISION_RATE_LIMIT,
-            now: input.clock.now(),
-          });
-          if (Result.isFailure(limited)) {
-            return problem({
-              status: 503,
-              code: limited.error.code,
-              title: "Rate limit service unavailable",
-            });
-          }
-          if (!limited.value.allowed) {
-            return problem({
-              status: 429,
-              code: "rate_limit_exceeded",
-              title: "Too Many Requests",
-              headers: {
-                "retry-after": String(limited.value.retryAfterSeconds),
-                "x-ratelimit-limit": String(limited.value.limit),
-                "x-ratelimit-remaining": String(limited.value.remaining),
-                "x-ratelimit-reset": limited.value.resetAt,
-              },
-            });
-          }
-        }
-
         return idempotent({
           request,
           organizationId,
@@ -505,6 +509,37 @@ export function createPublicHttpApi(input: {
           repository: input.idempotencyRepository,
           clock: input.clock,
           execute: async () => {
+            // replayはrate limitを消費しない（idempotency予約後にだけconsumeする）。
+            if (input.rateLimiter) {
+              const limited = await input.rateLimiter.consume({
+                organizationId,
+                principal: { type: "user", id: user },
+                operation: "approval_decision.submit",
+                policy:
+                  input.approvalDecisionRateLimitPolicy ?? DEFAULT_APPROVAL_DECISION_RATE_LIMIT,
+                now: input.clock.now(),
+              });
+              if (Result.isFailure(limited)) {
+                return problem({
+                  status: 503,
+                  code: limited.error.code,
+                  title: "Rate limit service unavailable",
+                });
+              }
+              if (!limited.value.allowed) {
+                return problem({
+                  status: 429,
+                  code: "rate_limit_exceeded",
+                  title: "Too Many Requests",
+                  headers: {
+                    "retry-after": String(limited.value.retryAfterSeconds),
+                    "x-ratelimit-limit": String(limited.value.limit),
+                    "x-ratelimit-remaining": String(limited.value.remaining),
+                    "x-ratelimit-reset": limited.value.resetAt,
+                  },
+                });
+              }
+            }
             const raw = await request
               .clone()
               .json()

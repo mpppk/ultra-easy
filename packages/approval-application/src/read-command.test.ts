@@ -1,5 +1,7 @@
 import { Result } from "@praha/byethrow";
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
+
+import { InMemoryFixedWindowRateLimiter, type RateLimitPolicy } from "@app/approval-core";
 
 import type {
   ActionRequestId,
@@ -199,6 +201,10 @@ class FakeIdempotencyRepository implements IdempotencyRepository {
       result = { type: "conflict", record: existing };
     } else if (existing.status === "completed") {
       result = { type: "replay", record: existing };
+    } else if (existing.lockedUntil === undefined || existing.lockedUntil <= record.updatedAt) {
+      const taken = { ...existing, lockedUntil: record.lockedUntil, updatedAt: record.updatedAt };
+      this.records.set(key, structuredClone(taken));
+      result = { type: "acquired", record: taken };
     } else {
       result = { type: "in_progress", record: existing };
     }
@@ -260,7 +266,7 @@ class FakeSink implements ApprovalDecisionSink {
   }
 }
 
-function createHarness() {
+function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
   const readRepository = new FakeReadRepository();
   const commandRepository = new FakeCommandRepository();
   let commandSequence = 0;
@@ -313,6 +319,12 @@ function createHarness() {
     },
     idempotencyRepository,
     clock,
+    ...(options.rateLimitPolicy
+      ? {
+          rateLimiter: new InMemoryFixedWindowRateLimiter(),
+          approvalDecisionRateLimitPolicy: options.rateLimitPolicy,
+        }
+      : {}),
   });
   return {
     api,
@@ -410,15 +422,15 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     expect(harness.createCalls()).toBe(1);
   });
 
-  it("AC-M6-006: 5xxもcomplete記録し、同key retryをin_progressで詰まらせない", async () => {
-    const harness = createHarness();
+  function statusSequenceApi(statuses: number[], harness: ReturnType<typeof createHarness>) {
     let calls = 0;
-    const failing = createPublicHttpApi({
+    const api = createPublicHttpApi({
       actionRequestApi: {
         async fetch() {
+          const status = statuses[Math.min(calls, statuses.length - 1)] ?? 201;
           calls += 1;
-          return new Response(JSON.stringify({ error: "boom" }), {
-            status: 503,
+          return new Response(JSON.stringify({ attempt: calls, status }), {
+            status,
             headers: { "content-type": "application/json" },
           });
         },
@@ -436,29 +448,131 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
       idempotencyRepository: harness.idempotencyRepository,
       clock: { now: () => "2026-09-19T00:00:00.000Z" },
     });
-    const path = "/v1/organizations/org%3Am6/action-requests";
-    const init = {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": "create-5xx",
-      },
-      body: JSON.stringify({
-        action: {
-          type: "ticket.priority.change",
-          resource: { type: "ticket", id: "TICKET-1" },
-          input: { priority: "normal" },
-        },
-      }),
-    } satisfies RequestInit;
+    return { api, calls: () => calls };
+  }
 
-    const first = await failing.fetch(request(path, init));
-    const second = await failing.fetch(request(path, init));
+  const createInit = (
+    body: string = JSON.stringify({ action: { type: "ticket.priority.change" } }),
+  ) =>
+    ({
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "create-retry" },
+      body,
+    }) satisfies RequestInit;
+  const createPath = "/v1/organizations/org%3Am6/action-requests";
+
+  it("#92: Decision replayはrate limitを消費しない", async () => {
+    const harness = createHarness({ rateLimitPolicy: { limit: 1, windowSeconds: 60 } });
+    const decide = (key: string) =>
+      harness.api.fetch(
+        request(
+          `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}/decisions`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json", "idempotency-key": key },
+            body: JSON.stringify({ decision: "approve" }),
+          },
+        ),
+      );
+
+    const first = await decide("decision-rate-1");
+    const replay = await decide("decision-rate-1");
+    const limited = await decide("decision-rate-2");
+    const retriedAfterLimit = await decide("decision-rate-2");
+
+    expect(first.status).toBe(202);
+    expect(replay.status).toBe(202);
+    expect(limited.status).toBe(429);
+    // 429は記録しないので、同じkeyは(window内なら再び)rate limitで判定される。
+    expect(retriedAfterLimit.status).toBe(429);
+    expect(harness.commandRepository.records.size).toBe(1);
+  });
+
+  it("#92: retriableな503は記録せずreleaseし、同keyのretryで処理を再実行する", async () => {
+    const harness = createHarness();
+    const failing = statusSequenceApi([503, 201], harness);
+
+    const first = await failing.api.fetch(request(createPath, createInit()));
+    const second = await failing.api.fetch(request(createPath, createInit()));
+    const replay = await failing.api.fetch(request(createPath, createInit()));
 
     expect(first.status).toBe(503);
-    expect(second.status).toBe(503);
-    await expect(second.json()).resolves.toEqual({ error: "boom" });
-    expect(calls).toBe(1);
+    expect(second.status).toBe(201);
+    expect(replay.status).toBe(201);
+    await expect(replay.json()).resolves.toEqual({ attempt: 2, status: 201 });
+    expect(failing.calls()).toBe(2);
+  });
+
+  it("#92: 確定した500はcompletedとして記録し同じ応答を再生する", async () => {
+    const harness = createHarness();
+    const failing = statusSequenceApi([500, 201], harness);
+
+    const first = await failing.api.fetch(request(createPath, createInit()));
+    const second = await failing.api.fetch(request(createPath, createInit()));
+
+    expect(first.status).toBe(500);
+    expect(second.status).toBe(500);
+    await expect(second.json()).resolves.toEqual({ attempt: 1, status: 500 });
+    expect(failing.calls()).toBe(1);
+  });
+
+  it("#92: pending予約はlease中は409 + Retry-After、期限切れなら同じkeyで再取得できる", async () => {
+    const harness = createHarness();
+    const api = statusSequenceApi([201], harness);
+    const hashProbe = await api.api.fetch(
+      request(createPath, {
+        ...createInit(),
+        headers: { "content-type": "application/json", "idempotency-key": "probe" },
+      }),
+    );
+    expect(hashProbe.status).toBe(201);
+    const probe = [...harness.idempotencyRepository.records.values()][0];
+    assert(probe);
+    // reserve後にcrashしたisolateのpending予約を模擬する。
+    harness.idempotencyRepository.records.set(
+      `${String(probe.organizationId)}|${probe.operation}|create-retry`,
+      {
+        ...probe,
+        key: "create-retry",
+        status: "pending",
+        lockedUntil: "2026-09-19T00:00:30.000Z",
+        responseStatus: undefined,
+        responseBody: undefined,
+      },
+    );
+
+    const locked = await api.api.fetch(request(createPath, createInit()));
+    expect(locked.status).toBe(409);
+    expect(locked.headers.get("retry-after")).toBe("30");
+    await expect(locked.json()).resolves.toMatchObject({ code: "idempotency_request_in_progress" });
+
+    const expired = createPublicHttpApi({
+      actionRequestApi: {
+        fetch: () => Promise.resolve(Response.json({ ok: true }, { status: 201 })),
+      },
+      readRepository: harness.readRepository,
+      decisionService: harness.decisionService,
+      identityProvider: {
+        resolveSubject: () => Promise.resolve(Result.succeed(String(alice))),
+        resolveUser: () => Promise.resolve(Result.succeed(alice)),
+      },
+      idempotencyRepository: harness.idempotencyRepository,
+      clock: { now: () => "2026-09-19T00:01:00.000Z" },
+    });
+    const reacquired = await expired.fetch(request(createPath, createInit()));
+    expect(reacquired.status).toBe(201);
+  });
+
+  it("#92: JSONとして読めないbodyもpayloadごとに区別してhashする", async () => {
+    const harness = createHarness();
+    const api = statusSequenceApi([400], harness);
+
+    const first = await api.api.fetch(request(createPath, createInit("not-json-a")));
+    const second = await api.api.fetch(request(createPath, createInit("not-json-b")));
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(409);
+    await expect(second.json()).resolves.toMatchObject({ code: "idempotency_key_reused" });
   });
 
   it("AC-M6-006: 同一key + 異なるpayloadは409にする", async () => {
