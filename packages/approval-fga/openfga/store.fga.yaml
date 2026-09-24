@@ -1,0 +1,71 @@
+name: ultra-easy
+model_file: ./model.fga
+tests:
+  - name: ticket relations (M3/M8 regression)
+    tuples:
+      - user: user:alice
+        relation: can_execute
+        object: ticket:organization%3Astaging/t-1
+      - user: user:bob
+        relation: can_approve
+        object: ticket:organization%3Astaging/t-1
+    check:
+      - user: user:alice
+        object: ticket:organization%3Astaging/t-1
+        assertions:
+          can_execute: true
+          can_approve: false
+      - user: user:bob
+        object: ticket:organization%3Astaging/t-1
+        assertions:
+          can_execute: false
+          can_approve: true
+      - user: user:alice
+        object: ticket:organization%3Aother/t-1
+        assertions:
+          can_execute: false
+    list_users:
+      - object: ticket:organization%3Astaging/t-1
+        user_filter:
+          - type: user
+        assertions:
+          can_approve:
+            users:
+              - user:bob
+          can_execute:
+            users:
+              - user:alice
+
+  - name: authorization_admin viewer/editor semantics
+    tuples:
+      - user: user:viewer
+        relation: viewer
+        object: authorization_admin:organization%3Astaging/root
+      - user: user:editor
+        relation: editor
+        object: authorization_admin:organization%3Astaging/root
+    check:
+      - user: user:viewer
+        object: authorization_admin:organization%3Astaging/root
+        assertions:
+          viewer: true
+          editor: false
+      - user: user:editor
+        object: authorization_admin:organization%3Astaging/root
+        assertions:
+          viewer: true
+          editor: true
+      - user: user:nobody
+        object: authorization_admin:organization%3Astaging/root
+        assertions:
+          viewer: false
+          editor: false
+      - user: user:editor
+        object: authorization_admin:organization%3Aother/root
+        assertions:
+          viewer: false
+          editor: false
+      - user: user:viewer
+        object: ticket:organization%3Astaging/t-1
+        assertions:
+          can_execute: false

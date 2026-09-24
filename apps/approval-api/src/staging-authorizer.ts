@@ -1,13 +1,20 @@
 import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import type { ActionRequestId, ActionType, OrganizationId, RelationName } from "@app/approval-core";
+import type {
+  ActionRequest,
+  ActionRequestId,
+  OrganizationId,
+  RelationName,
+} from "@app/approval-core";
 import {
   ClientCredentialsTokenProvider,
   OpenFgaActionAuthorizer,
   OpenFgaClient,
 } from "@app/approval-fga";
 import { ConsoleTelemetrySink } from "@app/approval-core";
+
+import { stagingActionRelation } from "./action-relations.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -47,12 +54,28 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
     const actionType = typeof action?.type === "string" ? action.type : null;
     const principal = isRecord(authority?.principal) ? authority.principal : null;
     const evaluatedAt = typeof body.evaluatedAt === "string" ? body.evaluatedAt : null;
-    if (!actionType || !principal || !evaluatedAt) {
+    if (!actionType || !principal || !evaluatedAt || !isRecord(action?.resource)) {
       return errorBody(
         "invalid_staging_authorization_request",
-        "action.type / authority.principal / evaluatedAtが必要です",
+        "action.type / action.resource / authority.principal / evaluatedAtが必要です",
         false,
         400,
+      );
+    }
+
+    const relation: RelationName | null = stagingActionRelation(
+      (body.request as unknown as ActionRequest).action,
+    );
+    if (!relation) {
+      // Unmapped action (or a governed action on an unexpected resource): deny
+      // without calling the provider. Approval can never turn this into allow.
+      return Response.json(
+        {
+          type: "deny",
+          code: "action_relation_unmapped",
+          reason: `Action typeに対応するrelationがありません: ${actionType}`,
+        },
+        { status: 200 },
       );
     }
 
@@ -91,11 +114,7 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
             }
           : {}),
       }),
-      (type: ActionType): RelationName =>
-        // staging modelはticket系のみ。未知typeは存在しないrelationへ落としてfail closed.
-        type === "ticket.update"
-          ? ("can_execute" as RelationName)
-          : (`undefined_relation:${String(type)}` as RelationName),
+      () => relation,
     );
     const checked = await authorizer.check({
       request: body.request as Parameters<OpenFgaActionAuthorizer["check"]>[0]["request"],

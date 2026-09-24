@@ -147,10 +147,38 @@ export function tenantScopedOpenFgaObject(organizationId: OrganizationId, object
   )}`;
 }
 
+type OpenFgaObservedOperation = "check" | "list_users" | "read" | "write";
+
+const OBSERVATION_METRIC = {
+  check: "fga.check_latency_ms",
+  list_users: "fga.list_users_latency_ms",
+  read: "fga.read_latency_ms",
+  write: "fga.write_latency_ms",
+} as const;
+
+/**
+ * How a failed provider call relates to its side effect.
+ * - `not_sent`: the request never reached the provider (token/serialization).
+ * - `rejected`: the provider answered and did not apply it (429 / 4xx).
+ * - `ambiguous`: the effect may or may not have been applied (network loss,
+ *   timeout, 5xx). Mutations must not assume "not applied" in this case.
+ */
+export type OpenFgaFailureEffect = "not_sent" | "rejected" | "ambiguous";
+
+export function openFgaFailureEffect(error: OpenFgaRequestError): OpenFgaFailureEffect {
+  if (error.code === "network_error") return "ambiguous";
+  if (error.code === "http_error") {
+    const status = error.status ?? 0;
+    return status >= 500 || status === 408 ? "ambiguous" : "rejected";
+  }
+  if (error.code === "invalid_json_response") return "ambiguous";
+  return "not_sent";
+}
+
 export class OpenFgaClient {
   readonly authorizationModelId: string;
+  readonly storeId: string;
   private readonly apiUrl: string;
-  private readonly storeId: string;
   private readonly organizationId: OrganizationId;
   private readonly token?: string;
   private readonly tokenSupplier?: FgaAccessTokenSupplier;
@@ -172,21 +200,38 @@ export class OpenFgaClient {
     this.telemetry = options.telemetry;
   }
 
+  /** Non-secret provider summary (API host, store, model) for admin display. */
+  get providerSummary(): { apiHost: string; storeId: string; authorizationModelId: string } {
+    return {
+      apiHost: new URL(this.apiUrl).host,
+      storeId: this.storeId,
+      authorizationModelId: this.authorizationModelId,
+    };
+  }
+
+  /** Logical `type:id` → tenant-scoped provider object for this client's organization. */
+  providerObject(logicalObject: string): string {
+    return tenantScopedOpenFgaObject(this.organizationId, logicalObject);
+  }
+
   private emitObservation(
-    operation: "check" | "list_users",
+    operation: OpenFgaObservedOperation,
     startedAt: number,
     errorCode?: string,
   ): void {
-    if (!this.telemetry || !this.actionRequestId) return;
+    if (!this.telemetry) return;
+    // check/list_users keep the M8 contract: only correlated (re-auth) calls emit.
+    // Admin reads and relationship writes emit under a synthetic correlation.
+    if (!this.actionRequestId && (operation === "check" || operation === "list_users")) return;
     const correlation = actionCorrelation({
       organizationId: this.organizationId,
-      actionRequestId: this.actionRequestId,
+      actionRequestId: this.actionRequestId ?? ("action:authorization-admin" as ActionRequestId),
       component: "fga",
       operation,
     });
     this.telemetry.emit(
       metricRecord({
-        name: operation === "check" ? "fga.check_latency_ms" : "fga.list_users_latency_ms",
+        name: OBSERVATION_METRIC[operation],
         value: Math.max(0, Date.now() - startedAt),
         unit: "milliseconds",
         correlation,
@@ -274,6 +319,117 @@ export class OpenFgaClient {
       );
     }
     return Result.succeed(parsed.value as Record<string, unknown>);
+  }
+
+  private async getJsonObject(
+    path: string,
+  ): Result.ResultAsync<Record<string, unknown>, OpenFgaRequestError> {
+    const token = await this.resolveToken();
+    if (Result.isFailure(token)) return token;
+    const response = await fetchRequest({
+      fetch: this.fetchImplementation,
+      url: `${this.apiUrl}${path}`,
+      init: {
+        method: "GET",
+        headers: token.value ? { authorization: `Bearer ${token.value}` } : {},
+      },
+    });
+    if (Result.isFailure(response)) return response;
+    if (!response.value.ok) {
+      return Result.fail(
+        new OpenFgaRequestError({
+          code: "http_error",
+          detail: `HTTP ${response.value.status}`,
+          status: response.value.status,
+          retriable: response.value.status === 429 || response.value.status >= 500,
+        }),
+      );
+    }
+    const parsed = await parseJsonResponse(response.value);
+    if (Result.isFailure(parsed)) return parsed;
+    if (typeof parsed.value !== "object" || parsed.value === null || Array.isArray(parsed.value)) {
+      return Result.fail(
+        new OpenFgaRequestError({
+          code: "invalid_json_response",
+          detail: "OpenFGA responseがJSON objectではありません",
+          retriable: false,
+        }),
+      );
+    }
+    return Result.succeed(parsed.value as Record<string, unknown>);
+  }
+
+  /**
+   * Exact tuple read (user + relation + logical object). Used to observe the
+   * provider effect of a relationship mutation; it never scans the store.
+   * Returns whether the tenant-scoped tuple is present.
+   */
+  async readTuple(input: {
+    tuple: OpenFgaTupleKey;
+    consistency: AuthorizationConsistency;
+  }): Result.ResultAsync<boolean, OpenFgaRequestError> {
+    const startedAt = Date.now();
+    const object = this.providerObject(input.tuple.object);
+    const response = await this.postJsonObject(`/stores/${encodeURIComponent(this.storeId)}/read`, {
+      tuple_key: { user: input.tuple.user, relation: input.tuple.relation, object },
+      page_size: 1,
+      consistency: consistencyValue(input.consistency),
+    });
+    if (Result.isFailure(response)) {
+      this.emitObservation("read", startedAt, response.error.code);
+      return response;
+    }
+    const tuples = response.value.tuples;
+    if (!Array.isArray(tuples)) {
+      const error = new OpenFgaRequestError({
+        code: "invalid_read_response",
+        detail: "Read responseにtuples配列がありません",
+        retriable: false,
+      });
+      this.emitObservation("read", startedAt, error.code);
+      return Result.fail(error);
+    }
+    this.emitObservation("read", startedAt);
+    return Result.succeed(
+      tuples.some((entry) => {
+        if (typeof entry !== "object" || entry === null || !("key" in entry)) return false;
+        const key = entry.key as Record<string, unknown> | null;
+        return (
+          key !== null &&
+          key.user === input.tuple.user &&
+          key.relation === input.tuple.relation &&
+          key.object === object
+        );
+      }),
+    );
+  }
+
+  /** Reads the configured (pinned) authorization model. Read-only; no model write exists. */
+  async readAuthorizationModel(): Result.ResultAsync<
+    { id: string; model: Record<string, unknown> },
+    OpenFgaRequestError
+  > {
+    const response = await this.getJsonObject(
+      `/stores/${encodeURIComponent(this.storeId)}/authorization-models/${encodeURIComponent(
+        this.authorizationModelId,
+      )}`,
+    );
+    if (Result.isFailure(response)) return response;
+    const model = response.value.authorization_model;
+    if (typeof model !== "object" || model === null || Array.isArray(model)) {
+      return Result.fail(
+        new OpenFgaRequestError({
+          code: "invalid_model_response",
+          detail: "authorization_modelがありません",
+          retriable: false,
+        }),
+      );
+    }
+    const record = model as Record<string, unknown>;
+    return Result.succeed({
+      id: typeof record.id === "string" ? record.id : this.authorizationModelId,
+      model: record,
+    });
   }
 
   async check(input: {
@@ -396,11 +552,17 @@ export class OpenFgaClient {
       ...tuple,
       object: tenantScopedOpenFgaObject(this.organizationId, tuple.object),
     });
+    const startedAt = Date.now();
     const response = await this.postResponse(`/stores/${encodeURIComponent(this.storeId)}/write`, {
       authorization_model_id: this.authorizationModelId,
       ...(input.writes?.length ? { writes: { tuple_keys: input.writes.map(scope) } } : {}),
       ...(input.deletes?.length ? { deletes: { tuple_keys: input.deletes.map(scope) } } : {}),
     });
+    this.emitObservation(
+      "write",
+      startedAt,
+      Result.isFailure(response) ? response.error.code : undefined,
+    );
     return Result.isFailure(response) ? response : Result.succeed(undefined);
   }
 }

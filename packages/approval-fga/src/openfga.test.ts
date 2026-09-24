@@ -17,6 +17,8 @@ import {
   OpenFgaApproverResolver,
   OpenFgaClient,
   OpenFgaOrganizationProjector,
+  OpenFgaRequestError,
+  openFgaFailureEffect,
 } from "./openfga.ts";
 
 function branded<T extends string>(value: string): T {
@@ -321,5 +323,140 @@ describe("OpenFGA adapters", () => {
         }),
       ]),
     );
+  });
+
+  it("readTupleはtenant-scoped exact tupleをReadし、他tenantの同名tupleを存在扱いしない", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const telemetry = new MemoryTelemetrySink();
+    const client = new OpenFgaClient({
+      apiUrl: "https://fga.example",
+      storeId: "store-1",
+      authorizationModelId: "model-1",
+      organizationId,
+      telemetry,
+      fetch: responseFetch(
+        {
+          tuples: [
+            {
+              key: {
+                user: "user:alice",
+                relation: "can_execute",
+                object: "ticket:organization%3Atenant-b/T-1",
+              },
+            },
+          ],
+        },
+        requests,
+      ),
+    });
+    const tuple = { user: "user:alice", relation: "can_execute", object: "ticket:T-1" };
+    const read = await client.readTuple({ tuple, consistency: "higher_consistency" });
+    assert(Result.isSuccess(read));
+    expect(read.value).toBe(false);
+    expect(requests[0]?.url).toBe("https://fga.example/stores/store-1/read");
+    expect(requestBody(requests)).toEqual({
+      tuple_key: {
+        user: "user:alice",
+        relation: "can_execute",
+        object: "ticket:organization%3Atenant-a/T-1",
+      },
+      page_size: 1,
+      consistency: "HIGHER_CONSISTENCY",
+    });
+    expect(telemetry.records).toEqual([
+      expect.objectContaining({ kind: "metric", name: "fga.read_latency_ms" }),
+    ]);
+
+    const present = new OpenFgaClient({
+      apiUrl: "https://fga.example",
+      storeId: "store-1",
+      authorizationModelId: "model-1",
+      organizationId,
+      fetch: responseFetch(
+        {
+          tuples: [
+            {
+              key: {
+                user: "user:alice",
+                relation: "can_execute",
+                object: "ticket:organization%3Atenant-a/T-1",
+              },
+            },
+          ],
+        },
+        [],
+      ),
+    });
+    const found = await present.readTuple({ tuple, consistency: "minimize_latency" });
+    assert(Result.isSuccess(found));
+    expect(found.value).toBe(true);
+  });
+
+  it("readAuthorizationModelは固定model IDをGETし、providerSummaryはsecretを含まない", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const client = new OpenFgaClient({
+      apiUrl: "https://fga.example/",
+      storeId: "store-1",
+      authorizationModelId: "model-1",
+      organizationId,
+      token: "secret-token",
+      fetch: responseFetch(
+        { authorization_model: { id: "model-1", schema_version: "1.1", type_definitions: [] } },
+        requests,
+      ),
+    });
+    const model = await client.readAuthorizationModel();
+    assert(Result.isSuccess(model));
+    expect(model.value.id).toBe("model-1");
+    expect(requests[0]?.url).toBe(
+      "https://fga.example/stores/store-1/authorization-models/model-1",
+    );
+    expect(requests[0]?.init?.method).toBe("GET");
+    expect(client.providerSummary).toEqual({
+      apiHost: "fga.example",
+      storeId: "store-1",
+      authorizationModelId: "model-1",
+    });
+    expect(JSON.stringify(client.providerSummary)).not.toContain("secret-token");
+    expect(client.providerObject("authorization_admin:root")).toBe(
+      "authorization_admin:organization%3Atenant-a/root",
+    );
+  });
+
+  it("provider失敗をnot_sent / rejected / ambiguousへ分類する", () => {
+    const error = (code: string, status?: number) =>
+      new OpenFgaRequestError({
+        code,
+        detail: code,
+        retriable: true,
+        ...(status === undefined ? {} : { status }),
+      });
+    expect(openFgaFailureEffect(error("network_error"))).toBe("ambiguous");
+    expect(openFgaFailureEffect(error("http_error", 503))).toBe("ambiguous");
+    expect(openFgaFailureEffect(error("http_error", 429))).toBe("rejected");
+    expect(openFgaFailureEffect(error("http_error", 400))).toBe("rejected");
+    expect(openFgaFailureEffect(error("fga_token_exchange_failed"))).toBe("not_sent");
+  });
+
+  it("writeTuplesはwrite latency / errorをemitする", async () => {
+    const telemetry = new MemoryTelemetrySink();
+    const client = new OpenFgaClient({
+      apiUrl: "https://fga.example",
+      storeId: "store-1",
+      authorizationModelId: "model-1",
+      organizationId,
+      actionRequestId: telemetryActionRequestId,
+      telemetry,
+      fetch: async () => new Response("bad", { status: 400 }),
+    });
+    const written = await client.writeTuples({
+      writes: [{ user: "user:alice", relation: "can_execute", object: "ticket:T-1" }],
+    });
+    assert(Result.isFailure(written));
+    expect(openFgaFailureEffect(written.error)).toBe("rejected");
+    expect(telemetry.records.map((record) => record.kind === "metric" && record.name)).toEqual([
+      "fga.write_latency_ms",
+      "fga.error_total",
+    ]);
   });
 });

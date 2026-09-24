@@ -22,6 +22,7 @@ tags:
 - name: ApprovalPolicies
 - name: ApprovalPolicyBindings
 - name: Delegations
+- name: AuthorizationAdmin
 paths:
   /v1/organizations/{organizationId}/action-requests:
     $ref: ./paths/paths-01.yaml#/~1v1~1organizations~1{organizationId}~1action-requests
@@ -73,6 +74,20 @@ paths:
     $ref: ./paths/paths-08.yaml#/~1v1~1organizations~1{organizationId}~1delegations
   /v1/organizations/{organizationId}/delegations/{delegationId}/revoke:
     $ref: ./paths/paths-09.yaml#/~1v1~1organizations~1{organizationId}~1delegations~1{delegationId}~1revoke
+  /v1/admin/authorization/session:
+    $ref: ./paths/paths-10.yaml#/~1v1~1admin~1authorization~1session
+  /v1/admin/authorization/explain:
+    $ref: ./paths/paths-10.yaml#/~1v1~1admin~1authorization~1explain
+  /v1/admin/authorization/catalog:
+    $ref: ./paths/paths-10.yaml#/~1v1~1admin~1authorization~1catalog
+  /v1/admin/authorization/relationships:
+    $ref: ./paths/paths-10.yaml#/~1v1~1admin~1authorization~1relationships
+  /v1/admin/authorization/relationships/{tupleKey}:
+    $ref: ./paths/paths-10.yaml#/~1v1~1admin~1authorization~1relationships~1{tupleKey}
+  /v1/admin/authorization/model:
+    $ref: ./paths/paths-10.yaml#/~1v1~1admin~1authorization~1model
+  /v1/admin/authorization/audit:
+    $ref: ./paths/paths-10.yaml#/~1v1~1admin~1authorization~1audit
 components:
   securitySchemes:
     bearerAuth:

@@ -4,6 +4,8 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } 
 import type { OrganizationId, UserId } from "@app/approval-core";
 import {
   HttpTrustedContextError,
+  type AuthorizationAdminCaller,
+  type AuthorizationAdminCallerResolver,
   type PublicHttpIdentityProvider,
 } from "@app/approval-application";
 
@@ -35,7 +37,9 @@ function contextError(
  * `sub` をUserIdへ写像し、URLのorganizationIdが設定組織と一致する場合のみ通す
  * （stagingは単一組織前提。複数組織はAUTH0 org mapping拡張時に追加する）。
  */
-export class Auth0IdentityProvider implements PublicHttpIdentityProvider {
+export class Auth0IdentityProvider
+  implements PublicHttpIdentityProvider, AuthorizationAdminCallerResolver
+{
   private readonly resolveKey: KeyResolver;
   private readonly issuer: string;
 
@@ -51,7 +55,7 @@ export class Auth0IdentityProvider implements PublicHttpIdentityProvider {
   private async verify(
     request: Request,
     organizationId: OrganizationId,
-  ): Result.ResultAsync<{ userId: UserId }, HttpTrustedContextError> {
+  ): Result.ResultAsync<{ userId: UserId; payload: JWTPayload }, HttpTrustedContextError> {
     if (String(organizationId) !== String(this.config.organizationId)) {
       return contextError(
         403,
@@ -76,7 +80,31 @@ export class Auth0IdentityProvider implements PublicHttpIdentityProvider {
     if (typeof payload.sub !== "string" || payload.sub.length === 0) {
       return contextError(401, "bearer_token_missing_sub", "tokenにsubがありません");
     }
-    return Result.succeed({ userId: `user:${payload.sub}` as UserId });
+    return Result.succeed({ userId: `user:${payload.sub}` as UserId, payload });
+  }
+
+  /**
+   * Admin console caller. The organization is this deployment's configured
+   * organization (never taken from the request). Machine (client-credentials)
+   * tokens are rejected: console administration requires a human user.
+   */
+  async resolve(
+    request: Request,
+  ): Result.ResultAsync<AuthorizationAdminCaller, HttpTrustedContextError> {
+    const verified = await this.verify(request, this.config.organizationId);
+    if (Result.isFailure(verified)) return verified;
+    const { payload } = verified.value;
+    if (payload.gty === "client-credentials" || String(payload.sub).endsWith("@clients")) {
+      return contextError(
+        403,
+        "machine_principal_not_allowed",
+        "管理Consoleはuser principalのみ利用できます",
+      );
+    }
+    return Result.succeed({
+      organizationId: this.config.organizationId,
+      principal: { type: "user", id: verified.value.userId },
+    });
   }
 
   async resolveSubject(input: {

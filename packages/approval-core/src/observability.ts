@@ -76,6 +76,8 @@ export type SliMetricName =
   | "approval.expired_total"
   | "fga.check_latency_ms"
   | "fga.list_users_latency_ms"
+  | "fga.read_latency_ms"
+  | "fga.write_latency_ms"
   | "fga.error_total"
   | "workflow.retry_total"
   | "workflow.failure_total"

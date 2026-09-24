@@ -1,0 +1,24 @@
+model
+  schema 1.1
+
+# Source of truth for the ultra-easy OpenFGA authorization model.
+# Changes go through PR -> CI (`fga model test`) -> publish (docs/runbooks/authorization-console.md).
+# The console never writes models. Changes stay additive-only: existing
+# relations are never removed or narrowed in place.
+#
+# Objects are tenant-scoped by the runtime (`tenantScopedOpenFgaObject`):
+# ticket:<org>/<id>, authorization_admin:<org>/root.
+
+type user
+
+type ticket
+  relations
+    define can_execute: [user]
+    define can_approve: [user]
+
+# Tenant-scoped console administration (M9). Membership is bootstrap-only
+# (IaC / version-controlled), never mutated through the console.
+type authorization_admin
+  relations
+    define editor: [user]
+    define viewer: [user] or editor

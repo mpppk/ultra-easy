@@ -503,3 +503,29 @@ export class D1PublishedPolicyBindingResolver implements VersionedPolicyBindingR
     return Result.succeed(result);
   }
 }
+
+/** Latest published version of every Action Definition in an organization (Explorer catalog). */
+export async function listPublishedActionDefinitions(
+  db: D1DatabaseLike,
+  organizationId: OrganizationId,
+): Result.ResultAsync<ActionDefinition[], GovernancePersistenceError> {
+  const rows = await all<ActionDefinitionRow>(
+    db
+      .prepare(
+        `SELECT definition_json
+           FROM published_action_definitions AS current
+          WHERE organization_id = ?
+            AND version = (
+              SELECT MAX(version) FROM published_action_definitions AS latest
+               WHERE latest.organization_id = current.organization_id
+                 AND latest.action_type = current.action_type
+            )
+          ORDER BY action_type`,
+      )
+      .bind(organizationId),
+  );
+  if (Result.isFailure(rows)) return rows;
+  return Result.succeed(
+    rows.value.map((row) => JSON.parse(row.definition_json) as ActionDefinition),
+  );
+}
