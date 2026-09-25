@@ -25,8 +25,12 @@ import { Route as ApiAuthLoginRouteImport } from './routes/api.auth.login'
 import { Route as ApiAuthLogoutRouteImport } from './routes/api.auth.logout'
 import { Route as ApiPreviewApprovalRunsRouteImport } from './routes/api.preview.approval-runs'
 import { Route as ApiPreviewOperatorDashboardRouteImport } from './routes/api.preview.operator-dashboard'
+import { Route as PreviewWorkflowRunsRunIdRouteImport } from './routes/preview.workflow-runs.$runId'
+import { Route as PreviewWorkflowsIndexRouteImport } from './routes/preview.workflows.index'
+import { Route as PreviewWorkflowsIdRouteImport } from './routes/preview.workflows.$id'
 import { Route as ApiAdminAuthorizationSplatRouteImport } from './routes/api.admin.authorization.$'
 import { Route as ApiPreviewApprovalRunsIdRouteImport } from './routes/api.preview.approval-runs.$id'
+import { Route as ApiPreviewWorkflowSplatRouteImport } from './routes/api.preview.workflow.$'
 import { Route as ApiPreviewApprovalRunsIdDecisionsRouteImport } from './routes/api.preview.approval-runs.$id.decisions'
 import { Route as ApiPreviewApprovalRunsIdForceCancelRouteImport } from './routes/api.preview.approval-runs.$id.force-cancel'
 
@@ -114,6 +118,22 @@ const ApiPreviewOperatorDashboardRoute =
     path: '/api/preview/operator-dashboard',
     getParentRoute: () => rootRouteImport,
   } as any)
+const PreviewWorkflowRunsRunIdRoute =
+  PreviewWorkflowRunsRunIdRouteImport.update({
+    id: '/preview/workflow-runs/$runId',
+    path: '/preview/workflow-runs/$runId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const PreviewWorkflowsIndexRoute = PreviewWorkflowsIndexRouteImport.update({
+  id: '/preview/workflows/',
+  path: '/preview/workflows/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PreviewWorkflowsIdRoute = PreviewWorkflowsIdRouteImport.update({
+  id: '/preview/workflows/$id',
+  path: '/preview/workflows/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAdminAuthorizationSplatRoute =
   ApiAdminAuthorizationSplatRouteImport.update({
     id: '/api/admin/authorization/$',
@@ -126,6 +146,11 @@ const ApiPreviewApprovalRunsIdRoute =
     path: '/$id',
     getParentRoute: () => ApiPreviewApprovalRunsRoute,
   } as any)
+const ApiPreviewWorkflowSplatRoute = ApiPreviewWorkflowSplatRouteImport.update({
+  id: '/api/preview/workflow/$',
+  path: '/api/preview/workflow/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPreviewApprovalRunsIdDecisionsRoute =
   ApiPreviewApprovalRunsIdDecisionsRouteImport.update({
     id: '/decisions',
@@ -155,9 +180,13 @@ export interface FileRoutesByFullPath {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
+  '/preview/workflow-runs/$runId': typeof PreviewWorkflowRunsRunIdRoute
+  '/preview/workflows/$id': typeof PreviewWorkflowsIdRoute
   '/admin/authorization/': typeof AdminAuthorizationIndexRoute
+  '/preview/workflows/': typeof PreviewWorkflowsIndexRoute
   '/api/admin/authorization/$': typeof ApiAdminAuthorizationSplatRoute
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
+  '/api/preview/workflow/$': typeof ApiPreviewWorkflowSplatRoute
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
   '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
 }
@@ -176,9 +205,13 @@ export interface FileRoutesByTo {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
+  '/preview/workflow-runs/$runId': typeof PreviewWorkflowRunsRunIdRoute
+  '/preview/workflows/$id': typeof PreviewWorkflowsIdRoute
   '/admin/authorization': typeof AdminAuthorizationIndexRoute
+  '/preview/workflows': typeof PreviewWorkflowsIndexRoute
   '/api/admin/authorization/$': typeof ApiAdminAuthorizationSplatRoute
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
+  '/api/preview/workflow/$': typeof ApiPreviewWorkflowSplatRoute
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
   '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
 }
@@ -199,9 +232,13 @@ export interface FileRoutesById {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
+  '/preview/workflow-runs/$runId': typeof PreviewWorkflowRunsRunIdRoute
+  '/preview/workflows/$id': typeof PreviewWorkflowsIdRoute
   '/admin/authorization/': typeof AdminAuthorizationIndexRoute
+  '/preview/workflows/': typeof PreviewWorkflowsIndexRoute
   '/api/admin/authorization/$': typeof ApiAdminAuthorizationSplatRoute
   '/api/preview/approval-runs/$id': typeof ApiPreviewApprovalRunsIdRouteWithChildren
+  '/api/preview/workflow/$': typeof ApiPreviewWorkflowSplatRoute
   '/api/preview/approval-runs/$id/decisions': typeof ApiPreviewApprovalRunsIdDecisionsRoute
   '/api/preview/approval-runs/$id/force-cancel': typeof ApiPreviewApprovalRunsIdForceCancelRoute
 }
@@ -223,9 +260,13 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/preview/approval-runs'
     | '/api/preview/operator-dashboard'
+    | '/preview/workflow-runs/$runId'
+    | '/preview/workflows/$id'
     | '/admin/authorization/'
+    | '/preview/workflows/'
     | '/api/admin/authorization/$'
     | '/api/preview/approval-runs/$id'
+    | '/api/preview/workflow/$'
     | '/api/preview/approval-runs/$id/decisions'
     | '/api/preview/approval-runs/$id/force-cancel'
   fileRoutesByTo: FileRoutesByTo
@@ -244,9 +285,13 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/preview/approval-runs'
     | '/api/preview/operator-dashboard'
+    | '/preview/workflow-runs/$runId'
+    | '/preview/workflows/$id'
     | '/admin/authorization'
+    | '/preview/workflows'
     | '/api/admin/authorization/$'
     | '/api/preview/approval-runs/$id'
+    | '/api/preview/workflow/$'
     | '/api/preview/approval-runs/$id/decisions'
     | '/api/preview/approval-runs/$id/force-cancel'
   id:
@@ -266,9 +311,13 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/preview/approval-runs'
     | '/api/preview/operator-dashboard'
+    | '/preview/workflow-runs/$runId'
+    | '/preview/workflows/$id'
     | '/admin/authorization/'
+    | '/preview/workflows/'
     | '/api/admin/authorization/$'
     | '/api/preview/approval-runs/$id'
+    | '/api/preview/workflow/$'
     | '/api/preview/approval-runs/$id/decisions'
     | '/api/preview/approval-runs/$id/force-cancel'
   fileRoutesById: FileRoutesById
@@ -284,7 +333,11 @@ export interface RootRouteChildren {
   ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
   ApiPreviewApprovalRunsRoute: typeof ApiPreviewApprovalRunsRouteWithChildren
   ApiPreviewOperatorDashboardRoute: typeof ApiPreviewOperatorDashboardRoute
+  PreviewWorkflowRunsRunIdRoute: typeof PreviewWorkflowRunsRunIdRoute
+  PreviewWorkflowsIdRoute: typeof PreviewWorkflowsIdRoute
+  PreviewWorkflowsIndexRoute: typeof PreviewWorkflowsIndexRoute
   ApiAdminAuthorizationSplatRoute: typeof ApiAdminAuthorizationSplatRoute
+  ApiPreviewWorkflowSplatRoute: typeof ApiPreviewWorkflowSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -401,6 +454,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPreviewOperatorDashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/preview/workflow-runs/$runId': {
+      id: '/preview/workflow-runs/$runId'
+      path: '/preview/workflow-runs/$runId'
+      fullPath: '/preview/workflow-runs/$runId'
+      preLoaderRoute: typeof PreviewWorkflowRunsRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/preview/workflows/': {
+      id: '/preview/workflows/'
+      path: '/preview/workflows'
+      fullPath: '/preview/workflows/'
+      preLoaderRoute: typeof PreviewWorkflowsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/preview/workflows/$id': {
+      id: '/preview/workflows/$id'
+      path: '/preview/workflows/$id'
+      fullPath: '/preview/workflows/$id'
+      preLoaderRoute: typeof PreviewWorkflowsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/admin/authorization/$': {
       id: '/api/admin/authorization/$'
       path: '/api/admin/authorization/$'
@@ -414,6 +488,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/preview/approval-runs/$id'
       preLoaderRoute: typeof ApiPreviewApprovalRunsIdRouteImport
       parentRoute: typeof ApiPreviewApprovalRunsRoute
+    }
+    '/api/preview/workflow/$': {
+      id: '/api/preview/workflow/$'
+      path: '/api/preview/workflow/$'
+      fullPath: '/api/preview/workflow/$'
+      preLoaderRoute: typeof ApiPreviewWorkflowSplatRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/preview/approval-runs/$id/decisions': {
       id: '/api/preview/approval-runs/$id/decisions'
@@ -505,7 +586,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthLogoutRoute: ApiAuthLogoutRoute,
   ApiPreviewApprovalRunsRoute: ApiPreviewApprovalRunsRouteWithChildren,
   ApiPreviewOperatorDashboardRoute: ApiPreviewOperatorDashboardRoute,
+  PreviewWorkflowRunsRunIdRoute: PreviewWorkflowRunsRunIdRoute,
+  PreviewWorkflowsIdRoute: PreviewWorkflowsIdRoute,
+  PreviewWorkflowsIndexRoute: PreviewWorkflowsIndexRoute,
   ApiAdminAuthorizationSplatRoute: ApiAdminAuthorizationSplatRoute,
+  ApiPreviewWorkflowSplatRoute: ApiPreviewWorkflowSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

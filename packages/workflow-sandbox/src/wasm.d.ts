@@ -1,4 +1,4 @@
-declare module "@jitl/quickjs-wasmfile-release-sync/wasm" {
+declare module "*.wasm" {
   const wasmModule: WebAssembly.Module;
   export default wasmModule;
 }

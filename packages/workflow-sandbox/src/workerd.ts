@@ -1,5 +1,7 @@
 import RELEASE_SYNC from "@jitl/quickjs-wasmfile-release-sync";
-import wasmModule from "@jitl/quickjs-wasmfile-release-sync/wasm";
+// package exportsの"./wasm"は拡張子を持たずwranglerのwasm module ruleに一致しないため、
+// 依存packageのwasm fileを直接参照する（wranglerがWebAssembly.Moduleとしてbundleする）。
+import wasmModule from "../node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm";
 import { newQuickJSWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import type { QuickJSWASMModule } from "quickjs-emscripten-core";
 

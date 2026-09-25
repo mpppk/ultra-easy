@@ -3,6 +3,7 @@ export * from "./audit.ts";
 export * from "./definition.ts";
 export * from "./graph.ts";
 export * from "./ids.ts";
+export * from "./parse.ts";
 export * from "./program.ts";
 export * from "./scheduler.ts";
 export * from "./schema-lite.ts";

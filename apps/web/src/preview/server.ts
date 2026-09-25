@@ -100,3 +100,20 @@ export function sendPreviewDecision(input: {
     },
   );
 }
+
+/**
+ * Workflow Studio（#162）のAPIをpreview runtimeへ中継する。path / method / bodyをそのまま渡し、
+ * `/preview/workflow/*` だけに限定する。
+ */
+export async function proxyWorkflowStudio(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const prefix = "/api/preview/workflow/";
+  if (!url.pathname.startsWith(prefix)) return previewNotFound();
+  const path = `/preview/workflow/${url.pathname.slice(prefix.length)}${url.search}`;
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  return runtimeRequest(path, {
+    method: request.method,
+    headers: { "content-type": "application/json" },
+    ...(hasBody ? { body: await request.text() } : {}),
+  });
+}

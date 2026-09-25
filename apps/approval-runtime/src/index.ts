@@ -4,7 +4,6 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { withHttpAccessLog } from "@app/approval-application";
 
 import {
-  ActionExecutorRegistry,
   decodeUriComponent,
   GOVERNANCE_ACTION_DEFINITIONS,
   GOVERNANCE_ACTION_TYPES,
@@ -13,10 +12,6 @@ import {
   parseBrand,
 } from "@app/approval-core";
 import type {
-  ActionExecutionRequest,
-  ActionExecutionResult,
-  ActionExecutor,
-  ActionExecutorError,
   ActionRequestId,
   ApprovalDecisionEvent,
   MaterializedApprovalPlan,
@@ -50,18 +45,23 @@ import {
   type FgaMetricsEnv,
 } from "@app/approval-runtime-cloudflare";
 
+import { createWorkflowRunner, sweepDueWorkflowRuns } from "@app/workflow-runtime-cloudflare";
+
 import { parseForceCancelBody } from "./preview-force-cancel.ts";
-import {
-  createPreviewPlan,
-  isPreviewScenario,
-  PREVIEW_EXECUTOR_KEY,
-  PREVIEW_ORGANIZATION_ID,
-} from "./preview-plan.ts";
+import { handleWorkflowStudio } from "./workflow-studio.ts";
+import { previewWorkflowPlatform, type WorkflowPreviewEnv } from "./workflow-platform.ts";
+import { createPreviewPlan, isPreviewScenario, PREVIEW_ORGANIZATION_ID } from "./preview-plan.ts";
 
 export { ActionWorkflow };
 
+/** Workflow Engine（#157）のCloudflare durable runner。 */
+export const WorkflowRunner = createWorkflowRunner<PreviewRuntimeEnv>(
+  (env) => previewWorkflowPlatform(env).runtime,
+);
+
 type PreviewRuntimeEnv = ActionWorkflowEnv &
-  FgaMetricsEnv & {
+  FgaMetricsEnv &
+  WorkflowPreviewEnv & {
     ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
     NOTIFICATION_QUEUE: NotificationQueueProducer;
     OPERATOR_ALERT_OUTBOX_BACKLOG?: string;
@@ -122,24 +122,6 @@ export class PreviewActionAuthorizer extends WorkerEntrypoint<PreviewRuntimeEnv>
   }
 }
 
-/** Preview専用のside-effect mock。外部副作用を持たないためidempotent。 */
-class PreviewSinkActionExecutor implements ActionExecutor {
-  readonly guaranteeLevel = "idempotent" as const;
-
-  async execute(
-    request: ActionExecutionRequest,
-  ): Result.ResultAsync<ActionExecutionResult, ActionExecutorError> {
-    return Result.succeed({
-      status: "succeeded",
-      output: {
-        preview: true,
-        executorKey: String(request.action.definition.executorKey),
-        idempotencyKey: request.idempotencyKey,
-      },
-    });
-  }
-}
-
 /**
  * Preview専用のAction Executor registry。
  * 本番と同じ`serveActionExecutorRegistry` contract（describe + idempotency / correlation検証）を
@@ -147,10 +129,8 @@ class PreviewSinkActionExecutor implements ActionExecutor {
  */
 export class PreviewActionExecutor extends WorkerEntrypoint<PreviewRuntimeEnv> {
   override async fetch(request: Request): Promise<Response> {
-    return serveActionExecutorRegistry(
-      request,
-      new ActionExecutorRegistry({ [PREVIEW_EXECUTOR_KEY]: new PreviewSinkActionExecutor() }),
-    );
+    // primitive（preview sink）とComposite Action（workflow）を同じregistryで配送する（#158）。
+    return serveActionExecutorRegistry(request, previewWorkflowPlatform(this.env).registry);
   }
 }
 
@@ -453,6 +433,8 @@ function pathParameter(pattern: RegExp, url: URL): ActionRequestId | null | Resp
 }
 
 async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
+  const studio = await handleWorkflowStudio(request, env);
+  if (studio) return studio;
   const url = new URL(request.url);
   if (request.method === "POST" && url.pathname === "/preview/approval-runs") {
     return startRun(request, env);
@@ -485,6 +467,7 @@ async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response
 
 /** access log（#110）の対象route。 */
 const PREVIEW_RUNTIME_ROUTES = [
+  "/preview/workflow/{resource}",
   "/preview/approval-runs",
   "/preview/approval-runs/{actionRequestId}",
   "/preview/approval-runs/{actionRequestId}/decisions",
@@ -536,6 +519,18 @@ export default {
             }),
         },
         retentionScheduledTask(env.DB),
+        {
+          // #157: runner起動に失敗した / handoffしたWorkflowRunをD1のwake_atから進める。
+          name: "sweep_workflow_runs",
+          run: (now) => {
+            const platform = previewWorkflowPlatform(env);
+            return sweepDueWorkflowRuns({
+              runs: platform.repositories.runs,
+              runtime: platform.runtime,
+              now,
+            });
+          },
+        },
       ],
     });
   },
