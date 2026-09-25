@@ -141,6 +141,12 @@ function createRepository() {
       "utf8",
     ),
   );
+  sqlite.exec(
+    readFileSync(
+      new URL("../migrations/0018_approval_task_candidates.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const database = new SqliteD1Database(sqlite);
   return { repository: new D1ApprovalRuntimeProjectionRepository(database), sqlite };
 }

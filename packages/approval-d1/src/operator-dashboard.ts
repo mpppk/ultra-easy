@@ -2,8 +2,6 @@ import { Result } from "@praha/byethrow";
 
 import {
   computeOrganizationActionSli,
-  type ActionEventRecord,
-  type ActionRequestId,
   type OrganizationActionSli,
   type OrganizationId,
 } from "@app/approval-core";
@@ -42,44 +40,35 @@ export type OperatorDashboardSnapshot = {
   outbox: NotificationOutboxHealth & { backlog: number };
 };
 
-async function listOrganizationActionIds(
-  db: D1DatabaseLike,
-  input: { organizationId: OrganizationId; limit: number },
-): Result.ResultAsync<ActionRequestId[], D1OperatorDashboardError> {
-  const rows = await allUnknownRows(
-    db
-      .prepare(
-        `SELECT action_request_id AS actionRequestId, MAX(sequence) AS maxSequence
-           FROM action_events
-          WHERE organization_id = ?
-          GROUP BY action_request_id
-          ORDER BY maxSequence DESC
-          LIMIT ?`,
-      )
-      .bind(input.organizationId, input.limit),
-  );
-  if (Result.isFailure(rows)) return rows;
-  return Result.succeed(
-    rows.value.map(
-      (row) => (row as { actionRequestId: string }).actionRequestId as ActionRequestId,
-    ),
-  );
-}
-
+/**
+ * alert評価の対象organization。action_events全体をGROUP BYせず、直近`eventWindow`件のevent
+ * （sequenceのrange scan）に現れたorganizationと、alertがok以外（breaching / firing）の
+ * organizationだけを返す（#95）。静かになったorganizationのalertもresolveまで評価し続ける。
+ */
 export async function listRecentOrganizations(
   db: D1DatabaseLike,
   limit = 50,
+  eventWindow = 10_000,
 ): Result.ResultAsync<OrganizationId[], D1OperatorDashboardError> {
   const rows = await allUnknownRows(
     db
       .prepare(
-        `SELECT organization_id AS organizationId, MAX(sequence) AS maxSequence
-           FROM action_events
+        `SELECT organization_id AS organizationId, MAX(last_sequence) AS lastSequence
+           FROM (
+             SELECT organization_id, MAX(sequence) AS last_sequence
+               FROM action_events
+              WHERE sequence > (SELECT COALESCE(MAX(sequence), 0) FROM action_events) - ?
+              GROUP BY organization_id
+             UNION ALL
+             SELECT organization_id, 0 AS last_sequence
+               FROM operator_alert_states
+              WHERE status <> 'ok'
+           )
           GROUP BY organization_id
-          ORDER BY maxSequence DESC
+          ORDER BY lastSequence DESC
           LIMIT ?`,
       )
-      .bind(limit),
+      .bind(eventWindow, limit),
   );
   if (Result.isFailure(rows)) return rows;
   return Result.succeed(
@@ -95,24 +84,12 @@ export async function loadOperatorDashboard(
   db: D1DatabaseLike,
   input: { organizationId: OrganizationId; actionLimit?: number; evaluatedAt?: string },
 ): Result.ResultAsync<OperatorDashboardSnapshot, D1OperatorDashboardError> {
-  const actionLimit = input.actionLimit ?? 200;
-  const actionIds = await listOrganizationActionIds(db, {
+  const recent = await new D1ActionEventRepository(db).listForRecentActions({
     organizationId: input.organizationId,
-    limit: actionLimit,
+    limit: input.actionLimit ?? 200,
   });
-  if (Result.isFailure(actionIds)) return actionIds;
-
-  const eventRepository = new D1ActionEventRepository(db);
-  const allRecords: ActionEventRecord[] = [];
-  for (const actionRequestId of actionIds.value) {
-    const events = await eventRepository.listForAction({
-      organizationId: input.organizationId,
-      actionRequestId,
-    });
-    if (Result.isFailure(events)) {
-      return Result.fail(dashboardError(events.error, "Action eventsの取得に失敗しました"));
-    }
-    allRecords.push(...events.value);
+  if (Result.isFailure(recent)) {
+    return Result.fail(dashboardError(recent.error, "Action eventsの取得に失敗しました"));
   }
 
   const health = await new D1NotificationOutboxRepository(db).healthForOrganization({
@@ -125,8 +102,8 @@ export async function loadOperatorDashboard(
   return Result.succeed({
     organizationId: input.organizationId,
     evaluatedAt: input.evaluatedAt ?? new Date().toISOString(),
-    actionCount: actionIds.value.length,
-    sli: computeOrganizationActionSli(allRecords),
+    actionCount: recent.value.actionRequestIds.length,
+    sli: computeOrganizationActionSli(recent.value.records),
     outbox: {
       ...health.value,
       backlog: health.value.pendingOutbox + health.value.failedOutbox,

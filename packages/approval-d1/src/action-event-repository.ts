@@ -264,6 +264,56 @@ export class D1ActionEventRepository implements ActionEventRepository {
     return Result.succeed(undefined);
   }
 
+  /**
+   * 直近に更新されたActionRequest（最大limit件）のeventを1 queryで返す（#95: dashboardのN+1解消）。
+   * 並びはActionRequestごとのsequence順。
+   */
+  async listForRecentActions(input: {
+    organizationId: OrganizationId;
+    limit: number;
+  }): Result.ResultAsync<
+    { actionRequestIds: ActionRequestId[]; records: ActionEventRecord[] },
+    D1ActionEventRepositoryError
+  > {
+    const rows = await allStoredRows(
+      this.db
+        .prepare(
+          `WITH recent AS (
+             SELECT action_request_id, MAX(sequence) AS max_sequence
+               FROM action_events
+              WHERE organization_id = ?
+              GROUP BY action_request_id
+              ORDER BY max_sequence DESC
+              LIMIT ?
+           )
+           SELECT e.sequence, e.organization_id, e.action_request_id, e.event_key, e.event_type,
+                  e.occurred_at, e.event_json
+             FROM action_events e
+             JOIN recent r ON r.action_request_id = e.action_request_id
+            WHERE e.organization_id = ?
+            ORDER BY r.max_sequence DESC, e.sequence ASC`,
+        )
+        .bind(input.organizationId, input.limit, input.organizationId),
+    );
+    if (Result.isFailure(rows)) return rows;
+    const records: ActionEventRecord[] = [];
+    const actionRequestIds: ActionRequestId[] = [];
+    for (const row of rows.value) {
+      const event = parseEvent(row.event_json);
+      if (Result.isFailure(event)) return event;
+      if (actionRequestIds.at(-1) !== row.action_request_id) {
+        actionRequestIds.push(row.action_request_id as ActionRequestId);
+      }
+      records.push({
+        organizationId: row.organization_id as OrganizationId,
+        eventKey: row.event_key,
+        occurredAt: row.occurred_at,
+        event: event.value,
+      });
+    }
+    return Result.succeed({ actionRequestIds, records });
+  }
+
   async listForAction(input: {
     organizationId: OrganizationId;
     actionRequestId: ActionRequestId;
