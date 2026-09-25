@@ -34,6 +34,7 @@ import {
   TimerEffectHandler,
   WORKFLOW_EXECUTOR_KEY,
   WorkflowActionExecutor,
+  WorkflowApprovalProjector,
   WorkflowInputSchemaResolver,
   WorkflowPublishingService,
   WorkflowRuntime,
@@ -57,6 +58,8 @@ import {
   D1WorkflowVersionRepository,
 } from "@app/workflow-d1";
 import type { D1DatabaseLike } from "@app/workflow-d1";
+
+import { PolicyApprovalRequirementProbe } from "./projection-probe.ts";
 
 export type WorkflowPlatformOptions = {
   db: D1DatabaseLike;
@@ -126,14 +129,16 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
     ...options.primitiveExecutors,
     [String(WORKFLOW_EXECUTOR_KEY)]: workflowExecutor,
   });
+  const actionDefinitionResolver = new D1PublishedActionDefinitionResolver(db, organizationId);
+  const policyBindingResolver = new D1PublishedPolicyBindingResolver(db);
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: new D1PublishedActionDefinitionResolver(db, organizationId),
+    actionDefinitionResolver,
     schemaResolver: new WorkflowInputSchemaResolver({
       organizationId,
       versions,
       ...(options.schemaResolver ? { fallback: options.schemaResolver } : {}),
     }),
-    policyBindingResolver: new D1PublishedPolicyBindingResolver(db),
+    policyBindingResolver,
     authorizer: options.authorizer,
     executor: registry,
     planRepository: plans,
@@ -176,6 +181,15 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
     });
   }
 
+  const projector = new WorkflowApprovalProjector({
+    probe: new PolicyApprovalRequirementProbe({
+      definitions: actionDefinitionResolver,
+      policyBindings: policyBindingResolver,
+      bindings,
+      versions,
+    }),
+  });
+
   const publishing = new WorkflowPublishingService({
     versions,
     drafts,
@@ -188,6 +202,8 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
     registry,
     completion,
     publishing,
+    projector,
+    actionDefinitionResolver,
     statuses,
     scheduler,
     governance,

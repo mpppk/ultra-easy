@@ -32,6 +32,8 @@ import type { ChildActionCorrelationRepository } from "./ports.ts";
 export type ChildActionStatus = {
   actionRequestId: ActionRequestId;
   status: ActionRequestStatus;
+  /** Materialized Approval Plan（enforcementの正本）が承認を要求するか。 */
+  approvalRequired?: boolean;
   output?: JsonValue;
   code?: string;
   message?: string;
@@ -98,6 +100,7 @@ export class EventSourcedChildActionStatusReader implements ChildActionStatusRea
     return Result.succeed({
       actionRequestId: input.actionRequestId,
       status,
+      approvalRequired: plan.plan.flow.type !== "none",
       ...(record?.result?.output !== undefined ? { output: record.result.output } : {}),
       ...(record?.code !== undefined ? { code: record.code } : {}),
       ...(record?.message !== undefined ? { message: record.message } : {}),
