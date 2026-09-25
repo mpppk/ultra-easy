@@ -6,5 +6,6 @@ export * from "./composite/ports.ts";
 export * from "./composite/principals.ts";
 export * from "./composite/trace.ts";
 export * from "./ports.ts";
+export * from "./projection.ts";
 export * from "./publishing.ts";
 export * from "./runtime.ts";

@@ -238,3 +238,27 @@ Workflow Agentへのhopへ引き継ぐ。
 - `workflow_child_actions` がchild ActionRequest ↔ run / NodeRun / effect / 親ActionRequestを相関し、
   `traceAction` が `Composite ActionRequest -> WorkflowRun -> NodeRun -> child ActionRequest -> ...` を返す。
 - D1: migration `0023_workflow_composite_actions.sql`。
+
+## Approval semantics (#159)
+
+| 区別                       | 正本                                            | 実装                                                                          |
+| -------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| workflow-level approval    | Composite Action自身のApproval Policy           | 通常のActionRequestと同じMaterialized Approval Plan                           |
+| child approval enforcement | child ActionRequestのMaterialized Approval Plan | 通常のActionRequest pipeline（v1ではskipしない）                              |
+| child approval projection  | 説明・計画用途（enforcementに使わない）         | `WorkflowApprovalProjector`                                                   |
+| approval coverage          | v1対象外（#166）                                | `ApprovalCoverageEvaluator`（v1は常に`not_covered`、enforcementは参照しない） |
+
+- 親Workflow（Composite Action）が承認済みでも、child ActionRequestは独自のPlanで承認を待つ。
+  Re-Authorizationも常にchildごとに行う。
+- `WorkflowApprovalProjector.project` はWorkflow Version + 既知のinputから、各Action Node
+  （およびProgram / LLM Nodeのcapability grant）について **実行時と同じPolicy評価器**
+  （`PolicyApprovalRequirementProbe` = `VersionedPolicyBindingResolver` + `evaluateApprovalPlan`）で承認要件を評価する。
+  child ActionRequestと同じactor（Node Agent）/ authority / originで評価する。
+  - `statically_resolved`: 常に実行され（Branch選択の全組み合わせで実行）、承認要件が確定
+  - `conditional`: Branch / loop次第で実行されない・複数回実行されうるが、承認要件は確定
+  - `potential`: Program / LLMがcapability grantの範囲で実行時に要求しうるAction
+  - `unresolved`: `nodes.*` / `loop.*` / 実行時に変わるvariables等に依存し、静的に確定できない
+    （policyが未知fieldを参照するとfail-closedなerror → unresolved。`runtimeInputFields`に理由を残す）
+- Composite Actionのchildは `nested` projectionとして再帰的に投影する（深さ4まで）。
+- 実際の承認（enforcement）は `traceAction` の `approval: { required, source: "materialized_plan" }` で、
+  projection（`kind: "projection"`）とは型でも区別する。

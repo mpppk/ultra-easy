@@ -24,6 +24,8 @@ export type ActionTrace = {
   actionRequestId: string;
   actionType?: string;
   status?: ActionRequestStatus;
+  /** 実際の承認要件（Materialized Approval Plan）。projectionとは別物。 */
+  approval?: { required: boolean; source: "materialized_plan" };
   run?: {
     runId: string;
     definitionId: string;
@@ -54,6 +56,14 @@ export async function traceAction(input: {
     actionRequestId: String(input.actionRequestId),
     ...(input.actionType ? { actionType: input.actionType } : {}),
     ...(status.value ? { status: status.value.status } : {}),
+    ...(status.value?.approvalRequired !== undefined
+      ? {
+          approval: {
+            required: status.value.approvalRequired,
+            source: "materialized_plan" as const,
+          },
+        }
+      : {}),
   };
   if ((input.depth ?? 0) >= MAX_TRACE_DEPTH) return Result.succeed(trace);
   const run = await input.runs.findByParentAction(input);

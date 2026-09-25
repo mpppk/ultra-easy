@@ -1,3 +1,4 @@
+export * from "./analysis.ts";
 export * from "./audit.ts";
 export * from "./definition.ts";
 export * from "./graph.ts";
