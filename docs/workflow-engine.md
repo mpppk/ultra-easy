@@ -12,6 +12,10 @@ ultra-easyの **Action Catalog / Authorization / Delegation / Approval / ActionE
 packages/
   expression-core/   # #155 Approval / Workflow / Delegationで共有する属性式（pure）
   workflow-core/     # #156 Definition / graph validation / control-flow kernel（pure）
+  workflow-application/        # #157 Durable runtime driver / ports / built-in effect handlers
+  workflow-runtime-memory/     # #157 in-memory repositories（tests / local）
+  workflow-d1/                 # #157 D1 persistence（workflow_* tables, migration 0021）
+  workflow-runtime-cloudflare/ # #157 Cloudflare Workflows runner + cron sweeper
 ```
 
 依存方向:
@@ -85,3 +89,43 @@ UI（Condition Builder / field picker）は `describeFieldCatalog(policy, fields
 - **Effect**: action / program / llm（Programのyieldによるtimer / human_input）は `EffectRecord` として予約する。
   IDは `${nodeRunId}#${attempt}` から決定的に導出し、runtimeはこのIDでchild ActionRequest等を冪等に作る。
 - runaway guard: `limits.maxNodeRuns`、`limits.maxParallelEffects`（ready Nodeのthrottle）。
+
+## Durable runtime (#157)
+
+```text
+WorkflowRuntime.advance(run)
+  1. D1からrun recordを読む（revision r）          ← process memoryに依存しない
+  2. cancelされたin-flight作用をchildへ伝播
+  3. in-flight作用をpoll（child ActionRequestの状態等）
+  4. 予約済み（requested）作用を配送（effect IDで冪等）
+  5. 結果eventをkernelへ適用し、監査イベントと一緒にrevision rでCAS保存
+  6. 新しく予約された作用があれば1へ
+```
+
+- **crash safety**: 作用の予約（`EffectRecord`）は配送前に保存される。保存前にcrashしても、再起動した
+  runtimeは同じeffect IDで再配送し、adapterはそのIDでchild ActionRequest等を冪等に作るため重複しない。
+- **CAS**: `workflow_runs.revision` によるcompare-and-set。D1では監査イベントを同じbatchで
+  「このwriterの更新が確定した場合だけ」insertする（`last_writer` token）。
+- **waiting**: `waiting_action | waiting_approval | waiting_input | waiting_external | waiting_timer` を
+  NodeRunに記録する。timerは予約内容から満了時刻が決まり、human inputはtrusted API（`deliver`）だけが届ける。
+- **wakeAt**: timer満了・retry backoff・poll間隔から次に進める時刻を保存する。
+- **completion**: 終端したrunの結果は `WorkflowCompletionListener` へ一度だけ届け
+  （listenerは冪等、配送済みフラグはCASで記録）、失敗時はwakeAtで再試行する。
+- **bounded concurrency**: `limits.maxParallelEffects`、ForEach `concurrency`、`MAX_WORKFLOW_DEPTH`（nest）。
+
+### Cloudflare adapter
+
+- `createWorkflowRunner(runtime)` はrunごとのCloudflare Workflow（instance ID = `wr_<sha256(org, runId)>`）。
+  各iterationは `runtime.advance` を1 stepとして実行し、`waitForEvent("workflow-resume")` か
+  timeout（wakeAt / 無変化時は指数backoff, 最大1時間）で次へ進む。step上限前に `handoff` する。
+- `CloudflareWorkflowRunnerControl.start / resume` はbest effort。取りこぼしは
+  `sweepDueWorkflowRuns`（cron）が `workflow_runs.wake_at` から拾って直接進める（CASで競合しない）。
+
+### D1 schema（migration `0021_workflow_runtime.sql`）
+
+| table                  | 性質                                                               |
+| ---------------------- | ------------------------------------------------------------------ |
+| `workflow_definitions` | Studioのdraft（revisionで楽観ロック）                              |
+| `workflow_versions`    | publish済みversion。UPDATE / DELETEをtriggerで禁止（immutable）    |
+| `workflow_runs`        | run state（JSON）+ revision + wake_at。親ActionRequestごとに一意   |
+| `workflow_events`      | 監査イベント（append-only trigger）。payloadはID / code / 参照だけ |
