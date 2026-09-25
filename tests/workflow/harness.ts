@@ -43,6 +43,7 @@ import { migratedSqliteD1 } from "@app/approval-d1/testing";
 import type { SqliteD1Database } from "@app/approval-d1/testing";
 import { createWorkflowPlatform } from "@app/workflow-platform";
 import type { WorkflowPlatform, WorkflowPlatformOptions } from "@app/workflow-platform";
+import type { D1DatabaseLike, D1PreparedStatementLike, D1RunResultLike } from "@app/workflow-d1";
 import type { WorkflowDefinition, WorkflowRunId } from "@app/workflow-core";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
@@ -61,6 +62,76 @@ export class ManualClock {
   }
   advance(seconds: number): void {
     this.value = new Date(Date.parse(this.value) + seconds * 1000).toISOString();
+  }
+}
+
+class FaultInjectingStatement implements D1PreparedStatementLike {
+  constructor(
+    readonly query: string,
+    readonly inner: D1PreparedStatementLike,
+    private readonly faults: FaultInjectingD1,
+  ) {}
+
+  bind(...values: unknown[]): D1PreparedStatementLike {
+    this.inner.bind(...values);
+    return this;
+  }
+
+  first<T>(): Promise<T | null> {
+    return this.inner.first<T>();
+  }
+
+  async all<T>(): Promise<{ results: T[] }> {
+    return this.inner.all ? this.inner.all<T>() : { results: [] };
+  }
+
+  run(): Promise<D1RunResultLike> {
+    return this.faults.guard([this.query]) ?? this.inner.run();
+  }
+}
+
+/**
+ * process crashの代役: SQLに`match`を含む書き込みを、commit前に指定回数だけ失敗させる。
+ * batchはD1と同じくatomicなので、失敗したbatchの書き込みは一切残らない。
+ */
+export class FaultInjectingD1 implements D1DatabaseLike {
+  private readonly faults: { match: string; skip: number; remaining: number }[] = [];
+  readonly crashes: string[] = [];
+
+  constructor(private readonly inner: D1DatabaseLike) {}
+
+  /** `skip`回目までの一致は通し、その後`times`回だけ落とす。 */
+  crashOn(match: string, options: { times?: number; skip?: number } = {}): void {
+    this.faults.push({ match, skip: options.skip ?? 0, remaining: options.times ?? 1 });
+  }
+
+  guard(queries: readonly string[]): Promise<never> | null {
+    const fault = this.faults.find(
+      (candidate) =>
+        candidate.remaining > 0 && queries.some((query) => query.includes(candidate.match)),
+    );
+    if (!fault) return null;
+    if (fault.skip > 0) {
+      fault.skip -= 1;
+      return null;
+    }
+    fault.remaining -= 1;
+    this.crashes.push(fault.match);
+    return Promise.reject(new Error(`injected crash before commit: ${fault.match}`));
+  }
+
+  prepare(query: string): D1PreparedStatementLike {
+    return new FaultInjectingStatement(query, this.inner.prepare(query), this);
+  }
+
+  batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]> {
+    const unwrapped = statements.map((statement) =>
+      statement instanceof FaultInjectingStatement ? statement : null,
+    );
+    return (
+      this.guard(unwrapped.map((statement) => statement?.query ?? "")) ??
+      this.inner.batch(statements.map((statement, index) => unwrapped[index]?.inner ?? statement))
+    );
   }
 }
 
@@ -147,12 +218,13 @@ export async function createWorkflowHarness(
   } = {},
 ) {
   const db: SqliteD1Database = migratedSqliteD1();
+  const faults = new FaultInjectingD1(db);
   const clock = new ManualClock();
   const executor = new RecordingExecutor();
   const authorizer = new TableAuthorizer();
   const approvals = new RecordingApprovalStarter();
   const platform: WorkflowPlatform = createWorkflowPlatform({
-    db,
+    db: faults,
     organizationId: ORG,
     clock,
     authorizer,
@@ -442,6 +514,7 @@ export async function createWorkflowHarness(
 
   return {
     db,
+    faults,
     clock,
     executor,
     authorizer,
