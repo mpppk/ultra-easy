@@ -55,6 +55,7 @@ import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
 import { createActionExecutorRegistry } from "./executor-registry.ts";
 import { StagingSchemaResolver } from "./staging-schema-resolver.ts";
 import { StagingTrustedContextProvider } from "./trusted-context.ts";
+import { approvalApiConfig, type ApprovalApiConfigError } from "./config.ts";
 import { WorkflowDecisionSink } from "./decision-sink.ts";
 import { StagingActionAuthorizer } from "./staging-authorizer.ts";
 import { StagingActionExecutor } from "./staging-executor.ts";
@@ -276,7 +277,36 @@ const APPROVAL_API_ROUTES = [
   "/operator/dashboard",
 ];
 
+/** 必須設定の欠落をtelemetryへ出す（#84）。値は出さず、設定名だけを出す。 */
+function emitConfigurationInvalid(
+  env: ApprovalApiEnv,
+  error: ApprovalApiConfigError,
+  event: "request.failed" | "scheduled.task_failed",
+): void {
+  telemetrySinkFromEnv(env).emit(
+    safeLogRecord({
+      level: "error",
+      event,
+      correlation: systemCorrelation({ component: "http", operation: "config.validate" }),
+      attributes: { errorCode: error.code, configKeys: error.keys.join(",") },
+    }),
+  );
+}
+
 async function handleFetch(request: Request, env: ApprovalApiEnv): Promise<Response> {
+  const config = approvalApiConfig(env);
+  if (Result.isFailure(config)) {
+    emitConfigurationInvalid(env, config.error, "request.failed");
+    return Response.json(
+      {
+        type: "urn:ultra-easy:problem:configuration_invalid",
+        title: "Service Unavailable",
+        status: 503,
+        code: config.error.code,
+      },
+      { status: 503, headers: { "content-type": "application/problem+json" } },
+    );
+  }
   try {
     const authorizerBinding = env.ACTION_AUTHORIZER;
     const executorBinding = env.ACTION_EXECUTOR;
@@ -315,6 +345,11 @@ export default {
   },
 
   async scheduled(controller, env): Promise<void> {
+    const config = approvalApiConfig(env);
+    if (Result.isFailure(config)) {
+      emitConfigurationInvalid(env, config.error, "scheduled.task_failed");
+      return;
+    }
     const telemetry = telemetrySinkFromEnv(env);
     const webhookUrl = env.SLACK_WEBHOOK_URL?.trim() ?? "";
     await runScheduledTasks({
@@ -357,6 +392,13 @@ export default {
   },
 
   async queue(batch, env): Promise<void> {
+    const config = approvalApiConfig(env);
+    if (Result.isFailure(config)) {
+      // 設定が直るまでmessageを失わない（ackせずretryへ回す）。
+      emitConfigurationInvalid(env, config.error, "request.failed");
+      batch.retryAll();
+      return;
+    }
     await handleNotificationQueueBatch({
       batch,
       db: env.DB,

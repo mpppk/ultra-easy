@@ -81,12 +81,46 @@
     ],
   },
   "env": {
+    // #84: vars / d1_databases / services / queues / workflows / analytics_engine_datasetsは
+    // non-inheritable。productionはtop-level（staging）を継承しないので、ここで全て宣言する。
+    // worker名は `ultra-easy-approval-api-production`（wrangler既定: <name>-<env>）。
+    //
+    // tenant固有の値はproduction tenant / FGA storeのprovision時に追加する（未設定の間は
+    // src/config.tsのfail-fast検証が不足している設定名を返す: docs/runbooks/production-api.md）:
+    //   vars:    AUTH0_DOMAIN / AUTH0_API_AUDIENCE / AUTH0_ORGANIZATION_CLAIM_VALUE /
+    //            OPENFGA_STORE_ID / OPENFGA_AUTHORIZATION_MODEL_ID
+    //   secrets: FGA_CLIENT_ID / FGA_CLIENT_SECRET / SLACK_WEBHOOK_URL /
+    //            ANALYTICS_ENGINE_API_TOKEN（`wrangler secret put <NAME> --env production`）
     "production": {
       "vars": {
         "AUTH0_ORGANIZATION_ID": "organization:production",
+        // 本番はAuth0 Organizationsのorg_id claim一致を必須にする（tenant全体は信頼しない）。
+        "AUTH0_ORGANIZATION_CLAIM": "org_id",
+        "ACTION_EXECUTION_MODE": "execute",
+        "OPENFGA_API_URL": "https://api.us1.fga.dev",
+        "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
         "ANALYTICS_ENGINE_ACCOUNT_ID": "e3e66e02919ba2916b412cba4009f5c0",
         "TELEMETRY_DATASET": "ultra_easy_telemetry_production",
       },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ultra-easy-approval-production",
+          "migrations_dir": "../../packages/approval-d1/migrations",
+        },
+      ],
+      "services": [
+        {
+          "binding": "ACTION_AUTHORIZER",
+          "service": "ultra-easy-approval-api-production",
+          "entrypoint": "StagingActionAuthorizer",
+        },
+        {
+          "binding": "ACTION_EXECUTOR",
+          "service": "ultra-easy-approval-api-production",
+          "entrypoint": "StagingActionExecutor",
+        },
+      ],
       "analytics_engine_datasets": [
         {
           "binding": "TELEMETRY_ANALYTICS",

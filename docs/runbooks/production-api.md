@@ -215,6 +215,33 @@ POSTs `firing`/`resolved` transitions to Slack (`SLACK_WEBHOOK_URL` secret).
 - Secrets: `SLACK_WEBHOOK_URL` via `wrangler secret put` only (per
   environment); source of truth is 1Password vault `ultra-easy` (`SLACK`).
 
+## Production environment (`--env production`, #84)
+
+Wrangler bindings and vars are non-inheritable, so `env.production` in
+`apps/approval-api/wrangler.jsonc` declares every binding itself: `DB`
+(`ultra-easy-approval-production`), `ACTION_AUTHORIZER` / `ACTION_EXECUTOR` (pointing at the
+production worker `ultra-easy-approval-api-production`), `ACTION_WORKFLOW`,
+`NOTIFICATION_QUEUE` (+ DLQ consumer) and `TELEMETRY_ANALYTICS`. CI runs
+`wrangler deploy --dry-run --env production` (`deploy:dry-run:production`) on every PR, and
+`src/config.test.ts` asserts both environments declare all required bindings.
+
+Tenant-specific settings are added when the production Auth0 tenant / FGA store are
+provisioned (they do not exist yet):
+
+| Setting                                                                                            | Kind                       |
+| -------------------------------------------------------------------------------------------------- | -------------------------- |
+| `AUTH0_DOMAIN`, `AUTH0_API_AUDIENCE`                                                               | vars                       |
+| `AUTH0_ORGANIZATION_CLAIM_VALUE` (Auth0 Organization ID; `org_id` claim is required in production) | vars                       |
+| `OPENFGA_STORE_ID`, `OPENFGA_AUTHORIZATION_MODEL_ID`                                               | vars                       |
+| `FGA_CLIENT_ID`, `FGA_CLIENT_SECRET`                                                               | secret                     |
+| `SLACK_WEBHOOK_URL`, `ANALYTICS_ENGINE_API_TOKEN`                                                  | secret (optional features) |
+
+Fail-fast: the Worker validates required bindings/settings once per isolate
+(`src/config.ts`). While anything is missing, `fetch` answers
+`503 configuration_invalid`, cron does nothing and queue batches are retried (not acked), and a
+`request.failed` / `scheduled.task_failed` log carries `configKeys` = the missing/invalid
+setting names (never values). Check that log first after a production deploy.
+
 ## Known gaps (follow-ups, not M8-1)
 
 - Browser login UI + session management (M2M + password-realm only).
