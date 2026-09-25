@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { brandLiteral } from "./domain/brand.ts";
 
 import type { ActionEvent } from "./action-event.ts";
 import type { ActionRequestId, OrganizationId, UserId } from "./domain/brand.ts";
@@ -52,7 +53,7 @@ export interface NotificationSink {
 }
 
 /** channel audienceのdeliveryに使う宛先ID（notification_deliveriesの主キー用）。 */
-export const CHANNEL_NOTIFICATION_RECIPIENT = "channel" as UserId;
+export const CHANNEL_NOTIFICATION_RECIPIENT = brandLiteral("UserId", "channel");
 
 export function notificationKeyForEvent(eventKey: string): string {
   return `notification:${eventKey}`;

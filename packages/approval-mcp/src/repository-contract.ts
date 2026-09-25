@@ -1,7 +1,8 @@
 import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
+import { brandLiteral } from "@app/approval-core";
 
-import type { ActionFingerprint, ActionRequestId, OrganizationId } from "@app/approval-core";
+import type {} from "@app/approval-core";
 
 import type {
   McpInvocationRecord,
@@ -76,7 +77,7 @@ export function describeMcpInvocationRepositoryContract(
         leaseToken: "lease-1",
         patch: {
           status: "prepared",
-          actionRequestId: "action-request:1" as ActionRequestId,
+          actionRequestId: brandLiteral("ActionRequestId", "action-request:1"),
           taskId: "task_1",
           taskCreatedAt: LATER,
           ttlMs: null,
@@ -208,9 +209,7 @@ export function describeMcpInvocationRepositoryContract(
       const repository = create();
       await repository.reserve(record());
 
-      const other = await repository.reserve(
-        record({ organizationId: otherOrg as OrganizationId }),
-      );
+      const other = await repository.reserve(record({ organizationId: otherOrg }));
 
       assert(Result.isSuccess(other));
       expect(other.value.type).toBe("acquired");
@@ -221,8 +220,8 @@ export function describeMcpInvocationRepositoryContract(
 function snapshot(overrides: Partial<McpRouteSnapshot> = {}): McpRouteSnapshot {
   return {
     organizationId: org,
-    actionRequestId: "action-request:1" as ActionRequestId,
-    actionFingerprint: "sha256:fingerprint" as ActionFingerprint,
+    actionRequestId: brandLiteral("ActionRequestId", "action-request:1"),
+    actionFingerprint: brandLiteral("ActionFingerprint", "sha256:fingerprint"),
     actionType: priorityActionType,
     bindingId: "binding:ticket-priority",
     bindingVersion: 1,
@@ -255,11 +254,11 @@ export function describeMcpRouteSnapshotRepositoryContract(
       );
       const loaded = await repository.load({
         organizationId: org,
-        actionRequestId: "action-request:1" as ActionRequestId,
+        actionRequestId: brandLiteral("ActionRequestId", "action-request:1"),
       });
       const crossTenant = await repository.load({
         organizationId: otherOrg,
-        actionRequestId: "action-request:1" as ActionRequestId,
+        actionRequestId: brandLiteral("ActionRequestId", "action-request:1"),
       });
 
       expect(Result.isSuccess(saved) && Result.isSuccess(same)).toBe(true);

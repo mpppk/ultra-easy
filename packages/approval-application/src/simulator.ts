@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import type { Action, FlowDefinition, OrganizationId } from "@app/approval-core";
+import type { Action, FlowDefinition } from "@app/approval-core";
 
 import {
   ActionRequestApplicationError,
@@ -14,7 +14,7 @@ import {
   type HttpTrustedContextProvider,
   parseActionRequestCreateBody,
 } from "./http.ts";
-import { pathParameters } from "./path-parameters.ts";
+import { routeParameters } from "./path-parameters.ts";
 
 export type AuthorizationSimulation = {
   outcome: "allow" | "deny" | "error";
@@ -120,12 +120,13 @@ export function createActionRequestSimulationHttpApi(input: {
   return {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
-      const match = pathParameters(
+      const match = routeParameters(
         /^\/v1\/organizations\/([^/]+)\/action-requests\/simulate$/,
         url.pathname,
+        ["OrganizationId"],
       );
       if (match instanceof Response) return match;
-      if (request.method !== "POST" || !match?.[1]) {
+      if (request.method !== "POST" || !match) {
         return new Response("Not Found", { status: 404 });
       }
 
@@ -139,7 +140,7 @@ export function createActionRequestSimulationHttpApi(input: {
         });
       }
 
-      const organizationId = match[1] as OrganizationId;
+      const organizationId = match[0];
       const trusted = await input.trustedContextProvider.resolve({
         request,
         organizationId,

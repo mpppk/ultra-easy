@@ -171,7 +171,6 @@ ApprovalCommand:
       enum:
       - approve
       - reject
-      - cancel
     status:
       $ref: ./schemas-02.yaml#/ApprovalCommandStatus
     error:

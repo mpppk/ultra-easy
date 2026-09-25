@@ -1,18 +1,13 @@
 import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import type {
-  ActionRequest,
-  ActionRequestId,
-  OrganizationId,
-  RelationName,
-} from "@app/approval-core";
+import type { ActionRequest, RelationName } from "@app/approval-core";
 import {
   ClientCredentialsTokenProvider,
   OpenFgaActionAuthorizer,
   OpenFgaClient,
 } from "@app/approval-fga";
-import { ConsoleTelemetrySink } from "@app/approval-core";
+import { ConsoleTelemetrySink, parseBrand } from "@app/approval-core";
 
 import { stagingActionRelation } from "./action-relations.ts";
 
@@ -92,24 +87,32 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
       clientId,
       clientSecret,
     });
-    const organizationId = String(
-      (body.organizationId as string | undefined) ??
-        request.headers.get("x-ue-organization-id") ??
-        "",
+    const organizationId = parseBrand(
+      "OrganizationId",
+      (body.organizationId as string | undefined) ?? request.headers.get("x-ue-organization-id"),
     );
+    if (Result.isFailure(organizationId)) {
+      return errorBody("invalid_organization_id", "organizationIdが不正です", false, 400);
+    }
     // Workflow再認可経路ではServiceBindingActionAuthorizerがx-ue-action-request-idを付与する。
     // 存在する場合のみFGA latency/error telemetryをemitする（submit時は未採番のため対象外）。
-    const actionRequestId = request.headers.get("x-ue-action-request-id")?.trim() || null;
+    const parsedActionRequestId = parseBrand(
+      "ActionRequestId",
+      request.headers.get("x-ue-action-request-id")?.trim(),
+    );
+    const actionRequestId = Result.isSuccess(parsedActionRequestId)
+      ? parsedActionRequestId.value
+      : null;
     const authorizer = new OpenFgaActionAuthorizer(
       new OpenFgaClient({
         apiUrl: env["OPENFGA_API_URL"] ?? "https://api.us1.fga.dev",
         storeId,
         authorizationModelId: modelId,
-        organizationId: organizationId as OrganizationId,
+        organizationId: organizationId.value,
         tokenSupplier,
         ...(actionRequestId
           ? {
-              actionRequestId: actionRequestId as ActionRequestId,
+              actionRequestId,
               telemetry: new ConsoleTelemetrySink(),
             }
           : {}),

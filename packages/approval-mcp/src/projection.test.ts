@@ -17,8 +17,8 @@ function view(
   result?: ActionRequestView["result"],
 ): ActionRequestView {
   return {
-    id: "action-request:1",
-    organizationId: String(org),
+    id: "action-request:1" as ActionRequestView["id"],
+    organizationId: org,
     actor: { type: "user", id: alice },
     authorityPrincipal: { type: "user", id: alice },
     action: {

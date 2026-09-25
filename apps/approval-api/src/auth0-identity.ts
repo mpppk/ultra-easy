@@ -1,7 +1,8 @@
 import { Result } from "@praha/byethrow";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } from "jose";
+import { parseBrand } from "@app/approval-core";
 
-import type { AgentId, OrganizationId, PrincipalRef, UserId } from "@app/approval-core";
+import type { OrganizationId, PrincipalRef } from "@app/approval-core";
 import {
   HttpTrustedContextError,
   type AuthorizationAdminCaller,
@@ -89,7 +90,10 @@ function principalFromPayload(
     if (grantType !== CLIENT_CREDENTIALS_GRANT_TYPE || !machineSubject || clientId.length === 0) {
       return contextError(401, "unsupported_token_type", "client tokenの種別が一致しません");
     }
-    return Result.succeed({ type: "agent", id: `agent:${clientId}` as AgentId });
+    const agentId = parseBrand("AgentId", `agent:${clientId}`);
+    return Result.isFailure(agentId)
+      ? contextError(401, "unsupported_token_type", "client IDが不正です")
+      : Result.succeed({ type: "agent", id: agentId.value });
   }
   if (
     grantType !== undefined &&
@@ -97,7 +101,10 @@ function principalFromPayload(
   ) {
     return contextError(401, "unsupported_token_type", "未対応のtoken種別です");
   }
-  return Result.succeed({ type: "user", id: `user:${payload.sub}` as UserId });
+  const userId = parseBrand("UserId", `user:${payload.sub}`);
+  return Result.isFailure(userId)
+    ? contextError(401, "bearer_token_missing_sub", "tokenのsubが不正です")
+    : Result.succeed({ type: "user", id: userId.value });
 }
 
 /**

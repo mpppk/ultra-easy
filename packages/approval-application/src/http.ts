@@ -3,17 +3,15 @@ import { Result } from "@praha/byethrow";
 import {
   DEFAULT_ACTION_REQUEST_RATE_LIMIT,
   actionCorrelation,
+  parseBrand,
   safeLogRecord,
 } from "@app/approval-core";
 import type {
   Action,
-  ActionType,
   OrganizationId,
   RateLimiter,
   RateLimitPolicy,
-  ResourceId,
   TelemetrySink,
-  ResourceType,
 } from "@app/approval-core";
 
 import {
@@ -21,7 +19,7 @@ import {
   type ActionRequestApplicationService,
   type TrustedActionRequestContext,
 } from "./action-request-service.ts";
-import { pathParameters } from "./path-parameters.ts";
+import { routeParameters } from "./path-parameters.ts";
 
 export class HttpTrustedContextError extends Error {
   readonly name = "HttpTrustedContextError";
@@ -101,16 +99,17 @@ export function parseActionRequestCreateBody(value: unknown): ActionRequestCreat
 
   const action = value.action;
   if (
-    typeof action.type !== "string" ||
-    action.type.length === 0 ||
     !isRecord(action.resource) ||
     !hasOnlyKeys(action.resource, ["type", "id"]) ||
-    typeof action.resource.type !== "string" ||
-    action.resource.type.length === 0 ||
-    typeof action.resource.id !== "string" ||
-    action.resource.id.length === 0 ||
     !isRecord(action.input)
   ) {
+    return null;
+  }
+  // 境界の値はsmart constructorで検証してbrandへ変換する（#102）。
+  const type = parseBrand("ActionType", action.type);
+  const resourceType = parseBrand("ResourceType", action.resource.type);
+  const resourceId = parseBrand("ResourceId", action.resource.id);
+  if (Result.isFailure(type) || Result.isFailure(resourceType) || Result.isFailure(resourceId)) {
     return null;
   }
 
@@ -129,11 +128,8 @@ export function parseActionRequestCreateBody(value: unknown): ActionRequestCreat
 
   return {
     action: {
-      type: action.type as ActionType,
-      resource: {
-        type: action.resource.type as ResourceType,
-        id: action.resource.id as ResourceId,
-      },
+      type: type.value,
+      resource: { type: resourceType.value, id: resourceId.value },
       input: action.input,
     },
     ...(typeof value.delegationGrantId === "string"
@@ -220,9 +216,13 @@ export function createActionRequestHttpApi(input: {
   return {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
-      const match = pathParameters(/^\/v1\/organizations\/([^/]+)\/action-requests$/, url.pathname);
+      const match = routeParameters(
+        /^\/v1\/organizations\/([^/]+)\/action-requests$/,
+        url.pathname,
+        ["OrganizationId"],
+      );
       if (match instanceof Response) return match;
-      if (request.method !== "POST" || !match?.[1]) {
+      if (request.method !== "POST" || !match) {
         return new Response("Not Found", { status: 404 });
       }
 
@@ -245,7 +245,7 @@ export function createActionRequestHttpApi(input: {
         });
       }
 
-      const organizationId = match[1] as OrganizationId;
+      const organizationId = match[0];
       const trusted = await input.trustedContextProvider.resolve({
         request,
         organizationId,
@@ -294,7 +294,6 @@ export function createActionRequestHttpApi(input: {
       const submitted = await input.service.submit({
         action: body.action,
         trustedContext: trusted.value,
-        idempotencyKey,
         ...(body.clientReference ? { clientReference: body.clientReference } : {}),
       });
       if (Result.isFailure(submitted))

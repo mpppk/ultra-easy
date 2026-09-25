@@ -44,8 +44,8 @@ const taskId = branded<ApprovalTaskId>("task:m6-2");
 const alice = branded<UserId>("user:alice");
 
 const actionView: ActionRequestView = {
-  id: String(actionRequestId),
-  organizationId: String(organizationId),
+  id: actionRequestId,
+  organizationId,
   actor: { type: "user", id: alice },
   authorityPrincipal: { type: "user", id: alice },
   action: {
@@ -69,8 +69,8 @@ const actionView: ActionRequestView = {
 };
 
 const taskView: ApprovalTaskView = {
-  id: String(taskId),
-  actionRequestId: String(actionRequestId),
+  id: taskId,
+  actionRequestId,
   materializedStepId: "step:m6",
   stepKey: "manager",
   status: "pending",

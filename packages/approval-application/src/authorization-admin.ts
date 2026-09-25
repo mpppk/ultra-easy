@@ -3,6 +3,7 @@ import { Result } from "@praha/byethrow";
 import {
   approvalFlowPresentation,
   decodeUriComponent,
+  parseBrand,
   isManagedRelationship,
   RELATIONSHIP_AUDIT_EVENT_TYPES,
   RELATIONSHIP_SYNC_STATUSES,
@@ -26,8 +27,6 @@ import type {
   RelationshipOperation,
   RelationshipSyncStatus,
   RelationshipTuple,
-  ResourceId,
-  ResourceType,
   UserPrincipalRef,
 } from "@app/approval-core";
 
@@ -391,6 +390,19 @@ function isJsonValue(value: unknown, depth = 0): value is JsonValue {
   return false;
 }
 
+function parsePrincipalRef(type: "user" | "agent" | "service", id: string): PrincipalRef | null {
+  if (type === "user") {
+    const parsed = parseBrand("UserId", id);
+    return Result.isSuccess(parsed) ? { type, id: parsed.value } : null;
+  }
+  if (type === "agent") {
+    const parsed = parseBrand("AgentId", id);
+    return Result.isSuccess(parsed) ? { type, id: parsed.value } : null;
+  }
+  const parsed = parseBrand("ServiceId", id);
+  return Result.isSuccess(parsed) ? { type, id: parsed.value } : null;
+}
+
 export function parseAuthorizationExplainBody(value: unknown): AuthorizationExplainRequest | null {
   if (!isRecord(value)) return null;
   if (
@@ -420,14 +432,24 @@ export function parseAuthorizationExplainBody(value: unknown): AuthorizationExpl
   }
   const overrides = value.simulationOverrides;
   if (overrides !== undefined && (!isRecord(overrides) || !isJsonValue(overrides))) return null;
+  // 境界の値はsmart constructorで検証してbrandへ変換する（#102）。
+  const principalRef = parsePrincipalRef(principal.type, principal.id.trim());
+  const type = parseBrand("ActionType", action.type.trim());
+  const resourceType = parseBrand("ResourceType", action.resource.type.trim());
+  const resourceId = parseBrand("ResourceId", action.resource.id.trim());
+  if (
+    !principalRef ||
+    Result.isFailure(type) ||
+    Result.isFailure(resourceType) ||
+    Result.isFailure(resourceId)
+  ) {
+    return null;
+  }
   return {
-    principal: { type: principal.type, id: principal.id.trim() } as PrincipalRef,
+    principal: principalRef,
     action: {
-      type: action.type.trim() as ActionType,
-      resource: {
-        type: action.resource.type.trim() as ResourceType,
-        id: action.resource.id.trim() as ResourceId,
-      },
+      type: type.value,
+      resource: { type: resourceType.value, id: resourceId.value },
       // Missing/invalid input is not a 400: it flows into schema validation and
       // becomes `evaluation_error` with issues, exactly like a real submit.
       input: action.input,

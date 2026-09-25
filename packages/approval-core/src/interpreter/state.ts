@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { approvalTaskIdOf } from "../domain/brand.ts";
 
 import type { ApprovalTaskId, MaterializedStepId, UserId } from "../domain/brand.ts";
 import type { PrincipalRef } from "../domain/principal.ts";
@@ -34,7 +35,7 @@ export function asTaskId(
   plan: MaterializedApprovalPlan,
   step: MaterializedApprovalStep,
 ): ApprovalTaskId {
-  return `task:${String(plan.actionRequestId)}:${String(step.materializedStepId)}` as ApprovalTaskId;
+  return approvalTaskIdOf(plan.actionRequestId, step.materializedStepId);
 }
 
 export function parseTimestamp(value: string): number | null {

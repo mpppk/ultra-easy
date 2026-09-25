@@ -90,3 +90,18 @@ const parseJson = Result.fn({
 ```
 
 この方針により、core domainからadapterまで「どの失敗が起こりうるか」と「呼び出し側がどのErrorを識別できるか」をTypeScriptの型として確認できる状態を維持する。
+
+## Branded typeへの変換（#102）
+
+branded type（`OrganizationId` / `UserId` / `ActionRequestId`等）は「検証済み」を意味する。外部境界
+（HTTP path / body、D1 row、JSON、env、queue message）の値は`packages/approval-core/src/domain/brand.ts`
+のsmart constructorだけを通してbrandへ変換する。
+
+- `parseBrand(kind, value)` / `parseBrands`: 空文字・非string・長すぎる値・制御文字を拒否する
+  `Result`。HTTPでは`routeParameters`が400 `invalid_path_parameter`へ、D1では`storedBrand`が
+  repository errorへ写像する
+- `brandLiteral(kind, "literal")`: コード中の定数専用。`string`型の値はcompile errorになる
+- 導出値は専用constructor（`sha256Digest` / `digestAs` / `derivedIdentifier` / `approvalTaskIdOf` /
+  `authorizationObjectRefOf` / `newIdentifier`）で作る
+
+`as <Brand>`はOxlintの`no-restricted-syntax`でbrand.tsとtest以外では禁止する。

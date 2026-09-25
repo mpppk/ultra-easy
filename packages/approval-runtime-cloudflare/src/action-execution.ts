@@ -116,7 +116,7 @@ type PersistedAuthorizationEvidence = {
   authorizationModelId?: string;
   consistency: AuthorizationConsistency;
   authorityMode?: AuthorityMode;
-  delegationGrantIds?: string[];
+  delegationGrantIds?: DelegationGrantId[];
 };
 
 type ReauthorizationTransition =
@@ -175,7 +175,7 @@ function persistAuthorizationEvidence(
       : {}),
     ...(evidence.authorityMode !== undefined ? { authorityMode: evidence.authorityMode } : {}),
     ...(evidence.delegationGrantIds !== undefined
-      ? { delegationGrantIds: evidence.delegationGrantIds.map(String) }
+      ? { delegationGrantIds: [...evidence.delegationGrantIds] }
       : {}),
   };
 }
@@ -196,9 +196,7 @@ function restoreAuthorizationEvidence(
     ...(evidence.authorityMode !== undefined ? { authorityMode: evidence.authorityMode } : {}),
     ...(evidence.delegationGrantIds !== undefined
       ? {
-          delegationGrantIds: evidence.delegationGrantIds.map(
-            (grantId) => grantId as DelegationGrantId,
-          ),
+          delegationGrantIds: [...evidence.delegationGrantIds],
         }
       : {}),
   };

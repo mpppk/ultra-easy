@@ -1,4 +1,5 @@
 export type * from "./domain/index.ts";
+export * from "./domain/brand.ts";
 export * from "./action-definition.ts";
 export * from "./action-event.ts";
 export * from "./action-execution.ts";

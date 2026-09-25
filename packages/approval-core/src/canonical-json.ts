@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { sha256Digest } from "./domain/brand.ts";
 
 import type { Sha256Digest } from "./domain/brand.ts";
 import type { JsonValue } from "./domain/json.ts";
@@ -108,7 +109,7 @@ const digestText = Result.fn({
     const hex = Array.from(new Uint8Array(digest), (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");
-    return `sha256:${hex}` as Sha256Digest;
+    return sha256Digest(hex);
   },
   catch: (): CanonicalJsonError =>
     new CanonicalJsonError("sha256_failed", "SHA-256 digestの計算に失敗しました"),

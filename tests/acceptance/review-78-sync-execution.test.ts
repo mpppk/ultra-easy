@@ -160,7 +160,7 @@ function harness(input: { reauthorization?: "allow" | "deny"; executor?: Scenari
   const base = `https://api.test/v1/organizations/${encodeURIComponent(String(org))}/action-requests`;
   return {
     executor,
-    async submit() {
+    async submit(extra: { clientReference?: string } = {}) {
       return api.fetch(
         new Request(base, {
           method: "POST",
@@ -171,9 +171,19 @@ function harness(input: { reauthorization?: "allow" | "deny"; executor?: Scenari
               resource: { type: "ticket", id: "T-1" },
               input: { priority: "high" },
             },
+            ...extra,
           }),
         }),
       );
+    },
+    async received() {
+      const listed = await new D1ActionEventRepository(db).listForAction({
+        organizationId: org,
+        actionRequestId: "action:sync-1" as ActionRequestId,
+      });
+      return Result.isSuccess(listed)
+        ? listed.value.find((record) => record.event.type === "action.received")?.event
+        : undefined;
     },
     async get() {
       const response = await api.fetch(
@@ -256,5 +266,14 @@ describe("#86 承認不要（同期実行）経路のread model", () => {
       result: { status: "execution_unknown", code: "upstream_timeout" },
     });
     expect(unknown.executor.calls).toBe(1);
+  });
+
+  it("#103: clientReferenceはaction.receivedの監査イベントに残る", async () => {
+    const h = harness({});
+    expect((await h.submit({ clientReference: "ticket-sync-42" })).status).toBe(201);
+    expect(await h.received()).toMatchObject({
+      type: "action.received",
+      clientReference: "ticket-sync-42",
+    });
   });
 });

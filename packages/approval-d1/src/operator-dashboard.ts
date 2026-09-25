@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { storedBrands } from "./stored-brand.ts";
 
 import {
   computeOrganizationActionSli,
@@ -71,8 +72,10 @@ export async function listRecentOrganizations(
       .bind(eventWindow, limit),
   );
   if (Result.isFailure(rows)) return rows;
-  return Result.succeed(
-    rows.value.map((row) => (row as { organizationId: string }).organizationId as OrganizationId),
+  return storedBrands(
+    "OrganizationId",
+    rows.value.map((row) => (row as { organizationId: unknown }).organizationId),
+    (message) => dashboardError(undefined, message),
   );
 }
 

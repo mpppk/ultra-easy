@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { brandLiteral, parseBrand, sha256Digest } from "@app/approval-core";
 
 import {
   computeActionFingerprint,
@@ -8,21 +9,14 @@ import {
   createMaterializedStepId,
 } from "@app/approval-core";
 import type {
-  ActionRequestId,
-  ApprovalPolicyBindingId,
-  ApprovalPolicyKey,
-  ApprovalStepKey,
   MaterializedApprovalPlan,
   MaterializedApprovalStep,
   MaterializedFlow,
   MaterializedStepSource,
-  OrganizationId,
-  SchemaKey,
-  Sha256Digest,
   UserId,
 } from "@app/approval-core";
 
-export const PREVIEW_EXECUTOR_KEY = "executor:preview";
+export const PREVIEW_EXECUTOR_KEY = brandLiteral("ExecutorKey", "executor:preview");
 
 export const previewScenarios = [
   "no-approval",
@@ -34,12 +28,12 @@ export const previewScenarios = [
 
 export type PreviewScenario = (typeof previewScenarios)[number];
 
-export const PREVIEW_ORGANIZATION_ID = "organization:preview" as OrganizationId;
-const bindingId = "binding:preview" as ApprovalPolicyBindingId;
-const policyKey = "policy:preview" as ApprovalPolicyKey;
-const alice = "user:alice" as UserId;
-const bob = "user:bob" as UserId;
-const carol = "user:carol" as UserId;
+export const PREVIEW_ORGANIZATION_ID = brandLiteral("OrganizationId", "organization:preview");
+const bindingId = brandLiteral("ApprovalPolicyBindingId", "binding:preview");
+const policyKey = brandLiteral("ApprovalPolicyKey", "policy:preview");
+const alice = brandLiteral("UserId", "user:alice");
+const bob = brandLiteral("UserId", "user:bob");
+const carol = brandLiteral("UserId", "user:carol");
 
 async function unwrap<T, E extends Error>(result: Result.Result<T, E>): Promise<T> {
   if (Result.isFailure(result)) return Promise.reject(result.error);
@@ -60,7 +54,7 @@ async function directStep(
   return {
     type: "approval",
     materializedStepId,
-    stepKey: key as ApprovalStepKey,
+    stepKey: await unwrap(parseBrand("ApprovalStepKey", key)),
     source: stepSource,
     target: { type: "user", userId, sourceKind: "user" },
     resolution: "snapshot",
@@ -122,23 +116,24 @@ export function isPreviewScenario(value: unknown): value is PreviewScenario {
 export async function createPreviewPlan(
   scenario: PreviewScenario,
 ): Promise<MaterializedApprovalPlan> {
-  const actionRequestId = `preview-${scenario}-${crypto.randomUUID()}` as ActionRequestId;
+  const actionRequestId = await unwrap(
+    parseBrand("ActionRequestId", `preview-${scenario}-${crypto.randomUUID()}`),
+  );
   const flow = await flowForScenario(scenario);
   const action: MaterializedApprovalPlan["action"] = {
     definition: {
-      key: "action:preview" as MaterializedApprovalPlan["action"]["definition"]["key"],
+      key: brandLiteral("ActionDefinitionKey", "action:preview"),
       version: 1,
-      actionType: "preview" as MaterializedApprovalPlan["action"]["definition"]["actionType"],
-      inputSchema: { key: "schema:preview" as SchemaKey, version: 1 },
-      executorKey:
-        PREVIEW_EXECUTOR_KEY as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
+      actionType: brandLiteral("ActionType", "preview"),
+      inputSchema: { key: brandLiteral("SchemaKey", "schema:preview"), version: 1 },
+      executorKey: PREVIEW_EXECUTOR_KEY,
     },
-    type: "preview" as MaterializedApprovalPlan["action"]["type"],
+    type: brandLiteral("ActionType", "preview"),
     resource: {
-      type: "preview" as MaterializedApprovalPlan["action"]["resource"]["type"],
-      id: actionRequestId as unknown as MaterializedApprovalPlan["action"]["resource"]["id"],
+      type: brandLiteral("ResourceType", "preview"),
+      id: await unwrap(parseBrand("ResourceId", String(actionRequestId))),
     },
-    input: { scenario } as MaterializedApprovalPlan["action"]["input"],
+    input: { scenario },
   };
   const evaluationSnapshot: MaterializedApprovalPlan["evaluationSnapshot"] = {
     actor: { type: "user", id: alice },
@@ -152,7 +147,7 @@ export async function createPreviewPlan(
       bindingId,
       policyKey,
       policyVersion: 1,
-      policyDefinitionChecksum: `sha256:${"1".repeat(64)}` as Sha256Digest,
+      policyDefinitionChecksum: sha256Digest("1".repeat(64)),
       selector: { actionTypes: [action.type] },
       enabled: true,
       outcome: { type: "matched", ruleKey: "rule:preview" as never, flowType: flow.type },

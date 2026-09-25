@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { storedBrand, storedBrands } from "./stored-brand.ts";
 
 import { notificationDeliveryKey, notificationKeyForEvent } from "@app/approval-core";
 import type {
@@ -231,38 +232,60 @@ export function prepareNotificationOutboxInsert(
     );
 }
 
-function mapOutbox(row: StoredOutboxRow): NotificationOutboxEntry {
-  return {
-    organizationId: row.organization_id as OrganizationId,
-    actionRequestId: row.action_request_id as ActionRequestId,
+function rowError(message: string): D1NotificationOutboxRepositoryError {
+  return repositoryError(undefined, message);
+}
+
+function mapOutbox(
+  row: StoredOutboxRow,
+): Result.Result<NotificationOutboxEntry, D1NotificationOutboxRepositoryError> {
+  const organizationId = storedBrand("OrganizationId", row.organization_id, rowError);
+  if (Result.isFailure(organizationId)) return organizationId;
+  const actionRequestId = storedBrand("ActionRequestId", row.action_request_id, rowError);
+  if (Result.isFailure(actionRequestId)) return actionRequestId;
+  let recipientUserId: UserId | undefined;
+  if (row.recipient_user_id !== null) {
+    const parsed = storedBrand("UserId", row.recipient_user_id, rowError);
+    if (Result.isFailure(parsed)) return parsed;
+    recipientUserId = parsed.value;
+  }
+  return Result.succeed({
+    organizationId: organizationId.value,
+    actionRequestId: actionRequestId.value,
     outboxKey: row.outbox_key,
     notificationKey: row.notification_key,
     eventKey: row.event_key,
     eventType: row.event_type,
     recipientMode: row.recipient_mode,
-    ...(row.recipient_user_id !== null ? { recipientUserId: row.recipient_user_id as UserId } : {}),
+    ...(recipientUserId !== undefined ? { recipientUserId } : {}),
     ...(row.materialized_step_id !== null ? { materializedStepId: row.materialized_step_id } : {}),
     status: row.status,
     attemptCount: row.attempt_count,
     ...(row.last_error !== null ? { lastError: row.last_error } : {}),
     createdAt: row.created_at,
     ...(row.dispatched_at !== null ? { dispatchedAt: row.dispatched_at } : {}),
-  };
+  });
 }
 
-function mapDelivery(row: StoredDeliveryRow): NotificationDelivery {
-  return {
-    organizationId: row.organization_id as OrganizationId,
+function mapDelivery(
+  row: StoredDeliveryRow,
+): Result.Result<NotificationDelivery, D1NotificationOutboxRepositoryError> {
+  const organizationId = storedBrand("OrganizationId", row.organization_id, rowError);
+  if (Result.isFailure(organizationId)) return organizationId;
+  const recipientUserId = storedBrand("UserId", row.recipient_user_id, rowError);
+  if (Result.isFailure(recipientUserId)) return recipientUserId;
+  return Result.succeed({
+    organizationId: organizationId.value,
     notificationKey: row.notification_key,
     eventKey: row.event_key,
-    recipientUserId: row.recipient_user_id as UserId,
+    recipientUserId: recipientUserId.value,
     status: row.status,
     attemptCount: row.attempt_count,
     ...(row.last_error !== null ? { lastError: row.last_error } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.sent_at !== null ? { sentAt: row.sent_at } : {}),
-  };
+  });
 }
 
 function requesterFromEvent(event: ActionEvent): UserId | null {
@@ -295,7 +318,14 @@ export class D1NotificationOutboxRepository {
         )
         .bind(now, limit),
     );
-    return Result.isFailure(rows) ? rows : Result.succeed(rows.value.map(mapOutbox));
+    if (Result.isFailure(rows)) return rows;
+    const entries: NotificationOutboxEntry[] = [];
+    for (const row of rows.value) {
+      const entry = mapOutbox(row);
+      if (Result.isFailure(entry)) return entry;
+      entries.push(entry.value);
+    }
+    return Result.succeed(entries);
   }
 
   async load(input: {
@@ -314,7 +344,8 @@ export class D1NotificationOutboxRepository {
         )
         .bind(input.organizationId, input.outboxKey),
     );
-    return Result.isFailure(row) ? row : Result.succeed(row.value ? mapOutbox(row.value) : null);
+    if (Result.isFailure(row)) return row;
+    return row.value ? mapOutbox(row.value) : Result.succeed(null);
   }
 
   async markDispatched(input: {
@@ -487,10 +518,9 @@ export class D1NotificationOutboxRepository {
       );
       if (Result.isFailure(row)) return row;
       if (!row.value) return Result.succeed([]);
-      const candidates = parseJson<string[]>(row.value.candidate_user_ids);
-      return Result.isFailure(candidates)
-        ? candidates
-        : Result.succeed(candidates.value.map((value) => value as UserId));
+      const candidates = parseJson<unknown[]>(row.value.candidate_user_ids);
+      if (Result.isFailure(candidates)) return candidates;
+      return storedBrands("UserId", candidates.value, rowError);
     }
 
     const row = await firstRow<StoredEventRow>(
@@ -570,7 +600,8 @@ export class D1NotificationOutboxRepository {
         )
         .bind(input.organizationId, input.notificationKey, input.recipientUserId),
     );
-    return Result.isFailure(row) ? row : Result.succeed(row.value ? mapDelivery(row.value) : null);
+    if (Result.isFailure(row)) return row;
+    return row.value ? mapDelivery(row.value) : Result.succeed(null);
   }
 
   async markDeliverySent(input: {

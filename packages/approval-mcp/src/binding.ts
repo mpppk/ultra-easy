@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import { sha256CanonicalJson } from "@app/approval-core";
+import { sha256CanonicalJson, parseBrand } from "@app/approval-core";
 import type {
   Action,
   ActionDefinitionResolver,
@@ -8,7 +8,6 @@ import type {
   ExecutorKey,
   JsonValue,
   OrganizationId,
-  ResourceId,
   ResourceType,
 } from "@app/approval-core";
 
@@ -342,8 +341,8 @@ export function mapMcpToolArguments(
 ): Result.Result<Action, McpArgumentMappingError> {
   const values = args ?? {};
   const argument = binding.argumentMapping.resourceIdArgument;
-  const resourceId = values[argument];
-  if (typeof resourceId !== "string" || resourceId.length === 0) {
+  const resourceId = parseBrand("ResourceId", values[argument]);
+  if (Result.isFailure(resourceId)) {
     return Result.fail({
       message: `argument '${argument}' must be a non-empty string`,
       path: argument,
@@ -357,7 +356,7 @@ export function mapMcpToolArguments(
     type: binding.actionType,
     resource: {
       type: binding.argumentMapping.resourceType,
-      id: resourceId as ResourceId,
+      id: resourceId.value,
     },
     input,
   });

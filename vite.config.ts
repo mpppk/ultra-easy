@@ -42,6 +42,40 @@ export default defineConfig({
     },
     overrides: [
       {
+        // #102: branded typeへの`as`は検証を素通りさせる。brand.ts（smart constructor）とtest以外で禁止する。
+        files: ["apps/*/src/**/*.{ts,tsx}", "packages/*/src/**/*.ts"],
+        excludeFiles: [
+          "**/*.test.ts",
+          "**/*.test.tsx",
+          "**/*.type-test.ts",
+          "**/testing/**",
+          "**/test-support.ts",
+          "packages/approval-core/src/domain/brand.ts",
+          "packages/approval-core/src/uri.ts",
+          "apps/web/src/routeTree.gen.ts",
+        ],
+        rules: {
+          "eslint-js/no-restricted-syntax": [
+            "error",
+            {
+              selector: "ThrowStatement",
+              message: "throwは禁止です。失敗は@praha/byethrowのResultで明示的に返してください。",
+            },
+            {
+              selector: "CallExpression[callee.name=/^decodeURI(Component)?$/]",
+              message:
+                "decodeURIComponentはURIErrorを投げます。@app/approval-coreのdecodeUriComponent（Result）を使ってください。",
+            },
+            {
+              selector:
+                "TSAsExpression > TSTypeReference.typeAnnotation[typeName.name=/^(UserId|AgentId|ServiceId|PrincipalId|ActionRequestId|ActionType|ActionDefinitionKey|ExecutorKey|ResourceType|ResourceId|OrganizationId|DelegationGrantId|ClientId|AgentRunId|ApprovalPolicyKey|ApprovalPolicyBindingId|ApprovalRuleKey|ApprovalStepKey|ApprovalTaskId|MaterializedStepId|SnapshotApproverCohortId|Sha256Digest|ActionFingerprint|EvaluationSnapshotChecksum|ApprovalPlanChecksum|ApprovalBindingFingerprint|SchemaKey|RelationName|AuthorizationObjectType|AuthorizationObjectRef)$/]",
+              message:
+                "branded typeへのasは禁止です。parseBrand / brandLiteral等のsmart constructor（domain/brand.ts）を使ってください。",
+            },
+          ],
+        },
+      },
+      {
         // 例外を投げるdecodeURIComponentをResultで包む唯一の場所。
         files: ["packages/approval-core/src/uri.ts"],
         rules: {

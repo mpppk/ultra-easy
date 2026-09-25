@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import { canonicalizeJson, verifyMaterializedApprovalPlan } from "@app/approval-core";
+import { canonicalizeJson, parseBrand, verifyMaterializedApprovalPlan } from "@app/approval-core";
 import type {
   ActionRequestId,
   ApprovalPlanChecksum,
@@ -63,8 +63,10 @@ function serialize(value: unknown) {
   return canonicalizeJson(value as JsonValue);
 }
 
-function asApprovalPlanChecksum(value: string): ApprovalPlanChecksum {
-  return value as ApprovalPlanChecksum;
+/** 保存済みのchecksum列をsmart constructorで戻す。壊れた値はinvalid_planとして扱う。 */
+function storedPlanChecksum(value: string): ApprovalPlanChecksum | null {
+  const parsed = parseBrand("ApprovalPlanChecksum", value);
+  return Result.isSuccess(parsed) ? parsed.value : null;
 }
 
 export class D1MaterializedPlanRepository implements MaterializedPlanRepository {
@@ -144,10 +146,11 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     if (existing.value.approval_binding_fingerprint === String(plan.approvalBindingFingerprint)) {
       return { type: "existing" };
     }
-    return {
-      type: "conflict",
-      existingApprovalPlanChecksum: asApprovalPlanChecksum(existing.value.approval_plan_checksum),
-    };
+    const existingChecksum = storedPlanChecksum(existing.value.approval_plan_checksum);
+    if (!existingChecksum) {
+      return { type: "repository_error", message: "保存済みPlanのchecksumが不正です" };
+    }
+    return { type: "conflict", existingApprovalPlanChecksum: existingChecksum };
   }
 
   async load(
@@ -163,7 +166,10 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     const row = rowResult.value;
     if (!row) return { type: "not_found" };
 
-    const actualChecksum = asApprovalPlanChecksum(row.approval_plan_checksum);
+    const actualChecksum = storedPlanChecksum(row.approval_plan_checksum);
+    if (!actualChecksum) {
+      return { type: "invalid_plan", message: "保存済みPlanのchecksumが不正です" };
+    }
     if (
       input.expectedApprovalPlanChecksum &&
       String(input.expectedApprovalPlanChecksum) !== row.approval_plan_checksum

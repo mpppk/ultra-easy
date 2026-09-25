@@ -1,8 +1,8 @@
 import { Result } from "@praha/byethrow";
+import { storedBrand } from "./stored-brand.ts";
 
 import {
   AuthorizationRelationshipRepositoryError,
-  type ActionRequestId,
   type AuthorizationRelationshipReadRepository,
   type AuthorizationRelationshipRecord,
   type OrganizationId,
@@ -127,40 +127,111 @@ export async function firstRow<T>(
   }
 }
 
-function parseActor(value: string): PrincipalRef {
-  return JSON.parse(value) as PrincipalRef;
+function rowIntegrityError(message: string): AuthorizationRelationshipRepositoryError {
+  return new AuthorizationRelationshipRepositoryError(
+    "authorization_relationship_row_invalid",
+    false,
+    message,
+  );
 }
 
-export function relationshipRecord(row: RelationshipRow): AuthorizationRelationshipRecord {
-  return {
-    organizationId: row.organization_id as OrganizationId,
+/** 保存済みのprincipal（type + id）をsmart constructorでPrincipalRefへ戻す（#102）。 */
+function storedPrincipal(
+  type: unknown,
+  id: unknown,
+): Result.Result<PrincipalRef, AuthorizationRelationshipRepositoryError> {
+  if (type === "user") {
+    const parsed = storedBrand("UserId", id, rowIntegrityError);
+    return Result.isFailure(parsed) ? parsed : Result.succeed({ type, id: parsed.value });
+  }
+  if (type === "agent") {
+    const parsed = storedBrand("AgentId", id, rowIntegrityError);
+    return Result.isFailure(parsed) ? parsed : Result.succeed({ type, id: parsed.value });
+  }
+  if (type === "service") {
+    const parsed = storedBrand("ServiceId", id, rowIntegrityError);
+    return Result.isFailure(parsed) ? parsed : Result.succeed({ type, id: parsed.value });
+  }
+  return Result.fail(rowIntegrityError("保存済みのprincipal typeが不正です"));
+}
+
+const parseActorJson = Result.fn({
+  try: (value: string): unknown => JSON.parse(value),
+  catch: (): AuthorizationRelationshipRepositoryError =>
+    rowIntegrityError("保存済みのactorをparseできません"),
+});
+
+function parseActor(
+  value: string,
+): Result.Result<PrincipalRef, AuthorizationRelationshipRepositoryError> {
+  const parsed = parseActorJson(value);
+  if (Result.isFailure(parsed)) return parsed;
+  const actor = parsed.value as { type?: unknown; id?: unknown } | null;
+  return storedPrincipal(actor?.type, actor?.id);
+}
+
+/** rowの配列をmapperでResultのまま変換する（1件でも不正ならerror）。 */
+function mapRows<Row, Item>(
+  rows: readonly Row[],
+  mapper: (row: Row) => Result.Result<Item, AuthorizationRelationshipRepositoryError>,
+): Result.Result<Item[], AuthorizationRelationshipRepositoryError> {
+  const items: Item[] = [];
+  for (const row of rows) {
+    const item = mapper(row);
+    if (Result.isFailure(item)) return item;
+    items.push(item.value);
+  }
+  return Result.succeed(items);
+}
+
+export function relationshipRecord(
+  row: RelationshipRow,
+): Result.Result<AuthorizationRelationshipRecord, AuthorizationRelationshipRepositoryError> {
+  const organizationId = storedBrand("OrganizationId", row.organization_id, rowIntegrityError);
+  if (Result.isFailure(organizationId)) return organizationId;
+  const latestActionRequestId = storedBrand(
+    "ActionRequestId",
+    row.latest_action_request_id,
+    rowIntegrityError,
+  );
+  if (Result.isFailure(latestActionRequestId)) return latestActionRequestId;
+  return Result.succeed({
+    organizationId: organizationId.value,
     tupleKey: row.tuple_key,
     tuple: { user: row.subject, relation: row.relation, object: row.logical_object },
     objectType: row.object_type,
     desiredPresent: row.desired_present === 1,
     revision: row.revision,
     latestMutationKey: row.latest_mutation_key,
-    latestActionRequestId: row.latest_action_request_id as ActionRequestId,
+    latestActionRequestId: latestActionRequestId.value,
     confirmedRevision: row.confirmed_revision,
     confirmedPresent: row.confirmed_present === null ? null : row.confirmed_present === 1,
     syncStatus: row.sync_status,
     lastErrorCode: row.last_error_code,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  };
+  });
 }
 
-export function mutationRecord(row: MutationRow): RelationshipMutationRecord {
-  return {
-    organizationId: row.organization_id as OrganizationId,
+export function mutationRecord(
+  row: MutationRow,
+): Result.Result<RelationshipMutationRecord, AuthorizationRelationshipRepositoryError> {
+  const organizationId = storedBrand("OrganizationId", row.organization_id, rowIntegrityError);
+  if (Result.isFailure(organizationId)) return organizationId;
+  const actionRequestId = storedBrand("ActionRequestId", row.action_request_id, rowIntegrityError);
+  if (Result.isFailure(actionRequestId)) return actionRequestId;
+  const actor = parseActor(row.actor_json);
+  if (Result.isFailure(actor)) return actor;
+  return Result.succeed({
+    organizationId: organizationId.value,
     mutationKey: row.mutation_key,
-    actionRequestId: row.action_request_id as ActionRequestId,
+    actionRequestId: actionRequestId.value,
     tupleKey: row.tuple_key,
     tuple: { user: row.subject, relation: row.relation, object: row.logical_object },
     revision: row.revision,
     operation: row.operation,
     desiredPresent: row.desired_present === 1,
-    actor: parseActor(row.actor_json),
+    actor: actor.value,
     status: row.status,
     authorizationModelId: row.authorization_model_id,
     attemptCount: row.attempt_count,
@@ -170,18 +241,30 @@ export function mutationRecord(row: MutationRow): RelationshipMutationRecord {
     completedAt: row.completed_at,
     lastErrorCode: row.last_error_code,
     updatedAt: row.updated_at,
-  };
+  });
 }
 
-function auditEvent(row: EventRow): RelationshipAuditEvent {
-  return {
+function auditEvent(
+  row: EventRow,
+): Result.Result<RelationshipAuditEvent, AuthorizationRelationshipRepositoryError> {
+  const organizationId = storedBrand("OrganizationId", row.organization_id, rowIntegrityError);
+  if (Result.isFailure(organizationId)) return organizationId;
+  const sourceActionRequestId = storedBrand(
+    "ActionRequestId",
+    row.source_action_request_id,
+    rowIntegrityError,
+  );
+  if (Result.isFailure(sourceActionRequestId)) return sourceActionRequestId;
+  const actor = storedPrincipal(row.actor_type, row.actor_id);
+  if (Result.isFailure(actor)) return actor;
+  return Result.succeed({
     sequence: row.sequence,
-    organizationId: row.organization_id as OrganizationId,
+    organizationId: organizationId.value,
     eventKey: row.event_key,
     type: row.event_type,
     occurredAt: row.occurred_at,
-    actor: { type: row.actor_type, id: row.actor_id } as PrincipalRef,
-    sourceActionRequestId: row.source_action_request_id as ActionRequestId,
+    actor: actor.value,
+    sourceActionRequestId: sourceActionRequestId.value,
     mutationKey: row.mutation_key,
     tupleKey: row.tuple_key,
     revision: row.revision,
@@ -190,7 +273,7 @@ function auditEvent(row: EventRow): RelationshipAuditEvent {
     tuple: { user: row.subject, relation: row.relation, object: row.logical_object },
     authorizationModelId: row.authorization_model_id,
     errorCode: row.error_code,
-  };
+  });
 }
 
 function encodeCursor(value: Record<string, string | number>): string {
@@ -275,8 +358,10 @@ export class D1AuthorizationRelationshipReadRepository implements AuthorizationR
     if (Result.isFailure(rows)) return rows;
     const page = rows.value.slice(0, limit);
     const last = page.at(-1);
+    const items = mapRows(page, relationshipRecord);
+    if (Result.isFailure(items)) return items;
     return Result.succeed({
-      items: page.map(relationshipRecord),
+      items: items.value,
       nextCursor:
         rows.value.length > limit && last
           ? encodeCursor({ u: last.updated_at, k: last.tuple_key })
@@ -311,10 +396,11 @@ export class D1AuthorizationRelationshipReadRepository implements AuthorizationR
         .bind(input.organizationId, input.tupleKey),
     );
     if (Result.isFailure(mutations)) return mutations;
-    return Result.succeed({
-      relationship: relationshipRecord(row.value),
-      mutations: mutations.value.map(mutationRecord),
-    });
+    const relationship = relationshipRecord(row.value);
+    if (Result.isFailure(relationship)) return relationship;
+    const mutationRecords = mapRows(mutations.value, mutationRecord);
+    if (Result.isFailure(mutationRecords)) return mutationRecords;
+    return Result.succeed({ relationship: relationship.value, mutations: mutationRecords.value });
   }
 
   async listAudit(
@@ -371,8 +457,10 @@ export class D1AuthorizationRelationshipReadRepository implements AuthorizationR
     if (Result.isFailure(rows)) return rows;
     const page = rows.value.slice(0, limit);
     const last = page.at(-1);
+    const auditItems = mapRows(page, auditEvent);
+    if (Result.isFailure(auditItems)) return auditItems;
     return Result.succeed({
-      items: page.map(auditEvent),
+      items: auditItems.value,
       nextCursor: rows.value.length > limit && last ? encodeCursor({ s: last.sequence }) : null,
     });
   }

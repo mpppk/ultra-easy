@@ -1,6 +1,12 @@
 import { Result } from "@praha/byethrow";
 
-import { decodeUriComponent, type InvalidUriComponentError } from "@app/approval-core";
+import {
+  decodeUriComponent,
+  parseBrand,
+  type Brand,
+  type BrandKind,
+  type InvalidUriComponentError,
+} from "@app/approval-core";
 
 /**
  * `pattern.exec(pathname)`と同じ形（[0]はmatch全体）で、captureをdecodeして返す。
@@ -33,8 +39,32 @@ export function invalidPathParameterResponse(): Response {
   );
 }
 
-/** routeのpatternに一致したらdecode済みcapture、一致しなければnull、decode失敗は400 Response。 */
-export function pathParameters(pattern: RegExp, pathname: string): string[] | null | Response {
+type ParameterKind = BrandKind | "string";
+type ParameterValue<K extends ParameterKind> = K extends BrandKind ? Brand<string, K> : string;
+
+/**
+ * routeのpatternに一致したらcaptureをdecodeし、kindsに従ってbrandへ変換して返す（#96 / #102）。
+ * 一致しなければnull、percent-encodingが不正・brandとして不正な値は400 Response。
+ */
+export function routeParameters<const K extends readonly ParameterKind[]>(
+  pattern: RegExp,
+  pathname: string,
+  kinds: K,
+): { [I in keyof K]: ParameterValue<K[I]> } | null | Response {
   const matched = matchPathParameters(pattern, pathname);
-  return Result.isFailure(matched) ? invalidPathParameterResponse() : matched.value;
+  if (Result.isFailure(matched)) return invalidPathParameterResponse();
+  if (!matched.value) return null;
+  const values: string[] = [];
+  for (const [index, kind] of kinds.entries()) {
+    const raw = matched.value[index + 1];
+    if (kind === "string") {
+      if (raw === undefined || raw.length === 0) return invalidPathParameterResponse();
+      values.push(raw);
+      continue;
+    }
+    const parsed = parseBrand(kind, raw);
+    if (Result.isFailure(parsed)) return invalidPathParameterResponse();
+    values.push(parsed.value);
+  }
+  return values as { [I in keyof K]: ParameterValue<K[I]> };
 }
