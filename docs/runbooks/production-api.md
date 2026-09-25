@@ -57,12 +57,13 @@ Production domain + custom-domain cutover are follow-ups.
 Governance bootstrap rule (docs/governance-bootstrap.md) option 1
 (infra-as-code by the deployment principal):
 
-1. `wrangler deploy` (provisions D1/Workflows/Queues on first deploy).
-2. `wrangler d1 migrations apply DB --remote`.
-3. Generate + apply the seed (idempotent, re-apply safe):
+1. First time only: `vp -C apps/approval-api run bootstrap:staging` (deploy provisions
+   D1/Workflows/Queues, then migrates). Afterwards every deploy is migrate → deploy
+   (`deploy:staging`, or the `deploy` GitHub Actions workflow — see Deployment below).
+2. Generate + apply the seed (idempotent, re-apply safe):
    `bun packages/approval-d1/bootstrap/generate-staging-seed.ts`
    `wrangler d1 execute DB --remote --file=packages/approval-d1/bootstrap/staging-seed.sql`
-4. Seed contents: 4 governance definitions, `staging:ticket-update`
+3. Seed contents: 4 governance definitions, `staging:ticket-update`
    definition (executor `staging`), serial direct-user policy
    (alice→bob; v2 opts alice's step into self approval, see Decisions),
    binding for `ticket.update`.
@@ -214,6 +215,30 @@ POSTs `firing`/`resolved` transitions to Slack (`SLACK_WEBHOOK_URL` secret).
   as the production log-alert creation (see `operator-dashboard.md`).
 - Secrets: `SLACK_WEBHOOK_URL` via `wrangler secret put` only (per
   environment); source of truth is 1Password vault `ultra-easy` (`SLACK`).
+
+## Deployment (CD, #100)
+
+Deploys run from GitHub Actions (`.github/workflows/deploy.yml`, manual
+`workflow_dispatch` with `environment: staging | production`):
+
+1. The `check` workflow (static checks, model tests, dry-runs, full tests) runs on the exact
+   commit (`workflow_call`).
+2. The `deploy` job runs in the GitHub environment of the same name, so its protection rules
+   apply. Configure **required reviewers** on `production`; production only deploys from
+   `main`. Deploys to the same environment are serialized (`concurrency`).
+3. `deploy:<environment>` applies D1 migrations, then deploys the Worker (migrate → deploy;
+   migrations must be expand / contract compatible — docs/runbooks/migration-rollback.md).
+
+Setup per GitHub environment (`staging`, `production`):
+
+- secret `CLOUDFLARE_API_TOKEN`: a Cloudflare API token scoped to the account with
+  _Workers Scripts: Edit_, _D1: Edit_, _Workers Queues: Edit_ (and Workflows) only. Source of
+  truth: 1Password Environment `ultra-easy`.
+- variable `CLOUDFLARE_ACCOUNT_ID`.
+
+Local deploys with personal credentials are being phased out: use them only to bootstrap a new
+environment or when GitHub Actions is unavailable, and record the revision in the incident /
+release log.
 
 ## Production environment (`--env production`, #84)
 

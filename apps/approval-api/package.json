@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "test": "vp test --passWithNoTests",
-    "deploy:staging": "wrangler deploy && wrangler d1 migrations apply DB --remote",
+    "deploy:staging": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "deploy:production": "wrangler d1 migrations apply DB --remote --env production && wrangler deploy --env production",
+    "bootstrap:staging": "wrangler deploy && wrangler d1 migrations apply DB --remote",
+    "bootstrap:production": "wrangler deploy --env production && wrangler d1 migrations apply DB --remote --env production",
     "deploy:dry-run": "wrangler deploy --dry-run",
     "deploy:dry-run:production": "wrangler deploy --dry-run --env production"
   },

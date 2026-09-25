@@ -12,6 +12,28 @@ Ultra Easy uses forward-only D1 migrations. Production rollback is a database re
 4. Run the repository migration-recovery test and the M6 critical-path suite on the release candidate.
 5. Quiesce or otherwise account for writes if the migration cannot safely run concurrently.
 
+## Deploy order and compatibility (#100)
+
+Every deploy runs **migrate → deploy** (`deploy:staging`, `deploy:production`,
+`deploy:preview`): the schema moves first, then the code. A failed migration stops the deploy
+before any new code runs, and the new revision never runs against an older schema.
+
+Because the currently running revision keeps serving traffic between the two steps, every
+migration must be **backward compatible with the previous revision (expand / contract)**:
+
+- **Expand** (safe in one release): add tables, add nullable columns or columns with defaults,
+  add indexes, add triggers that do not reject writes the old revision performs.
+- **Contract** (needs two releases): drop / rename columns or tables, add `NOT NULL` without a
+  default, tighten constraints. First ship code that no longer depends on the old shape
+  (release N), then ship the contracting migration (release N+1).
+- Data backfills run as their own idempotent migration after the expanding one.
+- Review checklist for a migration PR: "Would the revision currently in production still work
+  after this migration runs?" If not, split it.
+
+First deploy of a brand-new environment: D1 is auto-provisioned by `wrangler deploy`, so the
+database does not exist before it. Use the one-time `bootstrap:<env>` script
+(deploy → migrate) exactly once, then the regular migrate → deploy scripts.
+
 ## Forward migration
 
 Apply `packages/approval-d1/migrations` in lexical order using the deployment pipeline. After application:

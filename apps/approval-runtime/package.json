@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "vp test --passWithNoTests",
-    "deploy:preview": "wrangler deploy && wrangler d1 migrations apply DB --remote",
+    "deploy:preview": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "bootstrap:preview": "wrangler deploy && wrangler d1 migrations apply DB --remote",
     "deploy:dry-run": "wrangler deploy --dry-run"
   },
   "dependencies": {
