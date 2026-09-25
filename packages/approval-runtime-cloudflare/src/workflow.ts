@@ -19,6 +19,7 @@ import {
 import type {
   ActionExecutionGuaranteeLevel,
   ActionExecutionResult,
+  ActionRequestStatus,
   ActionRequestId,
   ApprovalDecisionEvent,
   ApprovalDecisionRejectionError,
@@ -41,11 +42,7 @@ import {
   OpenFgaClient,
 } from "@app/approval-fga";
 
-import {
-  runActionExecution,
-  type ActionExecutionTerminalStatus,
-  type ActionExecutionWorkflowEnv,
-} from "./action-execution.ts";
+import { runActionExecution, type ActionExecutionWorkflowEnv } from "./action-execution.ts";
 import {
   emitActionSliSnapshot,
   emitDomainEventTelemetry,
@@ -89,7 +86,8 @@ export type ActionWorkflowOutput =
   | {
       type: "completed";
       actionRequestId: ActionRequestId;
-      status: ApprovalRuntimeState["status"] | ActionExecutionTerminalStatus;
+      /** ActionRequestの状態（coreの状態機械と同じ語彙、#101）。 */
+      status: ActionRequestStatus;
       guaranteeLevel?: ActionExecutionGuaranteeLevel;
       idempotencyKey?: string;
       code?: string;
@@ -575,22 +573,52 @@ const parseActionExecutionResult = Result.fn({
     ),
 });
 
-function outputFromTransition(
-  params: ActionWorkflowParams,
-  transition: RuntimeFailure,
-): ActionWorkflowOutput {
+/**
+ * Workflowの異常終了を記録して`failed`出力を返す（#101 / #109）。telemetryに加えて
+ * `workflow.failed` domain eventをaction_eventsへ残し、ActionRequestの状態を`failed`にする
+ * （pending_approvalのまま放置しない）。eventの保存自体に失敗しても終了は妨げない。
+ */
+async function failWorkflow(input: {
+  env: ActionWorkflowEnv;
+  step: WorkflowStep;
+  params: ActionWorkflowParams;
+  workflowInstanceId: string;
+  operation: string;
+  code: string;
+  message: string;
+}): Promise<ActionWorkflowOutput> {
   emitWorkflowFailure({
     telemetry: new ConsoleTelemetrySink(),
-    organizationId: params.organizationId,
-    actionRequestId: params.actionRequestId,
-    operation: "approval_runtime",
-    errorCode: transition.code,
+    organizationId: input.params.organizationId,
+    actionRequestId: input.params.actionRequestId,
+    operation: input.operation,
+    errorCode: input.code,
   });
+  const record = actionEventRecord({
+    organizationId: input.params.organizationId,
+    occurredAt: new Date().toISOString(),
+    event: {
+      type: "workflow.failed",
+      actionRequestId: input.params.actionRequestId,
+      workflowInstanceId: input.workflowInstanceId,
+      code: input.code,
+    },
+  });
+  try {
+    await input.step.do("record workflow failure", async () => {
+      // occurredAtはstep結果として固定し、replayで別の時刻のeventを作らない。
+      const appended = await new D1ActionEventRepository(input.env.DB).appendMany([record]);
+      if (Result.isFailure(appended)) return Promise.reject(appended.error);
+      return { recordedAt: record.occurredAt };
+    });
+  } catch {
+    // 記録できなくてもWorkflowは終了させる（telemetryのworkflow.failure_totalは出ている）。
+  }
   return {
     type: "failed",
-    actionRequestId: params.actionRequestId,
-    code: transition.code,
-    message: transition.message,
+    actionRequestId: input.params.actionRequestId,
+    code: input.code,
+    message: input.message,
   };
 }
 
@@ -686,11 +714,22 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       };
     }
 
+    const fail = (operation: string, failure: { code: string; message: string }) =>
+      failWorkflow({
+        env: this.env,
+        step,
+        params,
+        workflowInstanceId: event.instanceId,
+        operation,
+        code: failure.code,
+        message: failure.message,
+      });
+
     let logicalNow = event.timestamp.toISOString();
     const initialized = await runRuntimeStep(step, "initialize approval runtime", params, () =>
       initializeRuntime(this.env, params, logicalNow, event.instanceId),
     );
-    if (initialized.type === "failed") return outputFromTransition(params, initialized);
+    if (initialized.type === "failed") return fail("approval_runtime", initialized);
 
     let state = initialized.state;
     let version = initialized.version;
@@ -703,7 +742,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         const expired = await runRuntimeStep(step, name, params, () =>
           expireRuntime(this.env, params, cursor(name), nextExpiry),
         );
-        if (expired.type === "failed") return outputFromTransition(params, expired);
+        if (expired.type === "failed") return fail("approval_runtime", expired);
         state = expired.state;
         version = expired.version;
         logicalNow = nextExpiry;
@@ -733,7 +772,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
           const expired = await runRuntimeStep(step, name, params, () =>
             expireRuntime(this.env, params, cursor(name), nextExpiry),
           );
-          if (expired.type === "failed") return outputFromTransition(params, expired);
+          if (expired.type === "failed") return fail("approval_runtime", expired);
           state = expired.state;
           version = expired.version;
           logicalNow = nextExpiry;
@@ -748,7 +787,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       const recorded = await runRuntimeStep(step, recordName, params, () =>
         recordDecision(this.env, params, cursor(recordName), decision.event),
       );
-      if (recorded.type === "failed") return outputFromTransition(params, recorded);
+      if (recorded.type === "failed") return fail("approval_runtime", recorded);
       if (recorded.type === "decision_rejected") {
         // invalid decisionは監査に残して無視し、同じTaskの待機を継続する。
         if (Date.parse(decision.event.decidedAt) > Date.parse(logicalNow)) {
@@ -766,7 +805,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       const advanced = await runRuntimeStep(step, activateName, params, () =>
         advanceRuntime(this.env, params, cursor(activateName), logicalNow),
       );
-      if (advanced.type === "failed") return outputFromTransition(params, advanced);
+      if (advanced.type === "failed") return fail("approval_runtime", advanced);
       state = advanced.state;
       version = advanced.version;
       iteration += 1;
@@ -794,21 +833,7 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       step,
       evaluatedAt: logicalNow,
     });
-    if (execution.type === "failed") {
-      emitWorkflowFailure({
-        telemetry: new ConsoleTelemetrySink(),
-        organizationId: params.organizationId,
-        actionRequestId: params.actionRequestId,
-        operation: "action_execution",
-        errorCode: execution.code,
-      });
-      return {
-        type: "failed",
-        actionRequestId: params.actionRequestId,
-        code: execution.code,
-        message: execution.message,
-      };
-    }
+    if (execution.type === "failed") return fail("action_execution", execution);
 
     try {
       await step.do("project action result", async () => {
@@ -823,19 +848,10 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         return { type: "projected" } as const;
       });
     } catch (error) {
-      emitWorkflowFailure({
-        telemetry: new ConsoleTelemetrySink(),
-        organizationId: params.organizationId,
-        actionRequestId: params.actionRequestId,
-        operation: "project_action_result",
-        errorCode: "execution_projection_failed",
-      });
-      return {
-        type: "failed",
-        actionRequestId: params.actionRequestId,
+      return fail("project_action_result", {
         code: "execution_projection_failed",
         message: error instanceof Error ? error.message : String(error),
-      };
+      });
     }
 
     return {

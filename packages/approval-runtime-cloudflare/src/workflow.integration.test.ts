@@ -37,6 +37,7 @@ import {
   D1ApprovalRuntimeProjectionRepository,
   D1GovernanceRepository,
   D1MaterializedPlanRepository,
+  D1PublicApiRepository,
 } from "@app/approval-d1";
 
 import { TEST_EXECUTOR_KEYS } from "./testing/test-worker.ts";
@@ -259,6 +260,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       "step.approved",
       "step.activated",
       "step.approved",
+      "approval.approved",
       "action.reauthorized",
       "action.execution_started",
       "action.completed",
@@ -424,6 +426,27 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       code: "approval_plan_checksum_mismatch",
     });
     await introspector.dispose();
+
+    // #101: 異常終了はworkflow.failedとしてauditに残り、read APIの状態もfailedになる
+    const audit = await new D1ActionEventRepository(testEnv.DB).listForAction({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(audit));
+    expect(audit.value.map((record) => record.event)).toContainEqual(
+      expect.objectContaining({
+        type: "workflow.failed",
+        workflowInstanceId: id,
+        code: "approval_plan_checksum_mismatch",
+      }),
+    );
+    const view = await new D1PublicApiRepository(testEnv.DB).getActionRequest({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(view));
+    expect(view.value).toMatchObject({ status: "failed" });
+    expect(view.value?.completedAt).toBeDefined();
   });
 
   it("1MiB近いPlanでもWorkflow params/step resultへPlan本体を載せない", async () => {

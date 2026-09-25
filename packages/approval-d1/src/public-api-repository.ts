@@ -20,18 +20,19 @@ import type {
   ApprovalRuntimeState,
   ApprovalTaskId,
   JsonValue,
-  MaterializedApprovalPlan,
   MaterializedApprovalStep,
   MaterializedFlow,
   OrganizationId,
   UserId,
 } from "@app/approval-core";
-import { selfApprovalSubject } from "@app/approval-core";
-
 import {
-  D1ActionResultProjectionRepository,
-  type ActionResultProjection,
-} from "./action-result-projection-repository.ts";
+  foldActionRequestStatus,
+  isTerminalActionRequestStatus,
+  selfApprovalSubject,
+} from "@app/approval-core";
+
+import { D1ActionEventRepository } from "./action-event-repository.ts";
+import { D1ActionResultProjectionRepository } from "./action-result-projection-repository.ts";
 import { D1ApprovalRuntimeProjectionRepository } from "./approval-runtime-projection-repository.ts";
 import {
   D1MaterializedPlanRepository,
@@ -173,22 +174,6 @@ function runtimeUpdatedAt(state: ApprovalRuntimeState | null, fallback: string):
   return Number.isFinite(latest) ? new Date(latest).toISOString() : fallback;
 }
 
-function actionStatus(input: {
-  plan: MaterializedApprovalPlan;
-  runtime: ApprovalRuntimeState | null;
-  result: ActionResultProjection | null;
-}): ActionRequestView["status"] {
-  if (input.result) return input.result.status;
-  if (input.runtime) {
-    if (input.runtime.status === "pending") return "pending_approval";
-    if (input.runtime.status === "approved") return "approved";
-    if (input.runtime.status === "rejected") return "rejected";
-    if (input.runtime.status === "cancelled") return "cancelled";
-    return "expired";
-  }
-  return input.plan.flow.type === "none" ? "executing" : "pending_approval";
-}
-
 function commandRecord(
   row: CommandRow,
 ): Result.Result<ApprovalCommandRecord, PublicApiRepositoryError> {
@@ -247,8 +232,10 @@ export class D1PublicApiRepository
   private readonly plans: D1MaterializedPlanRepository;
   private readonly runtimes: D1ApprovalRuntimeProjectionRepository;
   private readonly results: D1ActionResultProjectionRepository;
+  private readonly events: D1ActionEventRepository;
 
   constructor(private readonly db: D1DatabaseLike) {
+    this.events = new D1ActionEventRepository(db);
     this.plans = new D1MaterializedPlanRepository(db);
     this.runtimes = new D1ApprovalRuntimeProjectionRepository(db);
     this.results = new D1ActionResultProjectionRepository(db);
@@ -279,22 +266,21 @@ export class D1PublicApiRepository
       return Result.fail(repositoryError(actionResult.error, actionResult.error.message));
     }
 
+    // statusはaction_events（append-only）をcoreの状態機械でfoldして導出する（#101）。
+    // runtime projection / action_resultsは同じbatchで書かれる表示用の詳細だけに使う。
+    const events = await this.events.listForAction(input);
+    if (Result.isFailure(events)) {
+      return Result.fail(repositoryError(events.error, events.error.message));
+    }
+    const status = foldActionRequestStatus(
+      events.value.map((record) => record.event),
+      { approvalRequired: plan.plan.flow.type !== "none" },
+    );
     const createdAt = plan.plan.evaluationSnapshot.evaluatedAt;
-    const updatedAt = actionResult.value?.completedAt ?? runtimeUpdatedAt(runtime.value, createdAt);
-    const status = actionStatus({
-      plan: plan.plan,
-      runtime: runtime.value,
-      result: actionResult.value,
-    });
-    const terminal =
-      status === "executed" ||
-      status === "rejected" ||
-      status === "cancelled" ||
-      status === "expired" ||
-      status === "authorization_revoked" ||
-      status === "authorization_check_failed" ||
-      status === "execution_failed" ||
-      status === "execution_unknown";
+    const lastEventAt = events.value.at(-1)?.occurredAt;
+    const updatedAt =
+      actionResult.value?.completedAt ?? runtimeUpdatedAt(runtime.value, lastEventAt ?? createdAt);
+    const terminal = isTerminalActionRequestStatus(status);
 
     const resultView = actionResult.value
       ? {

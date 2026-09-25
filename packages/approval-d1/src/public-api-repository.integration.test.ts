@@ -109,6 +109,8 @@ function database(): SqliteD1Database {
     "0004_action_requests_workflow_lookup.sql",
     "0005_action_results.sql",
     "0006_public_api.sql",
+    "0007_action_events.sql",
+    "0008_notification_outbox.sql",
     "0014_api_idempotency_lease.sql",
     "0015_approval_command_delivery.sql",
     "0016_runtime_projection_version.sql",
