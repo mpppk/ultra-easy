@@ -219,49 +219,97 @@ export class D1ActionEventRepository implements ActionEventRepository {
     return Result.succeed((saved.value[0]?.meta?.changes ?? 0) > 0 ? "created" : "existing");
   }
 
+  /**
+   * 複数eventを追記する。`append`と同じく、同じeventKeyの既存rowがある場合は内容の一致を
+   * 検証し、異なる内容を黙って無視しない（#99）。
+   */
   async appendMany(
     records: readonly ActionEventRecord[],
   ): Result.ResultAsync<void, D1ActionEventRepositoryError> {
     const statements: D1PreparedStatementLike[] = [];
+    const eventStatementIndexes: { index: number; record: ActionEventRecord }[] = [];
     let requiresAtomicOutbox = false;
     for (const record of records) {
       const prepared = prepareActionEventPersistenceStatements(this.db, record);
       if (Result.isFailure(prepared)) return prepared;
       if (prepared.value.length > 1) requiresAtomicOutbox = true;
+      eventStatementIndexes.push({ index: statements.length, record });
       statements.push(...prepared.value);
     }
     if (statements.length === 0) return Result.succeed(undefined);
 
+    let results: D1RunResultLike[];
     const batchDb = asBatchDatabase(this.db);
     if (batchDb) {
       const saved = await runBatch({ db: batchDb, statements });
       if (Result.isFailure(saved)) return saved;
       const failed = saved.value.find((result) => !result.success);
-      return failed
-        ? Result.fail(
-            repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"),
-          )
-        : Result.succeed(undefined);
-    }
-
-    if (requiresAtomicOutbox) {
-      return Result.fail(
-        repositoryError(
-          undefined,
-          "D1 batch()が利用できないためeventとoutboxをatomicに保存できません",
-        ),
-      );
-    }
-    for (const statement of statements) {
-      const saved = await runStatement(statement);
-      if (Result.isFailure(saved)) return saved;
-      if (!saved.value.success) {
+      if (failed) {
         return Result.fail(
-          repositoryError(saved.value.error, "Action eventのappendに失敗しました"),
+          repositoryError(failed.error, "Action event/outbox batchのappendに失敗しました"),
         );
       }
+      results = saved.value;
+    } else {
+      if (requiresAtomicOutbox) {
+        return Result.fail(
+          repositoryError(
+            undefined,
+            "D1 batch()が利用できないためeventとoutboxをatomicに保存できません",
+          ),
+        );
+      }
+      results = [];
+      for (const statement of statements) {
+        const saved = await runStatement(statement);
+        if (Result.isFailure(saved)) return saved;
+        if (!saved.value.success) {
+          return Result.fail(
+            repositoryError(saved.value.error, "Action eventのappendに失敗しました"),
+          );
+        }
+        results.push(saved.value);
+      }
+    }
+
+    for (const { index, record } of eventStatementIndexes) {
+      if ((results[index]?.meta?.changes ?? 1) > 0) continue;
+      const verified = await this.verifyExisting(record);
+      if (Result.isFailure(verified)) return verified;
     }
     return Result.succeed(undefined);
+  }
+
+  /** INSERT OR IGNOREで無視された既存rowが、同じ内容であることを確認する。 */
+  private async verifyExisting(
+    record: ActionEventRecord,
+  ): Result.ResultAsync<void, D1ActionEventRepositoryError> {
+    const eventJson = validateRecord(record);
+    if (Result.isFailure(eventJson)) return eventJson;
+    const existing = await firstStoredRow(
+      this.db
+        .prepare(
+          `SELECT sequence, organization_id, action_request_id, event_key, event_type,
+                  occurred_at, event_json
+             FROM action_events
+            WHERE organization_id = ? AND event_key = ?`,
+        )
+        .bind(record.organizationId, record.eventKey),
+    );
+    if (Result.isFailure(existing)) return existing;
+    const same =
+      existing.value !== null &&
+      existing.value.action_request_id === String(record.event.actionRequestId) &&
+      existing.value.event_type === record.event.type &&
+      existing.value.event_json === eventJson.value;
+    return same
+      ? Result.succeed(undefined)
+      : Result.fail(
+          new D1ActionEventRepositoryError(
+            `既存Action eventと同じeventKeyの内容が一致しません: ${record.eventKey}`,
+            true,
+          ),
+        );
   }
 
   /**

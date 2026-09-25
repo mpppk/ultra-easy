@@ -18,6 +18,7 @@ import {
   D1OperatorAlertStateRepository,
   listRecentOrganizations,
   loadOperatorDashboard,
+  purgeExpiredOperationalData,
   type D1DatabaseLike,
   type D1OperatorAlertStateRepositoryError,
   type D1OperatorDashboardError,
@@ -266,6 +267,14 @@ export function notificationScheduledTasks(input: {
         ]
       : []),
   ];
+}
+
+/** 保持期間を過ぎた運用データの削除（#99）。両appのcronに含める。 */
+export function retentionScheduledTask(db: D1DatabaseLike): ScheduledTask {
+  return {
+    name: "purge_expired_operational_data",
+    run: (now) => purgeExpiredOperationalData(db, { now }),
+  };
 }
 
 export type NotificationQueueBatch = {

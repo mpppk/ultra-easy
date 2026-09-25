@@ -27,6 +27,7 @@ import {
   notificationScheduledTasks,
   notifyAlertTransition,
   readOperatorAlertThresholds,
+  retentionScheduledTask,
   runScheduledTasks,
   ServiceBindingActionAuthorizer,
   type ActionServiceBinding,
@@ -293,6 +294,7 @@ export default {
         },
         { name: "sweep_pending_decisions", run: (now) => sweepPendingDecisions(env, now) },
         { name: "reconcile_relationships", run: () => reconcileRelationships(env) },
+        retentionScheduledTask(env.DB),
       ],
     });
   },

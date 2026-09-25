@@ -59,8 +59,6 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await testEnv.DB.batch([
-    testEnv.DB.prepare("DELETE FROM force_cancel_audit"),
-    testEnv.DB.prepare("DELETE FROM action_events"),
     testEnv.DB.prepare("DELETE FROM action_results"),
     testEnv.DB.prepare("DELETE FROM approval_tasks"),
     testEnv.DB.prepare("DELETE FROM approval_runtime_projections"),

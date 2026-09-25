@@ -39,7 +39,6 @@ beforeEach(async () => {
   await testEnv.DB.batch([
     testEnv.DB.prepare("DELETE FROM notification_deliveries"),
     testEnv.DB.prepare("DELETE FROM outbox_events"),
-    testEnv.DB.prepare("DELETE FROM action_events"),
   ]);
 });
 
