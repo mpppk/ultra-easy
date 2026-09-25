@@ -59,6 +59,7 @@ import type {
   SandboxAdmission,
   WorkflowAdmissionController,
   WorkflowRunScheduler,
+  WorkflowRuntimeDependencies,
 } from "@app/workflow-application";
 import {
   D1ActionCatalogPublisher,
@@ -97,6 +98,7 @@ export type WorkflowPlatformOptions = {
   /** 承認待ち等のprimitive child ActionRequestのcancel。 */
   primitiveCanceller?: ChildActionCanceller;
   pollIntervalSeconds?: number;
+  onEffectRetry?: WorkflowRuntimeDependencies["onEffectRetry"];
   /** Program Nodeを実行するsandbox（#160）。未設定ならProgram Nodeは失敗する。 */
   sandbox?: SandboxAdapter;
   /** 自然言語からProgramを生成するCoding LLM（#160 / #161）。 */
@@ -211,6 +213,7 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
       clock: options.clock,
       completion: new CompositeActionCompletionListener({ completion, correlations, scheduler }),
       ...(admission ? { admission } : {}),
+      ...(options.onEffectRetry ? { onEffectRetry: options.onEffectRetry } : {}),
       ...(options.pollIntervalSeconds !== undefined
         ? { pollIntervalSeconds: options.pollIntervalSeconds }
         : {}),

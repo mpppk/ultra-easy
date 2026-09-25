@@ -36,6 +36,12 @@ const EPILOGUE = `
 })()
 `;
 
+/**
+ * 実行量の予算（interrupt回数 / timeoutMs 1ms）。単純loopは約4 interrupt / ms、JSON等の組み込み関数中心の
+ * loopは約0.14 interrupt / msで、最悪ケースでもhost（Workers）のCPU上限内で必ず打ち切れるよう保守的な値にする。
+ */
+const DEFAULT_INTERRUPTS_PER_MS = 0.5;
+
 function textBytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
@@ -94,14 +100,33 @@ function describe(context: QuickJSContext, handle: QuickJSHandle): string {
  * - 入出力はJSON文字列で受け渡し、結果は`parseProgramResult`で検証する
  */
 export class QuickJsSandbox implements SandboxAdapter {
-  constructor(private readonly loadModule: () => Promise<QuickJSWASMModule>) {}
+  constructor(
+    private readonly loadModule: () => Promise<QuickJSWASMModule>,
+    private readonly options: {
+      /**
+       * `timeoutMs` 1msあたりに許すinterrupt回数（QuickJSは一定数のbytecode実行ごとにinterrupt handlerを呼ぶ）。
+       * Cloudflare Workersでは同期実行中に`Date.now()`が進まない（Spectre対策）ため、時刻による打ち切りが
+       * 効かない。実行量（interrupt回数）の予算で必ず打ち切る。
+       */
+      interruptsPerMs?: number;
+    } = {},
+  ) {}
 
   private execute(module: QuickJSWASMModule, invocation: SandboxInvocation, logs: LogCollector) {
     const { limits } = invocation;
     const runtime = module.newRuntime();
     runtime.setMemoryLimit(limits.memoryBytes);
     runtime.setMaxStackSize(limits.stackBytes);
-    runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + limits.timeoutMs));
+    const deadline = shouldInterruptAfterDeadline(Date.now() + limits.timeoutMs);
+    const budget = Math.max(
+      1,
+      Math.floor(limits.timeoutMs * (this.options.interruptsPerMs ?? DEFAULT_INTERRUPTS_PER_MS)),
+    );
+    let interrupts = 0;
+    runtime.setInterruptHandler((current) => {
+      interrupts += 1;
+      return interrupts > budget || deadline(current);
+    });
     const context = runtime.newContext();
     try {
       const log = context.newFunction("log", (...args: QuickJSHandle[]) => {

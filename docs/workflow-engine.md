@@ -289,6 +289,8 @@ Natural language -> ProgramCodeGenerator（Coding LLM）-> generated source
   （hostが渡すのは容量上限付きの `console.log` だけ）。静的検証でも `fetch` / `require` / `import` 等を拒否する。
 - memory / stack / 実行時間（interrupt）/ output / logの上限を強制し、超過はterminateする
   （`sandbox_timeout` / `sandbox_memory_exceeded` / `sandbox_output_too_large`）。
+- 実行時間はwall clockとinterrupt回数の両方で打ち切る。Workers（workerd）は実行中 `Date.now()` が進まないため、
+  `timeoutMs × interruptsPerMs`（既定0.5）回のinterruptを予算とし、無限loopもCPU上限前に `sandbox_timeout` にする。
 - Cloudflare Workersでは `@app/workflow-sandbox/workerd`（bundle済みwasm moduleを注入）、
   Node / testでは `@app/workflow-sandbox/node` で読み込む。
 
@@ -356,3 +358,30 @@ function main(input, context) {
 
 tenant上限 < system上限なので、noisy tenantがsystem capacityを占有しきれない。leaseは有効期限付き
 （異常終了時のleak回収）、counterはeffect IDで冪等。D1: migration `0025_workflow_governance.sql`。
+
+## Workflow Studio (#162)
+
+`apps/web` の `/preview/workflows`（一覧）・`/preview/workflows/$id`（editor）・`/preview/workflow-runs/$runId`（run view）。
+API はpreview runtime（`apps/approval-runtime` の `/preview/workflow/*`）をweb workerがproxyする
+（`/api/preview/workflow/*`、preview harness token必須）。
+
+- **Editor**: React Flow canvas（dagreで自動layout）。Action / Branch / Join / ForEach / While / Transform /
+  Program / LLM / Output Nodeを追加し、drag接続（Branchは未使用のcase keyが割り当たる）・削除できる。
+  loop bodyは入れ子のgraphとして開いて編集する。Branch / While / Action restrictionは共有Condition Builderで、
+  参照できるfieldはnamespace（`workflow.input.*` / `nodes.<id>.output` / delegation namespace）から候補表示する。
+- **検証 / publish**: 保存はdraft revision（CAS）。`parseWorkflowDefinition` で構造を検証した上で
+  workflow-coreのvalidationを表示し、publishはimmutable versionを作る。Composite Actionとして
+  `(key, version)` にbindingし、input schemaを設定できる。
+- **Approval Projection**: Node上とpanelに「見込み」として表示する（確定 / 条件付き / 可能性あり / 未確定）。
+  実際の承認はchild ActionRequestのMaterialized Planが決め、run viewではNodeごとの実際の承認状態を別badgeで出す。
+- **Capability review**: Program / LLM Nodeの要求・grant・policyの差分とreview issueを表示する。
+- **Program authoring**: 自然言語 → Coding LLM（preview: Workers AI `@cf/qwen/qwen2.5-coder-32b-instruct`）→
+  静的検証 → sample test → reviewしてpublish。生成結果は自動でpublishされない。
+- **Run view**: NodeRun状態（waiting理由を含む）・作用・child ActionRequestを表示し、approve / reject・
+  askHuman入力・cancelをUIから行う。child ActionRequestからは承認trace（parent chain）へ辿れる。
+
+Previewの運用上の注意:
+
+- Workers AIの `5xxx` errorは入力 / model起因として再試行しない（`workers_ai_<code>`、fail-closed）。
+  それ以外のprovider errorは再試行し、再試行は `workflow.retry` telemetryとして記録する（`onEffectRetry`）。
+- runの進行はCloudflare Workflows（`WORKFLOW_RUNNER`）と cron sweeper（`sweep_workflow_runs`）の両方が駆動する。

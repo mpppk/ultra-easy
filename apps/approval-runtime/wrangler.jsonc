@@ -4,6 +4,14 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-15",
   "workers_dev": false,
+  // #160: QuickJS sandboxのwasm（workspace外のnode_modulesにある）をWebAssembly.Moduleとしてbundleする。
+  "rules": [
+    {
+      "type": "CompiledWasm",
+      "globs": ["**/*.wasm"],
+      "fallthrough": true,
+    },
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -71,5 +79,15 @@
       "name": "ultra-easy-action-workflow-preview",
       "class_name": "ActionWorkflow",
     },
+    {
+      // #157: Workflow Engine（Composite Action）のdurable runner。
+      "binding": "WORKFLOW_RUNNER",
+      "name": "ultra-easy-workflow-runner-preview",
+      "class_name": "WorkflowRunner",
+    },
   ],
+  // #161: LLM Gateway / Program生成のprovider（credentialはWorker bindingだけが持つ）。
+  "ai": {
+    "binding": "AI",
+  },
 }
