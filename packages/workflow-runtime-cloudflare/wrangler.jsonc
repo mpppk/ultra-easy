@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ultra-easy-workflow-runtime-test",
+  "main": "src/testing/test-worker.ts",
+  "compatibility_date": "2026-09-12",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ultra-easy-workflow-runtime-test",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "../approval-d1/migrations",
+    },
+  ],
+  "workflows": [
+    {
+      "binding": "WORKFLOW_RUNNER",
+      "name": "ultra-easy-workflow-runner-test",
+      "class_name": "TestWorkflowRunner",
+    },
+  ],
+}
