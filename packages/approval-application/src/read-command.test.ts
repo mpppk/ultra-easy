@@ -8,6 +8,7 @@ import type {
   ApprovalTaskId,
   JsonValue,
   OrganizationId,
+  PrincipalRef,
   UserId,
 } from "@app/approval-core";
 
@@ -83,6 +84,11 @@ const taskView: ApprovalTaskView = {
 class FakeReadRepository implements ApprovalReadRepository {
   action = structuredClone(actionView);
   task = structuredClone(taskView);
+  participants = new Set<string>([String(alice)]);
+
+  isActionRequestParticipant(input: { userId: UserId }) {
+    return Promise.resolve(Result.succeed(this.participants.has(String(input.userId))));
+  }
   decisionContext: Omit<ApprovalTaskDecisionContext, "task"> = {
     requireCommentOn: [],
     candidateUserIds: [String(alice)],
@@ -343,6 +349,10 @@ class FakeSink implements ApprovalDecisionSink {
 }
 
 function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
+  const identity = {
+    viewer: { type: "user", id: alice } as PrincipalRef,
+    operators: new Set<string>(),
+  };
   const readRepository = new FakeReadRepository();
   const commandRepository = new FakeCommandRepository();
   let commandSequence = 0;
@@ -386,11 +396,13 @@ function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
     readRepository,
     decisionService,
     identityProvider: {
-      resolveSubject() {
-        return Promise.resolve(Result.succeed(String(alice)));
+      authenticate() {
+        return Promise.resolve(Result.succeed(identity.viewer));
       },
-      resolveUser() {
-        return Promise.resolve(Result.succeed(alice));
+    },
+    operatorAccess: {
+      canReadAll({ principal }) {
+        return Promise.resolve(Result.succeed(identity.operators.has(String(principal.id))));
       },
     },
     idempotencyRepository,
@@ -404,6 +416,7 @@ function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
   });
   return {
     api,
+    identity,
     readRepository,
     commandRepository,
     decisionService,
@@ -514,11 +527,8 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
       readRepository: harness.readRepository,
       decisionService: harness.decisionService,
       identityProvider: {
-        resolveSubject() {
-          return Promise.resolve(Result.succeed(String(alice)));
-        },
-        resolveUser() {
-          return Promise.resolve(Result.succeed(alice));
+        authenticate() {
+          return Promise.resolve(Result.succeed({ type: "user", id: alice } as PrincipalRef));
         },
       },
       idempotencyRepository: harness.idempotencyRepository,
@@ -629,8 +639,8 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
       readRepository: harness.readRepository,
       decisionService: harness.decisionService,
       identityProvider: {
-        resolveSubject: () => Promise.resolve(Result.succeed(String(alice))),
-        resolveUser: () => Promise.resolve(Result.succeed(alice)),
+        authenticate: () =>
+          Promise.resolve(Result.succeed({ type: "user", id: alice } as PrincipalRef)),
       },
       idempotencyRepository: harness.idempotencyRepository,
       clock: { now: () => "2026-09-19T00:01:00.000Z" },
@@ -1030,5 +1040,66 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     assert(Result.isSuccess(again));
     expect(again.value.status).toBe("applied");
     expect(sink.calls).toBe(1);
+  });
+
+  it("#83: ActionRequest / tasks / task / commandは関係者とoperatorだけが読め、無関係userは404", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "read-policy");
+    const encodedAction = encodeURIComponent(String(actionRequestId));
+    const paths = {
+      action: `/v1/organizations/org%3Am6/action-requests/${encodedAction}`,
+      tasks: `/v1/organizations/org%3Am6/action-requests/${encodedAction}/tasks`,
+      task: `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}`,
+      command: `/v1/organizations/org%3Am6/approval-commands/${encodeURIComponent(commandId)}`,
+    };
+    const statuses = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          Object.entries(paths).map(async ([name, path]) => [
+            name,
+            (await harness.api.fetch(request(path))).status,
+          ]),
+        ),
+      );
+
+    // alice: actor/authority（command発行者でもある）
+    expect(await statuses()).toEqual({ action: 200, tasks: 200, task: 200, command: 200 });
+
+    // mallory: 同じorgだが無関係
+    harness.identity.viewer = { type: "user", id: branded<UserId>("user:mallory") };
+    expect(await statuses()).toEqual({ action: 404, tasks: 404, task: 404, command: 404 });
+
+    // bob: Task候補者はActionRequest系を読めるが、他人のcommandは読めない
+    harness.readRepository.participants.add("user:bob");
+    harness.identity.viewer = { type: "user", id: branded<UserId>("user:bob") };
+    expect(await statuses()).toEqual({ action: 200, tasks: 200, task: 200, command: 404 });
+
+    // operator: 全て読める
+    harness.identity.operators.add("user:operator");
+    harness.identity.viewer = { type: "user", id: branded<UserId>("user:operator") };
+    expect(await statuses()).toEqual({ action: 200, tasks: 200, task: 200, command: 200 });
+  });
+
+  it("#82: agent principalはDecisionとinboxを実行できない", async () => {
+    const harness = createHarness();
+    harness.identity.viewer = {
+      type: "agent",
+      id: "agent:ci-bot" as PrincipalRef["id"],
+    } as PrincipalRef;
+    const decision = await harness.api.fetch(
+      request(
+        `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}/decisions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "idempotency-key": "agent-decision" },
+          body: JSON.stringify({ decision: "approve" }),
+        },
+      ),
+    );
+    expect(decision.status).toBe(403);
+    await expect(decision.json()).resolves.toMatchObject({ code: "machine_principal_not_allowed" });
+    const inbox = await harness.api.fetch(request("/v1/organizations/org%3Am6/me/approval-tasks"));
+    expect(inbox.status).toBe(403);
+    expect(harness.commandRepository.records.size).toBe(0);
   });
 });

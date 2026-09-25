@@ -6,6 +6,7 @@ import {
   ApprovalDecisionCommandService,
   createActionRequestHttpApi,
   createPublicHttpApi,
+  PublicApiRepositoryError,
 } from "@app/approval-application";
 import {
   ConsoleTelemetrySink,
@@ -16,6 +17,7 @@ import {
   type ExecutorKey,
   type NotificationSink,
   type OrganizationId,
+  type PersistedOperatorAlertState,
 } from "@app/approval-core";
 import {
   D1FixedWindowRateLimiter,
@@ -28,6 +30,7 @@ import {
   D1PublishedPolicyBindingResolver,
   listRecentOrganizations,
   loadOperatorDashboard,
+  type OperatorDashboardSnapshot,
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
@@ -46,9 +49,13 @@ import {
   type NotificationQueueProducer,
 } from "@app/approval-runtime-cloudflare";
 
-import { buildAdminAuthorizationApi } from "./admin-authorization.ts";
-import { Auth0IdentityProvider } from "./auth0-identity.ts";
+import {
+  authorizationAdminAccessChecker,
+  buildAdminAuthorizationApi,
+} from "./admin-authorization.ts";
+import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-identity.ts";
 import { readOperatorAlertThresholds } from "./operator-alert-thresholds.ts";
+import { handleOperatorDashboard } from "./operator-dashboard.ts";
 import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
 import { DispatchingActionExecutor } from "./dispatching-executor.ts";
 import { StagingSchemaResolver } from "./staging-schema-resolver.ts";
@@ -68,6 +75,15 @@ type ApprovalApiEnv = ActionWorkflowEnv & {
   AUTH0_DOMAIN: string;
   AUTH0_API_AUDIENCE: string;
   AUTH0_ORGANIZATION_ID: string;
+  /** Auth0 Organizations等でorganization所属を示すclaim名（既定 org_id）。 */
+  AUTH0_ORGANIZATION_CLAIM?: string;
+  /** そのclaimに期待する値（Auth0 Organization ID）。設定時はclaim一致を必須にする。 */
+  AUTH0_ORGANIZATION_CLAIM_VALUE?: string;
+  /**
+   * "true"のときだけ、claimなしでAuth0 tenant全体を単一organizationとして信頼する
+   * （public signupを無効にした単一組織tenant向けの明示opt-in）。どちらも無ければ全て403。
+   */
+  AUTH0_TENANT_IS_ORGANIZATION?: string;
   /** wrangler secret put のみ。平文commit禁止。未設定時は配信をskip (no-op成功) する。 */
   SLACK_WEBHOOK_URL?: string;
   /** alert閾値override (staging drill用 --var)。未設定・不正値はbaselineへfallback。 */
@@ -100,10 +116,6 @@ function createNotificationSink(env: ApprovalApiEnv): NotificationSink {
 
 function stagingOrganizationId(env: ApprovalApiEnv): OrganizationId {
   return env.AUTH0_ORGANIZATION_ID as OrganizationId;
-}
-
-function json(data: unknown, init?: ResponseInit): Response {
-  return Response.json(data, init);
 }
 
 function decisionProcessor(env: ApprovalApiEnv): ApprovalDecisionCommandProcessor {
@@ -145,11 +157,14 @@ function buildApi(input: {
   const env = input.env;
   const telemetry = new ConsoleTelemetrySink();
   const organizationId = stagingOrganizationId(env);
+  const membership = readAuth0OrganizationMembership(env);
   const identity = new Auth0IdentityProvider({
     domain: env.AUTH0_DOMAIN,
     audience: env.AUTH0_API_AUDIENCE,
     organizationId,
+    ...(membership ? { membership } : {}),
   });
+  const adminAccess = authorizationAdminAccessChecker(env, organizationId);
   const readRepository = new D1PublicApiRepository(env.DB);
   const decisionService = new ApprovalDecisionCommandService(readRepository, readRepository, {
     next: () => `command:${crypto.randomUUID()}`,
@@ -188,6 +203,25 @@ function buildApi(input: {
     readRepository,
     decisionService,
     identityProvider: identity,
+    operatorAccess: {
+      // 関係者以外の閲覧はauthorization_admin viewer（運用者）に限る。userのみ・FGA障害はfail closed。
+      async canReadAll({ principal }) {
+        if (principal.type !== "user") return Result.succeed(false);
+        const checked = await adminAccess.check({
+          caller: { organizationId, principal },
+          permission: "viewer",
+        });
+        return Result.isFailure(checked)
+          ? Result.fail(
+              new PublicApiRepositoryError(
+                "operator_access_check_failed",
+                checked.error.retriable,
+                "operator権限を確認できません",
+              ),
+            )
+          : checked;
+      },
+    },
     idempotencyRepository: readRepository,
     clock: { now: () => new Date().toISOString() },
     rateLimiter,
@@ -203,29 +237,40 @@ function buildApi(input: {
     },
   });
   return {
-    fetch: (request: Request) =>
-      adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request),
+    fetch: (request: Request) => {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/operator/dashboard") {
+        return handleOperatorDashboard({
+          request,
+          callerResolver: identity,
+          accessChecker: adminAccess,
+          load: (organizationId) => loadOperatorDashboardView(env, organizationId),
+          onError: (code) => console.error("operator dashboard failed", { code }),
+        });
+      }
+      return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
+    },
   };
 }
 
-async function getOperatorDashboard(request: Request, env: ApprovalApiEnv): Promise<Response> {
-  const raw = new URL(request.url).searchParams.get("organizationId")?.trim();
-  if (raw !== undefined && raw.length === 0) {
-    return json({ error: "organizationId must not be empty" }, { status: 400 });
-  }
-  const organizationId = (raw ?? stagingOrganizationId(env)) as OrganizationId;
+type OperatorDashboardView = OperatorDashboardSnapshot & {
+  alerts: PersistedOperatorAlertState[];
+  thresholds: ReturnType<typeof operatorAlertThresholds>;
+};
+
+async function loadOperatorDashboardView(
+  env: ApprovalApiEnv,
+  organizationId: OrganizationId,
+): Result.ResultAsync<OperatorDashboardView, { code: string }> {
   const snapshot = await loadOperatorDashboard(env.DB, { organizationId });
-  if (Result.isFailure(snapshot)) {
-    return json({ error: snapshot.error.message }, { status: 500 });
-  }
+  if (Result.isFailure(snapshot)) return snapshot;
   const alerts = await new D1OperatorAlertStateRepository(env.DB).loadAll({ organizationId });
-  if (Result.isFailure(alerts)) {
-    return json({ error: alerts.error.message }, { status: 500 });
-  }
-  return json(
-    { ...snapshot.value, alerts: alerts.value, thresholds: operatorAlertThresholds(env) },
-    { status: 200 },
-  );
+  if (Result.isFailure(alerts)) return alerts;
+  return Result.succeed({
+    ...snapshot.value,
+    alerts: alerts.value,
+    thresholds: operatorAlertThresholds(env),
+  });
 }
 
 /**
@@ -336,10 +381,6 @@ export default {
           { error: "ACTION_AUTHORIZER/ACTION_EXECUTOR bindingがありません" },
           { status: 500 },
         );
-      }
-      const url = new URL(request.url);
-      if (request.method === "GET" && url.pathname === "/operator/dashboard") {
-        return getOperatorDashboard(request, env);
       }
       return buildApi({ env, authorizerBinding, executorBinding }).fetch(request);
     } catch (error) {

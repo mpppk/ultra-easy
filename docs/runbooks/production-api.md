@@ -28,6 +28,29 @@ Production domain + custom-domain cutover are follow-ups.
   Browser login UI is a follow-up.
 - Single staging org: requests outside `organization:staging` get 403.
   Multi-org mapping is a follow-up.
+- Organization membership (#82) is verified from the token, never assumed:
+  - `AUTH0_ORGANIZATION_CLAIM_VALUE` (+ optional `AUTH0_ORGANIZATION_CLAIM`,
+    default `org_id`): the claim must equal the Auth0 Organization ID. Required
+    for production.
+  - `AUTH0_TENANT_IS_ORGANIZATION=true`: explicit opt-in that trusts every
+    user/client of the tenant as a member. Staging only. **Precondition: public
+    signup is disabled on `Username-Password-Authentication`** (Auth0 dashboard →
+    Authentication → Database → Disable Sign Ups), otherwise anyone could mint a
+    member token.
+  - Neither set → every request is 403 `organization_membership_unverified`.
+- Scopes (#82) are checked per operation (`scope` or RBAC `permissions`):
+  reads need `read:action-requests`; submit and decisions need
+  `write:action-requests`. Human tokens must request them, e.g. password-realm
+  `scope: "openid read:action-requests write:action-requests"`.
+- Token kinds (#82): client-credentials tokens (`gty=client-credentials`,
+  `sub=<client>@clients`) become `agent:<client_id>` principals (they can read /
+  submit within their scopes but never decide approvals or use the inbox).
+  Unknown `gty` values or inconsistent `sub`/`gty` pairs are 401
+  `unsupported_token_type`. `alg` is pinned to RS256.
+- Read access (#83): ActionRequest / tasks / task detail are visible to the actor,
+  authority, caller, task candidates / deciders, and operators
+  (`authorization_admin:root#viewer`); a Decision command to its issuer and
+  operators. Everyone else gets 404 (existence is not disclosed).
 
 ## Bootstrap (staging DB)
 

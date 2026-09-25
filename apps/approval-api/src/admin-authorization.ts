@@ -94,17 +94,16 @@ function notConfigured(): AuthorizationProviderError {
   });
 }
 
-export function buildAdminAuthorizationApi(input: {
-  env: AdminAuthorizationEnv;
-  identity: Auth0IdentityProvider;
-  organizationId: OrganizationId;
-  service: ActionRequestApplicationService;
-}) {
-  const { env, organizationId } = input;
+/**
+ * tenant-scoped `authorization_admin:root` のviewer / editor relationで運用者権限を判定する。
+ * 管理Console・operator dashboard・Public Read APIのoperator閲覧で共有する。
+ */
+export function authorizationAdminAccessChecker(
+  env: AdminAuthorizationEnv,
+  organizationId: OrganizationId,
+): AuthorizationAdminAccessChecker {
   const client = readClient(env, organizationId);
-  const modelId = env.OPENFGA_AUTHORIZATION_MODEL_ID ?? "";
-
-  const accessChecker: AuthorizationAdminAccessChecker = {
+  return {
     async check({ caller, permission }) {
       if (!client || String(caller.organizationId) !== String(organizationId)) {
         return Result.fail(notConfigured());
@@ -128,6 +127,19 @@ export function buildAdminAuthorizationApi(input: {
       return checked;
     },
   };
+}
+
+export function buildAdminAuthorizationApi(input: {
+  env: AdminAuthorizationEnv;
+  identity: Auth0IdentityProvider;
+  organizationId: OrganizationId;
+  service: ActionRequestApplicationService;
+}) {
+  const { env, organizationId } = input;
+  const client = readClient(env, organizationId);
+  const modelId = env.OPENFGA_AUTHORIZATION_MODEL_ID ?? "";
+
+  const accessChecker = authorizationAdminAccessChecker(env, organizationId);
 
   const describer: AuthorizationTargetDescriber = {
     describe({ organizationId: org, action }) {

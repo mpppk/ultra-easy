@@ -12,7 +12,16 @@ how alerts fire, and how to set up Cloudflare-side notification.
 
 `GET /operator/dashboard?organizationId=<id>` on the runtime Worker
 (preview: `GET /api/preview/operator-dashboard?organizationId=<id>`,
-page `/preview/operator-dashboard`) returns:
+page `/preview/operator-dashboard`) returns the panels below.
+
+On `ultra-easy-approval-api` the endpoint requires a user Bearer token whose
+principal is an operator (`authorization_admin:root#viewer` in FGA, same as the
+authorization console). `organizationId` is optional and must match the caller's
+organization (403 `organization_mismatch` otherwise); unauthenticated → 401,
+non-operator → 403 `operator_access_denied`, FGA/D1 failures → 503 without
+internal messages (#81).
+
+Panels:
 
 1. Approval lead-time p50/p95/p99 (`action.received` → `action.completed`).
 2. Step dwell-time p50/p95/p99 grouped by `stepKey`

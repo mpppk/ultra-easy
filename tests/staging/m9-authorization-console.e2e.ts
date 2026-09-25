@@ -56,7 +56,8 @@ async function token(username: string, password: string): Promise<string> {
       client_id: required("AUTH0_WEB_CLIENT_ID"),
       client_secret: required("AUTH0_WEB_CLIENT_SECRET"),
       audience: required("AUTH0_API_AUDIENCE"),
-      scope: "openid",
+      // #82: Public APIは操作ごとにscopeを検証する。
+      scope: "openid read:action-requests write:action-requests",
     }),
   });
   const body = (await response.json()) as { access_token?: string; error?: string };

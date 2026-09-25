@@ -6,11 +6,13 @@ import type {
   ApprovalTaskId,
   JsonValue,
   OrganizationId,
+  PrincipalRef,
   RateLimiter,
   RateLimitPolicy,
   UserId,
 } from "@app/approval-core";
 
+import type { ActionRequestView } from "./action-request-service.ts";
 import type { HttpTrustedContextError } from "./http.ts";
 import {
   ApprovalCommandApplicationError,
@@ -22,16 +24,33 @@ import {
   type PublicApiRepositoryError,
 } from "./read-command.ts";
 
-export interface PublicHttpIdentityProvider {
-  resolveSubject(input: {
-    request: Request;
-    organizationId: OrganizationId;
-  }): Result.ResultAsync<string, HttpTrustedContextError>;
+/** Public APIの操作種別。identity providerは操作ごとに必要なscope / principal種別を検証する。 */
+export type PublicApiOperation =
+  | "action_request.read"
+  | "action_request.submit"
+  | "approval_decision.submit";
 
-  resolveUser(input: {
+export interface PublicHttpIdentityProvider {
+  /**
+   * requestを認証し、organizationへの所属とoperationに必要な権限を検証したprincipalを返す。
+   * user以外（M2M client等）はagent / service principalとして返す。
+   */
+  authenticate(input: {
     request: Request;
     organizationId: OrganizationId;
-  }): Result.ResultAsync<UserId, HttpTrustedContextError>;
+    operation: PublicApiOperation;
+  }): Result.ResultAsync<PrincipalRef, HttpTrustedContextError>;
+}
+
+/**
+ * 組織の運用者（operator）として、関係者でなくてもActionRequest / Decision commandを
+ * 読めるかを判定するport。未設定なら関係者以外は常に読めない。
+ */
+export interface PublicApiOperatorAccess {
+  canReadAll(input: {
+    organizationId: OrganizationId;
+    principal: PrincipalRef;
+  }): Result.ResultAsync<boolean, PublicApiRepositoryError>;
 }
 
 export interface PublicHttpClock {
@@ -296,12 +315,13 @@ async function idempotent(input: {
   return response;
 }
 
-async function resolveSubject(input: {
+async function authenticate(input: {
   identityProvider: PublicHttpIdentityProvider;
   request: Request;
   organizationId: OrganizationId;
-}): Promise<string | Response> {
-  const identity = await input.identityProvider.resolveSubject(input);
+  operation: PublicApiOperation;
+}): Promise<PrincipalRef | Response> {
+  const identity = await input.identityProvider.authenticate(input);
   if (Result.isFailure(identity)) {
     return problem({
       status: identity.error.status,
@@ -313,21 +333,92 @@ async function resolveSubject(input: {
   return identity.value;
 }
 
-async function resolveUser(input: {
+async function authenticateUser(input: {
   identityProvider: PublicHttpIdentityProvider;
   request: Request;
   organizationId: OrganizationId;
+  operation: PublicApiOperation;
 }): Promise<UserId | Response> {
-  const identity = await input.identityProvider.resolveUser(input);
-  if (Result.isFailure(identity)) {
+  const principal = await authenticate(input);
+  if (principal instanceof Response) return principal;
+  if (principal.type !== "user") {
     return problem({
-      status: identity.error.status,
-      code: identity.error.code,
-      title: identity.error.status === 401 ? "Authentication required" : "Forbidden",
-      detail: identity.error.message,
+      status: 403,
+      code: "machine_principal_not_allowed",
+      title: "Forbidden",
+      detail: "この操作はuser principalのみ実行できます",
     });
   }
-  return identity.value;
+  return principal.id;
+}
+
+function samePrincipal(left: PrincipalRef | undefined, right: PrincipalRef): boolean {
+  return left?.type === right.type && String(left.id) === String(right.id);
+}
+
+/**
+ * ActionRequestの読み取りポリシー: actor / authority / caller、当該ActionRequestのTask候補者・
+ * Decision者、operatorだけが読める。それ以外は存在を秘匿するため呼び出し側で404に揃える。
+ */
+async function canReadActionRequest(input: {
+  view: ActionRequestView;
+  viewer: PrincipalRef;
+  organizationId: OrganizationId;
+  readRepository: ApprovalReadRepository;
+  operatorAccess?: PublicApiOperatorAccess;
+}): Result.ResultAsync<boolean, PublicApiRepositoryError> {
+  if (
+    samePrincipal(input.view.actor, input.viewer) ||
+    samePrincipal(input.view.authorityPrincipal, input.viewer) ||
+    samePrincipal(input.view.caller, input.viewer)
+  ) {
+    return Result.succeed(true);
+  }
+  if (input.viewer.type === "user") {
+    const participant = await input.readRepository.isActionRequestParticipant({
+      organizationId: input.organizationId,
+      actionRequestId: input.view.id as ActionRequestId,
+      userId: input.viewer.id,
+    });
+    if (Result.isFailure(participant) || participant.value) return participant;
+  }
+  return canReadAsOperator(input);
+}
+
+async function canReadAsOperator(input: {
+  viewer: PrincipalRef;
+  organizationId: OrganizationId;
+  operatorAccess?: PublicApiOperatorAccess;
+}): Result.ResultAsync<boolean, PublicApiRepositoryError> {
+  if (!input.operatorAccess) return Result.succeed(false);
+  return input.operatorAccess.canReadAll({
+    organizationId: input.organizationId,
+    principal: input.viewer,
+  });
+}
+
+function actionRequestNotFound(): Response {
+  return problem({
+    status: 404,
+    code: "action_request_not_found",
+    title: "ActionRequest not found",
+  });
+}
+
+/** 読み取り可能なActionRequestだけを返す。存在しない・読めない場合はどちらも404にする。 */
+async function loadReadableActionRequest(input: {
+  organizationId: OrganizationId;
+  actionRequestId: ActionRequestId;
+  viewer: PrincipalRef;
+  readRepository: ApprovalReadRepository;
+  operatorAccess?: PublicApiOperatorAccess;
+}): Promise<ActionRequestView | Response> {
+  const loaded = await input.readRepository.getActionRequest(input);
+  if (Result.isFailure(loaded)) return repositoryErrorResponse(loaded.error);
+  if (!loaded.value) return actionRequestNotFound();
+  const allowed = await canReadActionRequest({ ...input, view: loaded.value });
+  if (Result.isFailure(allowed)) return repositoryErrorResponse(allowed.error);
+  return allowed.value ? loaded.value : actionRequestNotFound();
 }
 
 function decisionBody(value: unknown): { decision: "approve" | "reject"; comment?: string } | null {
@@ -352,6 +443,7 @@ export function createPublicHttpApi(input: {
   readRepository: ApprovalReadRepository;
   decisionService: ApprovalDecisionCommandService;
   identityProvider: PublicHttpIdentityProvider;
+  operatorAccess?: PublicApiOperatorAccess;
   idempotencyRepository: IdempotencyRepository;
   clock: PublicHttpClock;
   rateLimiter?: RateLimiter;
@@ -368,16 +460,17 @@ export function createPublicHttpApi(input: {
       const createMatch = /^\/v1\/organizations\/([^/]+)\/action-requests$/.exec(url.pathname);
       if (request.method === "POST" && createMatch?.[1]) {
         const organizationId = decodeURIComponent(createMatch[1]) as OrganizationId;
-        const subject = await resolveSubject({
+        const principal = await authenticate({
           identityProvider: input.identityProvider,
           request,
           organizationId,
+          operation: "action_request.submit",
         });
-        if (subject instanceof Response) return subject;
+        if (principal instanceof Response) return principal;
         return idempotent({
           request,
           organizationId,
-          operation: `action-request:create:${subject}`,
+          operation: `action-request:create:${String(principal.id)}`,
           repository: input.idempotencyRepository,
           clock: input.clock,
           execute: () => input.actionRequestApi.fetch(request),
@@ -389,50 +482,43 @@ export function createPublicHttpApi(input: {
       );
       if (request.method === "GET" && actionMatch?.[1] && actionMatch[2]) {
         const organizationId = decodeURIComponent(actionMatch[1]) as OrganizationId;
-        const user = await resolveUser({
+        const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
           organizationId,
+          operation: "action_request.read",
         });
-        if (user instanceof Response) return user;
-        const loaded = await input.readRepository.getActionRequest({
+        if (viewer instanceof Response) return viewer;
+        const loaded = await loadReadableActionRequest({
           organizationId,
           actionRequestId: decodeURIComponent(actionMatch[2]) as ActionRequestId,
+          viewer,
+          readRepository: input.readRepository,
+          ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
         });
-        if (Result.isFailure(loaded)) return repositoryErrorResponse(loaded.error);
-        if (!loaded.value) {
-          return problem({
-            status: 404,
-            code: "action_request_not_found",
-            title: "ActionRequest not found",
-          });
-        }
-        return responseJson(loaded.value);
+        return loaded instanceof Response ? loaded : responseJson(loaded);
       }
 
       const actionTasksMatch =
         /^\/v1\/organizations\/([^/]+)\/action-requests\/([^/]+)\/tasks$/.exec(url.pathname);
       if (request.method === "GET" && actionTasksMatch?.[1] && actionTasksMatch[2]) {
         const organizationId = decodeURIComponent(actionTasksMatch[1]) as OrganizationId;
-        const user = await resolveUser({
+        const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
           organizationId,
+          operation: "action_request.read",
         });
-        if (user instanceof Response) return user;
+        if (viewer instanceof Response) return viewer;
         const actionRequestId = decodeURIComponent(actionTasksMatch[2]) as ActionRequestId;
-        const action = await input.readRepository.getActionRequest({
+        const action = await loadReadableActionRequest({
           organizationId,
           actionRequestId,
+          viewer,
+          readRepository: input.readRepository,
+          ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
         });
-        if (Result.isFailure(action)) return repositoryErrorResponse(action.error);
-        if (!action.value) {
-          return problem({
-            status: 404,
-            code: "action_request_not_found",
-            title: "ActionRequest not found",
-          });
-        }
+        if (action instanceof Response) return action;
 
         const limit = parseLimit(url);
         if (limit === null) {
@@ -442,7 +528,7 @@ export function createPublicHttpApi(input: {
           organizationId,
           actionRequestId,
           limit,
-          viewerUserId: user,
+          ...(viewer.type === "user" ? { viewerUserId: viewer.id } : {}),
           ...(url.searchParams.get("cursor")
             ? { cursor: url.searchParams.get("cursor") ?? undefined }
             : {}),
@@ -455,10 +541,11 @@ export function createPublicHttpApi(input: {
       const inboxMatch = /^\/v1\/organizations\/([^/]+)\/me\/approval-tasks$/.exec(url.pathname);
       if (request.method === "GET" && inboxMatch?.[1]) {
         const organizationId = decodeURIComponent(inboxMatch[1]) as OrganizationId;
-        const user = await resolveUser({
+        const user = await authenticateUser({
           identityProvider: input.identityProvider,
           request,
           organizationId,
+          operation: "action_request.read",
         });
         if (user instanceof Response) return user;
         const limit = parseLimit(url);
@@ -495,25 +582,34 @@ export function createPublicHttpApi(input: {
       );
       if (request.method === "GET" && taskMatch?.[1] && taskMatch[2]) {
         const organizationId = decodeURIComponent(taskMatch[1]) as OrganizationId;
-        const user = await resolveUser({
+        const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
           organizationId,
+          operation: "action_request.read",
         });
-        if (user instanceof Response) return user;
+        if (viewer instanceof Response) return viewer;
+        const taskNotFound = problem({
+          status: 404,
+          code: "approval_task_not_found",
+          title: "Approval task not found",
+        });
         const task = await input.readRepository.getApprovalTask({
           organizationId,
           taskId: decodeURIComponent(taskMatch[2]) as ApprovalTaskId,
-          viewerUserId: user,
+          ...(viewer.type === "user" ? { viewerUserId: viewer.id } : {}),
         });
         if (Result.isFailure(task)) return repositoryErrorResponse(task.error);
-        if (!task.value) {
-          return problem({
-            status: 404,
-            code: "approval_task_not_found",
-            title: "Approval task not found",
-          });
-        }
+        if (!task.value) return taskNotFound;
+        // Taskは所属するActionRequestと同じ読み取りポリシーに従う。
+        const action = await loadReadableActionRequest({
+          organizationId,
+          actionRequestId: task.value.actionRequestId as ActionRequestId,
+          viewer,
+          readRepository: input.readRepository,
+          ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
+        });
+        if (action instanceof Response) return action.status === 404 ? taskNotFound : action;
         return responseJson(task.value);
       }
 
@@ -522,10 +618,11 @@ export function createPublicHttpApi(input: {
       if (request.method === "POST" && decisionMatch?.[1] && decisionMatch[2]) {
         const organizationId = decodeURIComponent(decisionMatch[1]) as OrganizationId;
         const taskId = decodeURIComponent(decisionMatch[2]) as ApprovalTaskId;
-        const user = await resolveUser({
+        const user = await authenticateUser({
           identityProvider: input.identityProvider,
           request,
           organizationId,
+          operation: "approval_decision.submit",
         });
         if (user instanceof Response) return user;
 
@@ -604,25 +701,39 @@ export function createPublicHttpApi(input: {
       );
       if (request.method === "GET" && commandMatch?.[1] && commandMatch[2]) {
         const organizationId = decodeURIComponent(commandMatch[1]) as OrganizationId;
-        const user = await resolveUser({
+        const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
           organizationId,
+          operation: "action_request.read",
         });
-        if (user instanceof Response) return user;
-        const command = await input.decisionService.get({
+        if (viewer instanceof Response) return viewer;
+        const commandNotFound = problem({
+          status: 404,
+          code: "approval_command_not_found",
+          title: "Approval command not found",
+        });
+        const record = await input.decisionService.get({
           organizationId,
           commandId: decodeURIComponent(commandMatch[2]),
         });
-        if (Result.isFailure(command)) return commandErrorResponse(command.error);
-        if (!command.value) {
-          return problem({
-            status: 404,
-            code: "approval_command_not_found",
-            title: "Approval command not found",
+        if (Result.isFailure(record)) return commandErrorResponse(record.error);
+        if (!record.value) return commandNotFound;
+        // Decision commandは発行者本人とoperatorだけが読める。
+        const issuer =
+          record.value.actorUserId !== undefined &&
+          viewer.type === "user" &&
+          String(viewer.id) === String(record.value.actorUserId);
+        if (!issuer) {
+          const operator = await canReadAsOperator({
+            viewer,
+            organizationId,
+            ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
           });
+          if (Result.isFailure(operator)) return repositoryErrorResponse(operator.error);
+          if (!operator.value) return commandNotFound;
         }
-        return responseJson(command.value);
+        return responseJson(record.value.command);
       }
 
       return new Response("Not Found", { status: 404 });

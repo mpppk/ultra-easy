@@ -120,6 +120,13 @@ export interface ApprovalReadRepository {
     viewerUserId?: UserId;
   }): Result.ResultAsync<ApprovalTaskView | null, PublicApiRepositoryError>;
 
+  /** userが当該ActionRequestのいずれかのTaskの候補者、またはDecision済みか。 */
+  isActionRequestParticipant(input: {
+    organizationId: OrganizationId;
+    actionRequestId: ActionRequestId;
+    userId: UserId;
+  }): Result.ResultAsync<boolean, PublicApiRepositoryError>;
+
   getApprovalTaskDecisionContext(input: {
     organizationId: OrganizationId;
     taskId: ApprovalTaskId;
@@ -349,10 +356,11 @@ export class ApprovalDecisionCommandService {
     return Result.succeed(command);
   }
 
+  /** 読み取りポリシー（発行者本人 / operator）の判定に使うため、発行者を含むrecordを返す。 */
   async get(input: {
     organizationId: OrganizationId;
     commandId: string;
-  }): Result.ResultAsync<ApprovalCommand | null, ApprovalCommandApplicationError> {
+  }): Result.ResultAsync<ApprovalCommandRecord | null, ApprovalCommandApplicationError> {
     const loaded = await this.commandRepository.load(input);
     if (Result.isFailure(loaded)) {
       return Result.fail(
@@ -363,7 +371,7 @@ export class ApprovalDecisionCommandService {
         ),
       );
     }
-    return Result.succeed(loaded.value?.command ?? null);
+    return Result.succeed(loaded.value);
   }
 }
 

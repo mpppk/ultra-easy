@@ -1,21 +1,48 @@
 import { Result } from "@praha/byethrow";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } from "jose";
 
-import type { OrganizationId, UserId } from "@app/approval-core";
+import type { AgentId, OrganizationId, PrincipalRef, UserId } from "@app/approval-core";
 import {
   HttpTrustedContextError,
   type AuthorizationAdminCaller,
   type AuthorizationAdminCallerResolver,
+  type PublicApiOperation,
   type PublicHttpIdentityProvider,
 } from "@app/approval-application";
+
+/**
+ * 組織所属の検証方法。tokenのclaim（Auth0 Organizationsの`org_id`等）で検証するか、
+ * Auth0 tenant全体を単一organizationとして信頼するかを明示的に選ぶ。どちらも無ければ全て拒否する。
+ */
+export type Auth0OrganizationMembership =
+  | { type: "claim"; claim: string; value: string }
+  /**
+   * tenantのuser / clientを全てorganizationのmemberとして扱う。public signupを無効にした
+   * 単一組織tenant（staging）でだけ使う。
+   */
+  | { type: "tenant" };
 
 export type Auth0IdentityConfig = {
   domain: string;
   audience: string;
   organizationId: OrganizationId;
+  membership?: Auth0OrganizationMembership;
 };
 
+/** 操作ごとに必要なAPI scope（`scope` claimまたはRBACの`permissions` claim）。 */
+export const PUBLIC_API_OPERATION_SCOPES: Record<PublicApiOperation, string> = {
+  "action_request.read": "read:action-requests",
+  "action_request.submit": "write:action-requests",
+  "approval_decision.submit": "write:action-requests",
+};
+
+/** user loginで発行されるtokenの`gty`。省略（authorization code等）もuser tokenとして扱う。 */
+const USER_GRANT_TYPES = new Set(["password", "refresh_token", "authorization_code"]);
+const CLIENT_CREDENTIALS_GRANT_TYPE = "client-credentials";
+
 type KeyResolver = JWTVerifyGetKey;
+
+type VerifiedToken = { principal: PrincipalRef; payload: JWTPayload; scopes: ReadonlySet<string> };
 
 function bearerToken(request: Request): string | null {
   const header = request.headers.get("authorization");
@@ -32,9 +59,51 @@ function contextError(
   return Result.fail(new HttpTrustedContextError(status, code, message));
 }
 
+function tokenScopes(payload: JWTPayload): Set<string> {
+  const scopes = new Set<string>();
+  if (typeof payload.scope === "string") {
+    for (const scope of payload.scope.split(" ")) if (scope.length > 0) scopes.add(scope);
+  }
+  if (Array.isArray(payload.permissions)) {
+    for (const permission of payload.permissions) {
+      if (typeof permission === "string") scopes.add(permission);
+    }
+  }
+  return scopes;
+}
+
+/**
+ * tokenの種別からprincipalを決める。client credentials（M2M）はagent、user loginはuser。
+ * 種別が判別できないtokenは拒否する（M2Mをuser principalへ潰さない）。
+ */
+function principalFromPayload(
+  payload: JWTPayload & { sub: string },
+): Result.Result<PrincipalRef, HttpTrustedContextError> {
+  const grantType = payload.gty;
+  const machineSubject = payload.sub.endsWith("@clients");
+  if (grantType === CLIENT_CREDENTIALS_GRANT_TYPE || machineSubject) {
+    const clientId =
+      typeof payload.azp === "string" && payload.azp.length > 0
+        ? payload.azp
+        : payload.sub.slice(0, -"@clients".length);
+    if (grantType !== CLIENT_CREDENTIALS_GRANT_TYPE || !machineSubject || clientId.length === 0) {
+      return contextError(401, "unsupported_token_type", "client tokenの種別が一致しません");
+    }
+    return Result.succeed({ type: "agent", id: `agent:${clientId}` as AgentId });
+  }
+  if (
+    grantType !== undefined &&
+    (typeof grantType !== "string" || !USER_GRANT_TYPES.has(grantType))
+  ) {
+    return contextError(401, "unsupported_token_type", "未対応のtoken種別です");
+  }
+  return Result.succeed({ type: "user", id: `user:${payload.sub}` as UserId });
+}
+
 /**
  * Auth0 JWT (user login / M2M) を検証するPublicHttpIdentityProvider。
- * `sub` をUserIdへ写像し、URLのorganizationIdが設定組織と一致する場合のみ通す
+ * iss / aud / alg に加えて、組織所属（membership）・操作ごとのscope・token種別を検証し、
+ * user loginはuser principal、client credentialsはagent principalへ写像する
  * （stagingは単一組織前提。複数組織はAUTH0 org mapping拡張時に追加する）。
  */
 export class Auth0IdentityProvider
@@ -55,7 +124,7 @@ export class Auth0IdentityProvider
   private async verify(
     request: Request,
     organizationId: OrganizationId,
-  ): Result.ResultAsync<{ userId: UserId; payload: JWTPayload }, HttpTrustedContextError> {
+  ): Result.ResultAsync<VerifiedToken, HttpTrustedContextError> {
     if (String(organizationId) !== String(this.config.organizationId)) {
       return contextError(
         403,
@@ -72,6 +141,7 @@ export class Auth0IdentityProvider
       const verified = await jwtVerify(token, this.resolveKey, {
         issuer: this.issuer,
         audience: this.config.audience,
+        algorithms: ["RS256"],
       });
       payload = verified.payload;
     } catch {
@@ -80,7 +150,26 @@ export class Auth0IdentityProvider
     if (typeof payload.sub !== "string" || payload.sub.length === 0) {
       return contextError(401, "bearer_token_missing_sub", "tokenにsubがありません");
     }
-    return Result.succeed({ userId: `user:${payload.sub}` as UserId, payload });
+
+    const membership = this.config.membership;
+    if (!membership) {
+      return contextError(
+        403,
+        "organization_membership_unverified",
+        "organization所属を検証する設定がありません",
+      );
+    }
+    if (membership.type === "claim" && payload[membership.claim] !== membership.value) {
+      return contextError(
+        403,
+        "organization_membership_required",
+        "tokenのorganizationがこのdeploymentと一致しません",
+      );
+    }
+
+    const principal = principalFromPayload({ ...payload, sub: payload.sub });
+    if (Result.isFailure(principal)) return principal;
+    return Result.succeed({ principal: principal.value, payload, scopes: tokenScopes(payload) });
   }
 
   /**
@@ -93,35 +182,41 @@ export class Auth0IdentityProvider
   ): Result.ResultAsync<AuthorizationAdminCaller, HttpTrustedContextError> {
     const verified = await this.verify(request, this.config.organizationId);
     if (Result.isFailure(verified)) return verified;
-    const { payload } = verified.value;
-    if (payload.gty === "client-credentials" || String(payload.sub).endsWith("@clients")) {
+    const { principal } = verified.value;
+    if (principal.type !== "user") {
       return contextError(
         403,
         "machine_principal_not_allowed",
         "管理Consoleはuser principalのみ利用できます",
       );
     }
-    return Result.succeed({
-      organizationId: this.config.organizationId,
-      principal: { type: "user", id: verified.value.userId },
-    });
+    return Result.succeed({ organizationId: this.config.organizationId, principal });
   }
 
-  async resolveSubject(input: {
+  async authenticate(input: {
     request: Request;
     organizationId: OrganizationId;
-  }): Result.ResultAsync<string, HttpTrustedContextError> {
+    operation: PublicApiOperation;
+  }): Result.ResultAsync<PrincipalRef, HttpTrustedContextError> {
     const verified = await this.verify(input.request, input.organizationId);
     if (Result.isFailure(verified)) return verified;
-    return Result.succeed(String(verified.value.userId));
+    const required = PUBLIC_API_OPERATION_SCOPES[input.operation];
+    if (!verified.value.scopes.has(required)) {
+      return contextError(403, "insufficient_scope", `この操作には${required} scopeが必要です`);
+    }
+    return Result.succeed(verified.value.principal);
   }
+}
 
-  async resolveUser(input: {
-    request: Request;
-    organizationId: OrganizationId;
-  }): Result.ResultAsync<UserId, HttpTrustedContextError> {
-    const verified = await this.verify(input.request, input.organizationId);
-    if (Result.isFailure(verified)) return verified;
-    return Result.succeed(verified.value.userId);
+/** wrangler varsから組織所属の検証方法を読む。未設定なら検証不能としてfail closedにする。 */
+export function readAuth0OrganizationMembership(env: {
+  AUTH0_ORGANIZATION_CLAIM?: string;
+  AUTH0_ORGANIZATION_CLAIM_VALUE?: string;
+  AUTH0_TENANT_IS_ORGANIZATION?: string;
+}): Auth0OrganizationMembership | undefined {
+  const value = env.AUTH0_ORGANIZATION_CLAIM_VALUE?.trim();
+  if (value) {
+    return { type: "claim", claim: env.AUTH0_ORGANIZATION_CLAIM?.trim() || "org_id", value };
   }
+  return env.AUTH0_TENANT_IS_ORGANIZATION === "true" ? { type: "tenant" } : undefined;
 }
