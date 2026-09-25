@@ -167,12 +167,12 @@ export interface ActionEffectScopePolicy {
   scopeFor(
     context: EffectContext,
     request: ActionEffectRequest,
-  ): Result.Result<DelegationScope, EffectHandlerError>;
+  ): Result.ResultAsync<DelegationScope, EffectHandlerError>;
 }
 
 /** Action Nodeの宣言（actionType / resource type / restriction）だけをNode Agentへ委任する。 */
 export const actionNodeScopePolicy: ActionEffectScopePolicy = {
-  scopeFor(context, request) {
+  async scopeFor(context, request) {
     if (context.node.type !== "action") {
       return Result.fail(
         new EffectHandlerError(
@@ -191,6 +191,8 @@ export const actionNodeScopePolicy: ActionEffectScopePolicy = {
     return Result.succeed({
       actionTypes: [request.actionType],
       resourceTypes: [resourceType.value],
+      // Action Nodeのattribute restriction（例: amount <= 10000）をNode Agentへの委任に付ける。
+      ...(request.restriction ? { condition: request.restriction } : {}),
     });
   },
 };
@@ -201,7 +203,7 @@ export const actionNodeScopePolicy: ActionEffectScopePolicy = {
  * Action Nodeは宣言どおりのaction typeだけを委任する。
  */
 export const capabilityGrantScopePolicy: ActionEffectScopePolicy = {
-  scopeFor(context, request) {
+  async scopeFor(context, request) {
     if (context.node.type === "action") return actionNodeScopePolicy.scopeFor(context, request);
     if (context.node.type !== "program" && context.node.type !== "llm") {
       return Result.fail(
@@ -231,6 +233,7 @@ export const capabilityGrantScopePolicy: ActionEffectScopePolicy = {
     return Result.succeed({
       actionTypes: [request.actionType],
       resourceTypes: [resourceType.value],
+      ...(granted.restriction ? { condition: granted.restriction } : {}),
     });
   },
 };
@@ -271,6 +274,17 @@ export class ActionRequestEffectHandler implements EffectHandler {
       correlations: ChildActionCorrelationRepository;
       canceller?: ChildActionCanceller;
       scopePolicy?: ActionEffectScopePolicy;
+      /** run内のAction数のquota（#161 Resource Governor）。 */
+      actionBudget?: {
+        chargeAction(input: {
+          organizationId: OrganizationId;
+          runId: WorkflowRunId;
+          effectId: string;
+        }): Result.ResultAsync<
+          { type: "charged" } | { type: "denied"; code: string; message: string },
+          EffectHandlerError
+        >;
+      };
     },
   ) {}
 
@@ -305,7 +319,25 @@ export class ActionRequestEffectHandler implements EffectHandler {
     if (Result.isFailure(existing)) return existing;
     if (existing.value) return Result.succeed(childStatusReport(existing.value));
 
-    const scope = (this.deps.scopePolicy ?? capabilityGrantScopePolicy).scopeFor(context, request);
+    if (this.deps.actionBudget) {
+      const charged = await this.deps.actionBudget.chargeAction({
+        organizationId,
+        runId: run.state.runId,
+        effectId: String(context.effect.id),
+      });
+      if (Result.isFailure(charged)) return charged;
+      if (charged.value.type === "denied") {
+        return Result.succeed({
+          type: "failed",
+          code: charged.value.code,
+          message: charged.value.message,
+        });
+      }
+    }
+    const scope = await (this.deps.scopePolicy ?? capabilityGrantScopePolicy).scopeFor(
+      context,
+      request,
+    );
     if (Result.isFailure(scope)) {
       return Result.succeed({
         type: "failed",

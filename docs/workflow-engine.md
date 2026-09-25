@@ -309,3 +309,50 @@ function main(input, context) {
 - yieldした作用は、Programのrequested manifestと、Program Nodeの実効capability grantの **両方** に
   含まれる必要がある（`capability_denied`、fail-closed）。生成コードは能力を自己grantできない。
 - input / output schemaをboundaryで検証する（`program_input_invalid` / `program_output_invalid`）。
+
+## Agent delegation / capability / LLM / resource governance (#161)
+
+### Attribute-based delegation scope
+
+`DelegationScope.condition`（共有Condition）を **delegation namespace**
+（`action.type` / `action.resource.*` / `action.input.*` / `actor.*` / `origin.*` / `now`）で評価する。
+不一致は `delegation_scope_denied`、field欠落・型不一致・namespace外参照は `delegation_scope_invalid`（fail-closed）。
+全hopのscopeはANDされるため、hopを増やしても権限は広がらない。
+
+- Action Nodeの `restriction` はNode Agentへのhopの `condition` になる（例: `action.input.amount <= 10000`）。
+- capability grant / 組織policyの `restriction` もProgram / LLMが要求したActionのhopへ付く。
+- Workflow Agent / Node Agentはstableな `agent` principal（run間で同じID）として監査イベントへ残る。
+- Composite ActionRequestの委任の時間境界はWorkflow Agentへのhopへ引き継ぐ（親の委任失効後はchildも拒否）。
+
+### Capability Broker
+
+```text
+実効capability = Programのrequested manifest ∩ Node grant ∩ 組織CapabilityPolicy
+```
+
+- publish時: `CapabilityBroker.review` がProgram / LLM Nodeのgrantを検証し、要求されていない
+  （`grant_not_requested`）・policyが許可しない（`grant_not_permitted` / `llm_*`）grantはpublishを拒否する
+  （`capability_review_failed`）。生成コードは要求できるだけで、自己grantできない。
+- runtime: 作用ごとにNode grantと **現在の** policyを照合する（policy縮小後の実行も `capability_denied`）。
+
+### LLM Gateway
+
+- `LlmGatewayHandler` がLLM作用を実行する。provider（Workers AI binding / API key）はhost側だけが持ち、
+  sandbox・workflow stateへは渡らない。
+- data minimization: secretらしい値（API key / bearer token / private key等）を `[REDACTED]` にしてから送る。
+- NodeRunごとのbudget（calls / input・output tokens / cost）を `workflow_llm_usage` ledgerで強制し、
+  超過は `budget_exhausted` としてdurableに記録する（promptは保存しない）。ledgerは
+  `(organization, run, effect)` で冪等で、再配送時はproviderを呼び直さず記録済みの結果を返す。
+- toolの要求はdata（`toolRequests`）として返すだけで、Gatewayはexecutorを持たない。
+  実行は必ずAction / Program作用 → ActionRequestで行う。
+
+### Resource Governor / Admission Controller
+
+| 対象                  | scope           | 超過時                                                            |
+| --------------------- | --------------- | ----------------------------------------------------------------- |
+| 非終端WorkflowRun数   | tenant / system | Run開始を拒否（親Actionは `execution_failed` / `quota_exceeded`） |
+| 同時sandbox数         | tenant / system | 枠が空くまで作用を未確定のまま待つ                                |
+| run内のchild Action数 | run             | Nodeの失敗（`quota_exceeded`、durable / 監査に残る）              |
+
+tenant上限 < system上限なので、noisy tenantがsystem capacityを占有しきれない。leaseは有効期限付き
+（異常終了時のleak回収）、counterはeffect IDで冪等。D1: migration `0025_workflow_governance.sql`。

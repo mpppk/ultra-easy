@@ -293,7 +293,8 @@ export class WorkflowRuntime {
       depth: input.depth,
       invocation: input.invocation,
       completionDelivered: false,
-      ...(isTerminalWorkflowRunStatus(state.status) ? {} : { wakeAt: now }),
+      // 開始時点で終端した（fail-fast等）runも、親への通知が済むまでsweeperの対象にする。
+      wakeAt: now,
     };
     const created = await this.deps.runs.create({
       record,
@@ -550,6 +551,9 @@ export class WorkflowRuntime {
       const delivered = await this.deps.completion.completed(record);
       if (Result.isFailure(delivered)) {
         if (delivered.error.retriable) {
+          // 通知できるまでwakeAtを残し、runner / sweeperが再試行する。
+          const kept = await this.save(record, record.state, now);
+          if (Result.isFailure(kept)) return kept;
           return Result.succeed({
             runId: record.state.runId,
             status: record.state.status,

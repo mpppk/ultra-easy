@@ -33,8 +33,11 @@ import {
   PlanParentActionContextResolver,
   TimerEffectHandler,
   WORKFLOW_EXECUTOR_KEY,
+  CapabilityBroker,
+  LlmGatewayHandler,
   ProgramAuthoringService,
   ProgramEffectHandler,
+  ResourceGovernor,
   WorkflowActionExecutor,
   WorkflowApprovalProjector,
   WorkflowInputSchemaResolver,
@@ -47,8 +50,12 @@ import type {
   ActionTrace,
   ChildActionCanceller,
   Clock,
+  CapabilityPolicyProvider,
   EffectHandlers,
+  LlmPricing,
+  LlmProvider,
   ProgramCodeGenerator,
+  ResourceLimits,
   SandboxAdmission,
   WorkflowAdmissionController,
   WorkflowRunScheduler,
@@ -56,7 +63,9 @@ import type {
 import {
   D1ActionCatalogPublisher,
   D1ChildActionCorrelationRepository,
+  D1LlmUsageLedger,
   D1ProgramRepository,
+  D1QuotaLedger,
   D1WorkflowActionBindingRepository,
   D1WorkflowDraftRepository,
   D1WorkflowRunRepository,
@@ -93,6 +102,17 @@ export type WorkflowPlatformOptions = {
   /** 自然言語からProgramを生成するCoding LLM（#160 / #161）。 */
   codeGenerator?: ProgramCodeGenerator;
   sandboxAdmission?: SandboxAdmission;
+  /**
+   * #161 governance。capabilityPolicyを渡すとProgram / LLM Nodeのgrantを組織policyで制限し
+   * （publish時review + runtime照合）、llmProviderを渡すとLLM Gatewayを有効にする。
+   * resourceLimitsを渡すとtenant / system quota（Run admission・sandbox・Action数）を強制する。
+   */
+  governance?: {
+    capabilityPolicy?: CapabilityPolicyProvider;
+    llmProvider?: LlmProvider;
+    llmPricing?: LlmPricing;
+    resourceLimits?: ResourceLimits;
+  };
   /** Composite Actionの最大nest深さ（既定: MAX_WORKFLOW_DEPTH）。 */
   maxDepth?: number;
   idGenerator?: { next(): ActionRequestId };
@@ -119,6 +139,21 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
   const asyncExecutions = new D1AsyncActionExecutionRepository(db);
   const governance = new D1GovernanceRepository(db);
   const programs = new D1ProgramRepository(db);
+  const quotas = new D1QuotaLedger(db);
+  const llmUsage = new D1LlmUsageLedger(db);
+  const broker = options.governance?.capabilityPolicy
+    ? new CapabilityBroker({ policies: options.governance.capabilityPolicy, programs })
+    : null;
+  const governor = options.governance?.resourceLimits
+    ? new ResourceGovernor({
+        ledger: quotas,
+        limits: options.governance.resourceLimits,
+        clock: options.clock,
+      })
+    : null;
+  const admission = options.admission ?? governor ?? undefined;
+  const sandboxAdmission = options.sandboxAdmission ?? governor ?? undefined;
+  const scopePolicy = options.actionScopePolicy ?? broker?.scopePolicy();
 
   let runtime: WorkflowRuntime | undefined;
   const getRuntime = (): WorkflowRuntime => {
@@ -175,7 +210,7 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
       runs,
       clock: options.clock,
       completion: new CompositeActionCompletionListener({ completion, correlations, scheduler }),
-      ...(options.admission ? { admission: options.admission } : {}),
+      ...(admission ? { admission } : {}),
       ...(options.pollIntervalSeconds !== undefined
         ? { pollIntervalSeconds: options.pollIntervalSeconds }
         : {}),
@@ -185,7 +220,8 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
           statuses,
           correlations,
           canceller,
-          ...(options.actionScopePolicy ? { scopePolicy: options.actionScopePolicy } : {}),
+          ...(scopePolicy ? { scopePolicy } : {}),
+          ...(governor ? { actionBudget: governor } : {}),
         }),
         timer: new TimerEffectHandler(),
         human_input: new HumanInputEffectHandler(),
@@ -194,7 +230,20 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
               program: new ProgramEffectHandler({
                 programs,
                 sandbox: options.sandbox,
-                ...(options.sandboxAdmission ? { admission: options.sandboxAdmission } : {}),
+                ...(sandboxAdmission ? { admission: sandboxAdmission } : {}),
+              }),
+            }
+          : {}),
+        ...(broker && options.governance?.llmProvider
+          ? {
+              llm: new LlmGatewayHandler({
+                provider: options.governance.llmProvider,
+                ledger: llmUsage,
+                broker,
+                ...(options.governance.llmPricing
+                  ? { pricing: options.governance.llmPricing }
+                  : {}),
+                clock: options.clock,
               }),
             }
           : {}),
@@ -223,6 +272,7 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
     : null;
 
   const publishing = new WorkflowPublishingService({
+    ...(broker ? { capabilities: broker } : {}),
     versions,
     drafts,
     composites: new CompositeActionPublisher({ bindings, catalog }),
@@ -235,6 +285,8 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
     completion,
     publishing,
     programAuthoring,
+    capabilities: broker,
+    governor,
     projector,
     actionDefinitionResolver,
     statuses,
@@ -255,6 +307,8 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
       results,
       asyncExecutions,
       programs,
+      quotas,
+      llmUsage,
     },
     /** `Composite ActionRequest -> WorkflowRun -> NodeRun -> child ActionRequest`の相関trace。 */
     async trace(actionRequestId: ActionRequestId): Promise<ActionTrace | null> {

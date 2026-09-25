@@ -1,6 +1,12 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
+import {
+  DELEGATION_FIELD_NAMESPACES,
+  createFieldResolver,
+  evaluateCondition as evaluateSharedCondition,
+} from "@app/expression-core";
+
 import type { ActionRequest } from "./domain/action.ts";
 import type { DelegationGrantId } from "./domain/brand.ts";
 import type { DelegationHop, DelegationScope, PrincipalRef } from "./domain/principal.ts";
@@ -142,6 +148,36 @@ function validateScope(
         type: "deny",
         code: "delegation_not_active",
         reason: "delegation scopeの有効開始前です",
+      };
+    }
+  }
+
+  if (scope.condition) {
+    const evaluated = evaluateSharedCondition(
+      scope.condition,
+      createFieldResolver({
+        policy: DELEGATION_FIELD_NAMESPACES,
+        dateTimeFields: ["now"],
+        root: {
+          action: request.action,
+          actor: request.actor,
+          origin: request.origin,
+          now: evaluatedAt,
+        },
+      }),
+    );
+    if (Result.isFailure(evaluated)) {
+      return {
+        type: "deny",
+        code: "delegation_scope_invalid",
+        reason: `delegation scopeのattribute restrictionを評価できません: ${evaluated.error.code}`,
+      };
+    }
+    if (evaluated.value.type !== "matched") {
+      return {
+        type: "deny",
+        code: "delegation_scope_denied",
+        reason: "delegation scopeのattribute restrictionを満たしていません",
       };
     }
   }

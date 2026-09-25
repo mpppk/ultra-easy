@@ -1,3 +1,4 @@
+import type { Condition } from "./condition.ts";
 import type {
   ActionType,
   AgentId,
@@ -37,6 +38,12 @@ export type DelegationScope = {
   resourceIds?: ResourceId[];
   notBefore?: string;
   expiresAt?: string;
+  /**
+   * attribute restriction（#161）。共有Condition言語をdelegation namespace
+   * （`action.type` / `action.resource.*` / `action.input.*` / `actor.*` / `origin.*` / `now`）で評価し、
+   * 一致しない・評価できない（field欠落・型不一致等）場合は委任を拒否する（fail-closed）。
+   */
+  condition?: Condition;
 };
 
 export type DelegationHop = {
