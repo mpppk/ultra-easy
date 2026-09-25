@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 
+import { checkPreviewAccess, PREVIEW_TOKEN_HEADER } from "./access.ts";
 import type { PreviewScenario } from "./scenarios.ts";
 
 type RuntimeService = {
@@ -9,6 +10,8 @@ type RuntimeService = {
 type PreviewEnv = {
   APPROVAL_RUNTIME_PREVIEW: RuntimeService;
   PREVIEW_HARNESS_ENABLED?: string;
+  /** wrangler secret。未設定ならharness APIはfail closed（403）。 */
+  PREVIEW_HARNESS_TOKEN?: string;
 };
 
 function previewEnv(): PreviewEnv {
@@ -25,8 +28,19 @@ export function previewNotFound(): Response {
   return new Response("Not Found", { status: 404 });
 }
 
-export function isPreviewHarnessEnabled(): boolean {
-  return previewEnv().PREVIEW_HARNESS_ENABLED === "true";
+/**
+ * preview harness APIの認可。許可ならnull、拒否ならそのまま返すResponse（#97）。
+ */
+export async function authorizePreviewRequest(request: Request): Promise<Response | null> {
+  const decision = await checkPreviewAccess({
+    enabled: previewEnv().PREVIEW_HARNESS_ENABLED === "true",
+    expectedToken: previewEnv().PREVIEW_HARNESS_TOKEN,
+    presentedToken: request.headers.get(PREVIEW_TOKEN_HEADER),
+  });
+  if (decision.type === "allowed") return null;
+  return decision.status === 404
+    ? previewNotFound()
+    : Response.json({ error: decision.code }, { status: decision.status });
 }
 
 export function json(data: unknown, init?: ResponseInit): Response {

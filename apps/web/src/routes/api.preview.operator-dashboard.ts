@@ -1,17 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import {
-  getOperatorDashboard,
-  isPreviewHarnessEnabled,
-  json,
-  previewNotFound,
-} from "../preview/server.ts";
+import { getOperatorDashboard, authorizePreviewRequest, json } from "../preview/server.ts";
 
 export const Route = createFileRoute("/api/preview/operator-dashboard")({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        if (!isPreviewHarnessEnabled()) return previewNotFound();
+        const denied = await authorizePreviewRequest(request);
+        if (denied) return denied;
         const organizationId =
           new URL(request.url).searchParams.get("organizationId")?.trim() ?? "";
         if (organizationId.length === 0) {

@@ -1,17 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import {
-  isPreviewHarnessEnabled,
-  json,
-  previewNotFound,
-  sendPreviewForceCancel,
-} from "../preview/server.ts";
+import { authorizePreviewRequest, json, sendPreviewForceCancel } from "../preview/server.ts";
 
 export const Route = createFileRoute("/api/preview/approval-runs/$id/force-cancel")({
   server: {
     handlers: {
       POST: async ({ params, request }) => {
-        if (!isPreviewHarnessEnabled()) return previewNotFound();
+        const denied = await authorizePreviewRequest(request);
+        if (denied) return denied;
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== "object") {
           return json({ error: "reasonを含むJSON objectを送信してください" }, { status: 400 });

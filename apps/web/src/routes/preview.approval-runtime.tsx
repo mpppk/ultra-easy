@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { PreviewAccessTokenField } from "#components/preview/access-token-field";
+import { previewFetch } from "#/preview/client.ts";
+
 import { previewScenarios, type PreviewScenario } from "../preview/scenarios.ts";
 
 type RuntimeTask = {
@@ -40,7 +43,7 @@ function PreviewApprovalRuntime() {
 
   async function refresh(id = runId) {
     if (!id) return;
-    const response = await fetch(`/api/preview/approval-runs/${encodeURIComponent(id)}`);
+    const response = await previewFetch(`/api/preview/approval-runs/${encodeURIComponent(id)}`);
     if (!response.ok) return Promise.reject(new Error(await response.text()));
     setStatus((await response.json()) as RunStatus);
   }
@@ -59,7 +62,7 @@ function PreviewApprovalRuntime() {
 
   async function start() {
     await run(async () => {
-      const response = await fetch("/api/preview/approval-runs", {
+      const response = await previewFetch("/api/preview/approval-runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ scenario }),
@@ -76,7 +79,7 @@ function PreviewApprovalRuntime() {
     const reason = window.prompt("force cancel reason", "stuck workflow recovery drill");
     if (reason === null || reason.trim().length === 0) return;
     await run(async () => {
-      const response = await fetch(
+      const response = await previewFetch(
         `/api/preview/approval-runs/${encodeURIComponent(runId)}/force-cancel`,
         {
           method: "POST",
@@ -92,7 +95,7 @@ function PreviewApprovalRuntime() {
   async function decide(task: RuntimeTask, userId: string, decision: "approve" | "reject") {
     if (!runId) return;
     await run(async () => {
-      const response = await fetch(
+      const response = await previewFetch(
         `/api/preview/approval-runs/${encodeURIComponent(runId)}/decisions`,
         {
           method: "POST",
@@ -113,6 +116,7 @@ function PreviewApprovalRuntime() {
     >
       <h1>Approval Runtime Preview</h1>
       <p>Cloudflare Workflows + D1 + Safe Action Execution のPreview E2E確認用ハーネスです。</p>
+      <PreviewAccessTokenField />
 
       <section style={{ display: "flex", gap: 12, alignItems: "center", marginBlock: 24 }}>
         <select

@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { PreviewAccessTokenField } from "#components/preview/access-token-field";
+import { previewFetch } from "#/preview/client.ts";
+
 export const Route = createFileRoute("/preview/operator-dashboard")({
   component: PreviewOperatorDashboard,
 });
@@ -64,7 +67,7 @@ function PreviewOperatorDashboard() {
     setBusy(true);
     setError(undefined);
     try {
-      const response = await fetch(
+      const response = await previewFetch(
         `/api/preview/operator-dashboard?organizationId=${encodeURIComponent(organizationId)}`,
       );
       if (!response.ok) return Promise.reject(new Error(await response.text()));
@@ -82,6 +85,7 @@ function PreviewOperatorDashboard() {
       style={{ maxWidth: 920, margin: "0 auto", padding: 32, fontFamily: "sans-serif" }}
     >
       <h1>Operator Dashboard (Preview)</h1>
+      <PreviewAccessTokenField />
       <p>
         D1 append-only eventsとoutbox
         tablesから算出したSLIです。FGAレイテンシ・Workflowリトライ系はWorkers
