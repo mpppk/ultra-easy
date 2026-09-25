@@ -2,6 +2,8 @@ import { Result } from "@praha/byethrow";
 
 import { ApprovalRuntimeProjectionRepositoryError } from "@app/approval-core";
 import type {
+  ApprovalRuntimeProjectionWriteResult,
+  VersionedApprovalRuntimeProjection,
   ActionEventRecord,
   ActionRequestId,
   ApprovalRuntimeProjectionRepository,
@@ -26,16 +28,10 @@ type VersionedRuntimeProjectionRow = {
   writer: string | null;
 };
 
-export type VersionedApprovalRuntimeProjection = {
-  state: ApprovalRuntimeState;
-  version: number;
-  writer?: string;
-};
-
-export type ApprovalRuntimeProjectionWriteResult =
-  | { type: "written"; version: number; state: ApprovalRuntimeState }
-  /** 別のwriterが先にversionを進めた。currentは現在の保存内容。 */
-  | { type: "conflict"; current: VersionedApprovalRuntimeProjection | null };
+export type {
+  ApprovalRuntimeProjectionWriteResult,
+  VersionedApprovalRuntimeProjection,
+} from "@app/approval-core";
 
 type D1BatchDatabaseLike = D1DatabaseLike & {
   batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]>;

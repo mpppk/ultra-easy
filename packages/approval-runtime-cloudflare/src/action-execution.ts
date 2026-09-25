@@ -1,6 +1,5 @@
 import { Result } from "@praha/byethrow";
 import type { WorkflowStep, WorkflowStepConfig } from "cloudflare:workers";
-import type { D1Database } from "@cloudflare/workers-types";
 
 import {
   createActionExecutionIdempotencyKey,
@@ -20,16 +19,7 @@ import {
   type MaterializedApprovalPlan,
   type OrganizationId,
 } from "@app/approval-core";
-import {
-  D1ApprovalRuntimeProjectionRepository,
-  D1MaterializedPlanRepository,
-} from "@app/approval-d1";
-
-import {
-  ServiceBindingActionAuthorizer,
-  ServiceBindingActionExecutor,
-  type ActionServiceBinding,
-} from "./service-binding.ts";
+import type { ActionWorkflowDependencies } from "./workflow-dependencies.ts";
 
 export type { ActionExecutionTerminalStatus };
 
@@ -75,12 +65,6 @@ export type ActionExecutionWorkflowResult =
       code: string;
       message: string;
     };
-
-export type ActionExecutionWorkflowEnv = {
-  DB: D1Database;
-  ACTION_AUTHORIZER?: ActionServiceBinding;
-  ACTION_EXECUTOR?: ActionServiceBinding;
-};
 
 type ActionExecutionWorkflowParams = {
   organizationId: OrganizationId;
@@ -216,10 +200,10 @@ function requestFromPlan(plan: MaterializedApprovalPlan): ActionRequest {
 }
 
 async function loadPlan(
-  env: ActionExecutionWorkflowEnv,
+  deps: ActionWorkflowDependencies,
   params: ActionExecutionWorkflowParams,
 ): Promise<{ type: "found"; plan: MaterializedApprovalPlan } | FailedTransition | RetryTransition> {
-  const loaded = await new D1MaterializedPlanRepository(env.DB).loadForWorkflow({
+  const loaded = await deps.plans.loadForWorkflow({
     organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
@@ -249,12 +233,12 @@ async function loadPlan(
 }
 
 async function validateApprovalBinding(
-  env: ActionExecutionWorkflowEnv,
+  deps: ActionWorkflowDependencies,
   plan: MaterializedApprovalPlan,
 ): Promise<FailedTransition | RetryTransition | null> {
   if (plan.flow.type === "none") return null;
 
-  const projection = await new D1ApprovalRuntimeProjectionRepository(env.DB).load({
+  const projection = await deps.projections.load({
     organizationId: plan.organizationId,
     actionRequestId: plan.actionRequestId,
   });
@@ -280,15 +264,16 @@ async function validateApprovalBinding(
 }
 
 async function reauthorizeStep(input: {
-  env: ActionExecutionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionExecutionWorkflowParams;
   evaluatedAt: string;
 }): Promise<ReauthorizationTransition> {
-  const loaded = await loadPlan(input.env, input.params);
+  const loaded = await loadPlan(input.deps, input.params);
   if (loaded.type !== "found") return loaded;
-  const invalidBinding = await validateApprovalBinding(input.env, loaded.plan);
+  const invalidBinding = await validateApprovalBinding(input.deps, loaded.plan);
   if (invalidBinding) return invalidBinding;
-  if (!input.env.ACTION_AUTHORIZER) {
+  const authorizer = input.deps.actionAuthorizer(input.params);
+  if (!authorizer) {
     return {
       type: "terminal",
       status: "authorization_check_failed",
@@ -299,11 +284,7 @@ async function reauthorizeStep(input: {
   }
 
   const result = await reauthorizeActionForExecution({
-    authorizer: new ServiceBindingActionAuthorizer(
-      input.env.ACTION_AUTHORIZER,
-      loaded.plan.organizationId,
-      loaded.plan.actionRequestId,
-    ),
+    authorizer,
     request: requestFromPlan(loaded.plan),
     evaluatedAt: input.evaluatedAt,
   });
@@ -334,7 +315,7 @@ async function reauthorizeStep(input: {
 }
 
 async function runReauthorizationStep(input: {
-  env: ActionExecutionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionExecutionWorkflowParams;
   step: WorkflowStep;
   evaluatedAt: string;
@@ -357,12 +338,14 @@ async function runReauthorizationStep(input: {
 
 /** downstreamのexecutor registryに問い合わせ、executorKeyの登録と実行保証を確定する。 */
 async function describeExecutorStep(input: {
-  env: ActionExecutionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionExecutionWorkflowParams;
 }): Promise<ExecutorDescriptionTransition> {
-  const loaded = await loadPlan(input.env, input.params);
+  const loaded = await loadPlan(input.deps, input.params);
   if (loaded.type !== "found") return loaded;
-  if (!input.env.ACTION_EXECUTOR) {
+  const executorKey = loaded.plan.action.definition.executorKey;
+  const describable = input.deps.actionExecutor(executorKey);
+  if (!describable) {
     return {
       type: "terminal",
       status: "execution_failed",
@@ -371,11 +354,7 @@ async function describeExecutorStep(input: {
       message: "Action Executor service bindingが設定されていません",
     };
   }
-  const executorKey = loaded.plan.action.definition.executorKey;
-  const described = await new ServiceBindingActionExecutor(
-    input.env.ACTION_EXECUTOR,
-    executorKey,
-  ).describe();
+  const described = await describable.describe();
   if (Result.isFailure(described)) {
     return described.error.retriable
       ? { type: "retry", error: described.error }
@@ -400,7 +379,7 @@ async function describeExecutorStep(input: {
 }
 
 async function runDescribeExecutorStep(input: {
-  env: ActionExecutionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionExecutionWorkflowParams;
   step: WorkflowStep;
 }): Promise<ExecutorDescriptionStepResult> {
@@ -426,16 +405,20 @@ async function runDescribeExecutorStep(input: {
 }
 
 async function executeStep(input: {
-  env: ActionExecutionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionExecutionWorkflowParams;
   authorizationEvidence: AuthorizationEvidence;
   guaranteeLevel: ActionExecutionGuaranteeLevel;
 }): Promise<ExecutionTransition> {
-  const loaded = await loadPlan(input.env, input.params);
+  const loaded = await loadPlan(input.deps, input.params);
   if (loaded.type !== "found") return loaded;
-  const invalidBinding = await validateApprovalBinding(input.env, loaded.plan);
+  const invalidBinding = await validateApprovalBinding(input.deps, loaded.plan);
   if (invalidBinding) return invalidBinding;
-  if (!input.env.ACTION_EXECUTOR) {
+  const executor = input.deps.actionExecutor(
+    loaded.plan.action.definition.executorKey,
+    input.guaranteeLevel,
+  );
+  if (!executor) {
     return {
       type: "terminal",
       status: "execution_failed",
@@ -444,12 +427,6 @@ async function executeStep(input: {
       message: "Action Executor service bindingが設定されていません",
     };
   }
-
-  const executor = new ServiceBindingActionExecutor(
-    input.env.ACTION_EXECUTOR,
-    loaded.plan.action.definition.executorKey,
-    input.guaranteeLevel,
-  );
   const idempotencyKey = createActionExecutionIdempotencyKey(
     loaded.plan.organizationId,
     loaded.plan.actionRequestId,
@@ -491,7 +468,7 @@ async function executeStep(input: {
 }
 
 async function runExecutionStep(input: {
-  env: ActionExecutionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionExecutionWorkflowParams;
   step: WorkflowStep;
   authorizationEvidence: PersistedAuthorizationEvidence;
@@ -503,7 +480,7 @@ async function runExecutionStep(input: {
       ACTION_EXECUTION_STEP_CONFIG[input.guaranteeLevel],
       async () => {
         const transition = await executeStep({
-          env: input.env,
+          deps: input.deps,
           params: input.params,
           authorizationEvidence: restoreAuthorizationEvidence(input.authorizationEvidence),
           guaranteeLevel: input.guaranteeLevel,
@@ -549,7 +526,7 @@ function terminalResult(
 }
 
 export async function runActionExecution(input: {
-  env: ActionExecutionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionExecutionWorkflowParams;
   step: WorkflowStep;
   evaluatedAt: string;
@@ -573,7 +550,7 @@ export async function runActionExecution(input: {
   }
 
   const execution = await runExecutionStep({
-    env: input.env,
+    deps: input.deps,
     params: input.params,
     step: input.step,
     authorizationEvidence: reauthorization.evidence,

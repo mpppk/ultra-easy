@@ -16,7 +16,7 @@ import { D1GovernanceRepository } from "@app/approval-d1";
 import { serveActionExecutorRegistry } from "../service-binding.ts";
 import { CloudflareWorkflowCancellationControl } from "../workflow-cancellation.ts";
 
-export { ActionWorkflow } from "../workflow.ts";
+export { ActionWorkflow } from "../cloudflare-workflow.ts";
 
 /** Workflow統合テストが登録するexecutorKey。 */
 export const TEST_EXECUTOR_KEYS = {
