@@ -39,6 +39,7 @@ import {
   loadOperatorDashboardView,
   notificationScheduledTasks,
   readOperatorAlertThresholds,
+  retentionScheduledTask,
   runScheduledTasks,
   serveActionExecutorRegistry,
   type ActionWorkflowEnv,
@@ -493,6 +494,7 @@ export default {
               telemetry,
             }),
         },
+        retentionScheduledTask(env.DB),
       ],
     });
   },
