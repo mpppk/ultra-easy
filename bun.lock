@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "ultra-easy-new",
+      "name": "ultra-easy",
       "devDependencies": {
         "@praha/byethrow-docs": "^0.12.0",
         "@praha/byethrow-oxlint": "^0.12.0",
@@ -54,8 +54,8 @@
         "@app/approval-application": "workspace:*",
         "@app/approval-core": "workspace:*",
         "@dagrejs/dagre": "^3.1.1",
-        "@tanstack/react-router": "latest",
-        "@tanstack/react-start": "latest",
+        "@tanstack/react-router": "^1.170.39",
+        "@tanstack/react-start": "^1.168.58",
         "@xyflow/react": "^12.11.6",
         "class-variance-authority": "^0.7.1",
         "cn": "^0.4.0",

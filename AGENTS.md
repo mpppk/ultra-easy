@@ -28,7 +28,7 @@ release. Add a tool name to select part of the graph. For example, run
 
 # ultra-easy
 
-Cloudflare Workers + TanStack Start (React) project. Package manager is **bun** (not npm). `packageManager` is `bun@1.4.0`.
+Cloudflare Workers + TanStack Start (React) project. Package manager is **bun** (not npm). `packageManager` is `bun@1.4.2`.
 
 ## Workspace Layout
 
