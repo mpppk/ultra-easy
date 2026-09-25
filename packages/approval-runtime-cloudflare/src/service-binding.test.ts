@@ -1,6 +1,7 @@
 import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
+import { ActionExecutorRegistry } from "@app/approval-core";
 import type {
   ActionExecutionRequest,
   ActionFingerprint,
@@ -13,6 +14,7 @@ import { createHumanActionRequest } from "@app/approval-core/testing";
 import {
   ServiceBindingActionAuthorizer,
   ServiceBindingActionExecutor,
+  serveActionExecutorRegistry,
   type ActionServiceBinding,
 } from "./service-binding.ts";
 
@@ -82,5 +84,57 @@ describe("service-binding correlation", () => {
     expect(request.headers.get("x-ue-action-request-id")).toBe(String(actionRequestId));
     expect(request.headers.get("x-ue-correlation-id")).toBe(String(actionRequestId));
     expect(request.headers.get("idempotency-key")).toBe(executionRequest.idempotencyKey);
+  });
+
+  it("#165: async executorのacceptedを202でService Binding越しに往復できる", async () => {
+    const registry = new ActionExecutorRegistry({
+      "executor:async": {
+        guaranteeLevel: "idempotent",
+        execute: async () => Result.succeed({ status: "succeeded" as const }),
+        dispatch: async (request: ActionExecutionRequest) =>
+          Result.succeed({
+            type: "accepted" as const,
+            executionRef: `job:${String(request.actionRequestId)}`,
+          }),
+      },
+      "executor:sync": {
+        guaranteeLevel: "idempotent",
+        execute: async () => Result.succeed({ status: "succeeded" as const, output: { ok: 1 } }),
+      },
+    });
+    const binding: ActionServiceBinding = {
+      fetch: (request) => serveActionExecutorRegistry(request, registry),
+    };
+    const request = (executorKey: string) =>
+      ({
+        organizationId,
+        actionRequestId,
+        actionFingerprint: branded<ActionFingerprint>("sha256:service-binding"),
+        idempotencyKey: "idem:service-binding",
+        action: { definition: { executorKey } } as ActionExecutionRequest["action"],
+        authorizationEvidence: {
+          evaluatedAt: "2026-09-20T00:00:00.000Z",
+          consistency: "higher_consistency" as const,
+        },
+      }) satisfies ActionExecutionRequest;
+
+    const asyncExecutor = new ServiceBindingActionExecutor(
+      binding,
+      branded<ExecutorKey>("executor:async"),
+    );
+    expect(await asyncExecutor.dispatch(request("executor:async"))).toEqual(
+      Result.succeed({ type: "accepted", executionRef: `job:${String(actionRequestId)}` }),
+    );
+    // accepted結果はexecute（同期contract）では成功扱いにしない。
+    const legacy = await asyncExecutor.execute(request("executor:async"));
+    expect(Result.isFailure(legacy) && legacy.error.code).toBe("async_execution_requires_dispatch");
+
+    const syncExecutor = new ServiceBindingActionExecutor(
+      binding,
+      branded<ExecutorKey>("executor:sync"),
+    );
+    expect(await syncExecutor.dispatch(request("executor:sync"))).toEqual(
+      Result.succeed({ type: "completed", result: { status: "succeeded", output: { ok: 1 } } }),
+    );
   });
 });

@@ -413,6 +413,8 @@ function createHarness() {
       });
       return;
     }
+    // このfixtureのexecutorは同期executor（acceptedを返さない）。
+    assert(execution.value.type !== "accepted");
     views.set(
       actionRequestId,
       execution.value.type === "executed"

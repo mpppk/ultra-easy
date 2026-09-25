@@ -1,5 +1,6 @@
 export * from "./action-event-repository.ts";
 export * from "./action-result-projection-repository.ts";
+export * from "./async-action-execution-repository.ts";
 export * from "./authorization-relationship-repository.ts";
 export * from "./authorization-relationship-store.ts";
 export * from "./approval-runtime-projection-repository.ts";

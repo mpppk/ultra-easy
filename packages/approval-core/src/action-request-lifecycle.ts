@@ -8,7 +8,8 @@ import type { ActionEvent } from "./action-event.ts";
  * - evaluating: 受付済み。Plan確定前
  * - pending_approval: 承認待ち（Workflow起動済み）
  * - approved: 承認完了、または承認不要。再認可前
- * - executing: 再認可済みでExecutorを呼び出した（結果未確定）
+ * - executing: 再認可済みでExecutorを呼び出した（結果未確定）。async executorがacceptedを返した場合も
+ *   trusted completionで終端するまでここに留まる（#165）
  * - failed: Workflowが異常終了した（状態を進められない。runbookで調査する）
  * - それ以外: 終端
  */
@@ -91,6 +92,7 @@ function targetOf(
       return "approved";
     case "action.reauthorized":
     case "action.execution_started":
+    case "action.execution_accepted":
       return "executing";
     case "action.completed":
       return event.result;

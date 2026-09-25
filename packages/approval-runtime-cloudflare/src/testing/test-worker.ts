@@ -6,6 +6,7 @@ import {
   ActionExecutorRegistry,
   GOVERNANCE_EXECUTOR_KEY,
   GovernanceActionExecutor,
+  type ActionExecutionDispatch,
   type ActionExecutionGuaranteeLevel,
   type ActionExecutionRequest,
   type ActionExecutionResult,
@@ -21,6 +22,7 @@ export { ActionWorkflow } from "../cloudflare-workflow.ts";
 /** Workflow統合テストが登録するexecutorKey。 */
 export const TEST_EXECUTOR_KEYS = {
   idempotent: "executor:workflow",
+  async: "executor:async",
   atMostOnce: "executor:at-most-once",
   unregistered: "executor:unregistered",
 } as const;
@@ -77,6 +79,30 @@ class ScenarioActionExecutor implements ActionExecutor {
   }
 }
 
+/** 実行を受け付けて`accepted`を返すasync executor（#165）。 */
+class AcceptingActionExecutor implements ActionExecutor {
+  readonly guaranteeLevel = "idempotent" as const;
+
+  async execute(): Result.ResultAsync<ActionExecutionResult, ActionExecutorError> {
+    return Result.fail(
+      new ActionExecutorError({
+        code: "async_execution_requires_dispatch",
+        retriable: false,
+        detail: "dispatchを使ってください",
+      }),
+    );
+  }
+
+  async dispatch(
+    request: ActionExecutionRequest,
+  ): Result.ResultAsync<ActionExecutionDispatch, ActionExecutorError> {
+    return Result.succeed({
+      type: "accepted",
+      executionRef: `job:${String(request.actionRequestId)}`,
+    });
+  }
+}
+
 /**
  * Workflow統合テスト用のdownstream executor registry。本番（approval-api）と同じ
  * `serveActionExecutorRegistry` contractで、governanceは実際のGovernanceActionExecutorへ届く。
@@ -86,6 +112,7 @@ export class TestActionExecutor extends WorkerEntrypoint<Cloudflare.Env> {
     const registry = new ActionExecutorRegistry({
       [TEST_EXECUTOR_KEYS.idempotent]: new ScenarioActionExecutor("idempotent"),
       [TEST_EXECUTOR_KEYS.atMostOnce]: new ScenarioActionExecutor("best_effort_at_most_once"),
+      [TEST_EXECUTOR_KEYS.async]: new AcceptingActionExecutor(),
       [String(GOVERNANCE_EXECUTOR_KEY)]: new GovernanceActionExecutor(
         new D1GovernanceRepository(this.env.DB),
         new CloudflareWorkflowCancellationControl(this.env.DB, this.env.ACTION_WORKFLOW),

@@ -73,6 +73,13 @@ export async function listStuckActionRequestCandidates(
                WHERE r.organization_id = p.organization_id
                  AND r.action_request_id = p.action_request_id
             )
+            -- #165: async executorが受け付けた実行はtrusted completion待ち（滞留ではない）。
+            AND NOT EXISTS (
+              SELECT 1 FROM action_async_executions a
+               WHERE a.organization_id = p.organization_id
+                 AND a.action_request_id = p.action_request_id
+                 AND a.status IN ('accepted', 'cancel_requested')
+            )
           ORDER BY p.updated_at
           LIMIT ?`,
       )

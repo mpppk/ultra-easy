@@ -545,6 +545,8 @@ function createHarness() {
         evaluatedAt: now,
       });
       assert(Result.isSuccess(execution));
+      // このfixtureのexecutorは同期executor（acceptedを返さない）。
+      assert(execution.value.type !== "accepted");
       const previous = views.get(actionRequestId);
       assert(previous);
       if (execution.value.type === "executed") {

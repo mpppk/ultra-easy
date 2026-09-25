@@ -7,6 +7,7 @@ import {
   unknownExecutorKeyError,
   type ActionAuthorizer,
   type ActionExecutorRegistry,
+  type ActionExecutionDispatch,
   type ActionExecutionGuaranteeLevel,
   type ActionExecutionRequest,
   type ActionExecutionResult,
@@ -257,6 +258,27 @@ export class ServiceBindingActionExecutor implements ActionExecutor {
   async execute(
     request: ActionExecutionRequest,
   ): Result.ResultAsync<ActionExecutionResult, ActionExecutorError> {
+    const dispatched = await this.dispatch(request);
+    if (Result.isFailure(dispatched)) return dispatched;
+    if (dispatched.value.type === "accepted") {
+      return Result.fail(
+        new ActionExecutorError({
+          code: "async_execution_requires_dispatch",
+          retriable: false,
+          detail: "async executorの受付結果はdispatchで扱う必要があります",
+        }),
+      );
+    }
+    return Result.succeed(dispatched.value.result);
+  }
+
+  /**
+   * downstreamのregistryへ配送する。200 `{status:"succeeded"}`は同期完了、
+   * 202 `{status:"accepted", executionRef}`はasync実行の受付（#165）。
+   */
+  async dispatch(
+    request: ActionExecutionRequest,
+  ): Result.ResultAsync<ActionExecutionDispatch, ActionExecutorError> {
     const fetched = await fetchBinding({
       binding: this.binding,
       request: new Request(
@@ -313,6 +335,16 @@ export class ServiceBindingActionExecutor implements ActionExecutor {
     }
 
     if (
+      fetched.value.status === 202 &&
+      isRecord(parsed.value) &&
+      parsed.value.status === "accepted" &&
+      typeof parsed.value.executionRef === "string" &&
+      parsed.value.executionRef.length > 0
+    ) {
+      return Result.succeed({ type: "accepted", executionRef: parsed.value.executionRef });
+    }
+
+    if (
       typeof parsed.value !== "object" ||
       parsed.value === null ||
       !("status" in parsed.value) ||
@@ -322,15 +354,16 @@ export class ServiceBindingActionExecutor implements ActionExecutor {
         new ActionExecutorError({
           code: "invalid_executor_response",
           retriable: false,
-          detail: "Action Executor responseがstatus=succeeded contractを満たしていません",
+          detail:
+            "Action Executor responseがstatus=succeeded / acceptedのcontractを満たしていません",
         }),
       );
     }
 
     const output = "output" in parsed.value ? (parsed.value.output as JsonValue) : undefined;
     return Result.succeed({
-      status: "succeeded",
-      ...(output !== undefined ? { output } : {}),
+      type: "completed",
+      result: { status: "succeeded", ...(output !== undefined ? { output } : {}) },
     });
   }
 }
@@ -418,7 +451,13 @@ export async function serveActionExecutorRegistry(
       { status: 400 },
     );
   }
-  const executed = await registry.execute(body as ActionExecutionRequest);
-  if (Result.isFailure(executed)) return executorErrorJson(executed.error);
-  return Response.json(executed.value, { status: 200 });
+  const dispatched = await registry.dispatch(body as ActionExecutionRequest);
+  if (Result.isFailure(dispatched)) return executorErrorJson(dispatched.error);
+  if (dispatched.value.type === "accepted") {
+    return Response.json(
+      { status: "accepted", executionRef: dispatched.value.executionRef },
+      { status: 202 },
+    );
+  }
+  return Response.json(dispatched.value.result, { status: 200 });
 }

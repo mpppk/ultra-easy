@@ -13,6 +13,7 @@ import {
   computeEvaluationSnapshotChecksum,
   createActionExecutionIdempotencyKey,
   createMaterializedStepId,
+  foldActionRequestStatus,
 } from "@app/approval-core";
 import type {
   ActionRequestId,
@@ -31,8 +32,10 @@ import type {
   Sha256Digest,
   UserId,
 } from "@app/approval-core";
+import { ActionExecutionCompletionService } from "@app/approval-application";
 import {
   D1ActionEventRepository,
+  D1AsyncActionExecutionRepository,
   D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
   D1GovernanceRepository,
@@ -61,6 +64,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await testEnv.DB.batch([
     testEnv.DB.prepare("DELETE FROM action_results"),
+    testEnv.DB.prepare("DELETE FROM action_async_executions"),
     testEnv.DB.prepare("DELETE FROM approval_tasks"),
     testEnv.DB.prepare("DELETE FROM approval_runtime_projections"),
     testEnv.DB.prepare("DELETE FROM approval_task_candidate_projections"),
@@ -510,6 +514,67 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       ),
     });
     await introspector.dispose();
+  });
+
+  it("#165: async executorのacceptedではActionRequestをexecutingに留め、trusted completionで終端する", async () => {
+    const plan = await validPlan("cf-execution-async", { type: "none" }, {}, organizationId, {
+      executorKey: TEST_EXECUTOR_KEYS.async,
+    });
+    await savePlan(plan);
+
+    const id = await actionWorkflowInstanceId(plan);
+    await createInstance(plan, id);
+    await expectCompleted(id, "executing");
+
+    const results = new D1ActionResultProjectionRepository(testEnv.DB);
+    const before = await results.load({ organizationId, actionRequestId: plan.actionRequestId });
+    assert(Result.isSuccess(before));
+    expect(before.value).toBeNull();
+    const asyncExecutions = new D1AsyncActionExecutionRepository(testEnv.DB);
+    const accepted = await asyncExecutions.load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(accepted) && accepted.value);
+    expect(accepted.value).toMatchObject({
+      status: "accepted",
+      executionRef: `job:${String(plan.actionRequestId)}`,
+      workflowInstanceId: id,
+    });
+
+    const events = new D1ActionEventRepository(testEnv.DB);
+    const status = async () => {
+      const listed = await events.listForAction({
+        organizationId,
+        actionRequestId: plan.actionRequestId,
+      });
+      assert(Result.isSuccess(listed));
+      return foldActionRequestStatus(
+        listed.value.map((record) => record.event),
+        { approvalRequired: false },
+      );
+    };
+    expect(await status()).toBe("executing");
+
+    const completion = new ActionExecutionCompletionService({ asyncExecutions, results, events });
+    const completed = await completion.complete({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+      actionFingerprint: plan.actionFingerprint,
+      executionRef: accepted.value.executionRef,
+      idempotencyKey: accepted.value.idempotencyKey,
+      completion: { status: "executed", output: { jobId: "job-1" } },
+      completedAt: new Date().toISOString(),
+    });
+    assert(Result.isSuccess(completed));
+    expect(await status()).toBe("executed");
+    const after = await results.load({ organizationId, actionRequestId: plan.actionRequestId });
+    assert(Result.isSuccess(after));
+    expect(after.value).toMatchObject({
+      status: "executed",
+      workflowInstanceId: id,
+      result: { output: { jobId: "job-1" } },
+    });
   });
 
   it("#104: at-most-once executorの一時障害はretryせずexecution_unknownで終端する", async () => {

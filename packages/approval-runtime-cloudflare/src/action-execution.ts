@@ -61,6 +61,14 @@ export type ActionExecutionWorkflowResult =
       message?: string;
     }
   | {
+      /** async executorが受け付けた（#165）。最終結果はtrusted completionで確定する。 */
+      type: "accepted";
+      guaranteeLevel: ActionExecutionGuaranteeLevel;
+      idempotencyKey: string;
+      executionRef: string;
+      authorizationEvidence: AuthorizationEvidence;
+    }
+  | {
       type: "failed";
       code: string;
       message: string;
@@ -117,6 +125,12 @@ type ExecutionTransition =
       guaranteeLevel: ActionExecutionGuaranteeLevel;
       idempotencyKey: string;
       resultJson: string;
+    }
+  | {
+      type: "accepted";
+      guaranteeLevel: ActionExecutionGuaranteeLevel;
+      idempotencyKey: string;
+      executionRef: string;
     }
   | TerminalTransition
   | FailedTransition
@@ -459,6 +473,14 @@ async function executeStep(input: {
       message: result.error.message,
     };
   }
+  if (result.value.type === "accepted") {
+    return {
+      type: "accepted",
+      guaranteeLevel: result.value.guaranteeLevel,
+      idempotencyKey: result.value.idempotencyKey,
+      executionRef: result.value.executionRef,
+    };
+  }
   return {
     type: "executed",
     guaranteeLevel: result.value.guaranteeLevel,
@@ -565,6 +587,15 @@ export async function runActionExecution(input: {
   }
   if (execution.type === "terminal") {
     return terminalResult(execution, restoreAuthorizationEvidence(reauthorization.evidence));
+  }
+  if (execution.type === "accepted") {
+    return {
+      type: "accepted",
+      guaranteeLevel: execution.guaranteeLevel,
+      idempotencyKey: execution.idempotencyKey,
+      executionRef: execution.executionRef,
+      authorizationEvidence: restoreAuthorizationEvidence(reauthorization.evidence),
+    };
   }
 
   return {
