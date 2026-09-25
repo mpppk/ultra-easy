@@ -24,8 +24,8 @@
     "OPENFGA_STORE_ID": "01M31PMZ0DRBWZQ9D6TZ64E87W",
     // Pinned GitOps model (packages/approval-fga/openfga/model.fga) published from
     // AUTHORIZATION_MODEL_SOURCE_REVISION. Update both via PR after publish-model.ts.
-    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M38K1Q55CCNETS1V6XHJZJTB",
-    "AUTHORIZATION_MODEL_SOURCE_REVISION": "319bcda",
+    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M3C9612ARE2Q84RTT6QBFMSA",
+    "AUTHORIZATION_MODEL_SOURCE_REVISION": "f7f4bbd",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
     // #109: FGA alertはAnalytics Engine（TELEMETRY_ANALYTICS）をSQL APIで読む。
     // ANALYTICS_ENGINE_API_TOKEN（Account Analytics: Read）は`wrangler secret put`のみ。
