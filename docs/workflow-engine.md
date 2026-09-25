@@ -385,3 +385,32 @@ Previewの運用上の注意:
 - Workers AIの `5xxx` errorは入力 / model起因として再試行しない（`workers_ai_<code>`、fail-closed）。
   それ以外のprovider errorは再試行し、再試行は `workflow.retry` telemetryとして記録する（`onEffectRetry`）。
 - runの進行はCloudflare Workflows（`WORKFLOW_RUNNER`）と cron sweeper（`sweep_workflow_runs`）の両方が駆動する。
+
+## Security / multi-tenant / durable E2E hardening (#163)
+
+`tests/acceptance/wf-15x〜16x` がD1（SQLite）上のplatform全体（ActionRequest pipeline + Workflow Runtime）で
+#154のAcceptance Criteriaを固定する。crashは `FaultInjectingD1`（`tests/workflow/harness.ts`）で
+「SQLが一致する書き込みをcommit前に失敗させる」ことで再現する。
+
+| #154 Acceptance Criteria / #163 scenario                                                | 検証                                                                 |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| versioned Composite Action publish / invoke、binding immutable                          | `wf-158`（publish / binding）、`wf-163`（D1 triggerで改ざん不可）    |
+| prepare時にversion / checksum固定、承認待ち中の新版publishで旧版実行                    | `wf-158` pins the WorkflowVersion                                    |
+| async accepted と terminal completionの区別、spoof / stale / duplicate / conflict       | `wf-163` async lifecycle                                             |
+| WorkflowActionExecutorからrun開始、nested workflow、runaway nesting guard               | `wf-158`                                                             |
+| child Actionは必ずActionRequest、executor直接呼び出し（bypass）は拒否                   | `wf-158`、`wf-163` executor bypass                                   |
+| MCP固有概念をworkflow-core / approval-core Action modelへ入れない                       | `wf-163` architecture boundary                                       |
+| shared Expression Engine / namespace制限                                                | `expression-core` / `workflow-core` unit、`wf-159`（policy probe）   |
+| Branch / Loop decisionのdurable保存、非選択pathのnot_taken、active pathだけ待つJoin     | `wf-163` Branch -> A \| B -> Join（承認待ちをまたいで再評価しない）  |
+| empty ForEach / iteration-scoped Join / bounded ForEach・While / fail-fast              | `wf-163` ForEach / While、`workflow-core` scheduler unit             |
+| crash after effect reservation / after child creation、retry / concurrent replay        | `wf-163` durability                                                  |
+| Program Node immutable publish、sandbox（network / credential無し）、effect経由の能力   | `wf-160`、`wf-163` sandbox globals                                   |
+| 待機中にsandboxを保持しない、生成コードの自己grant禁止、capability deny                 | `wf-160`、`wf-161`                                                   |
+| agent principal + attribute-based delegation、delegation expiry / revoke                | `wf-161`（expiry）、`wf-163`（承認待ち中のrevoke）                   |
+| tenant / run quota、noisy-neighbor                                                      | `wf-161`                                                             |
+| Workflow-level Approval と child approvalの独立評価、parent承認でchildを省略しない      | `wf-159`                                                             |
+| child approval projectionのUI表示、definition / projection / runtime stateの可視化      | `apps/web`（Workflow Studio, #162）+ preview環境で確認               |
+| parent / child ActionRequest / WorkflowRun / NodeRun / Effect / Approval / Executor相関 | `wf-163` audit correlation（`platform.trace`）                       |
+| cross-tenant isolation（run / program / version / composite / async completion）        | `wf-161`、`wf-163`（他tenantのcompletionは`execution_not_accepted`） |
+| secret / prompt leakage（audit stream / LLM ledger）                                    | `wf-161`（ledgerはpromptを保存しない）、`wf-163`（workflow_events）  |
+| M0〜M10 + MCP Gateway regression                                                        | `tests/acceptance/m*.test.ts`（`vp run -r test`）                    |
