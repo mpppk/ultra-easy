@@ -339,7 +339,7 @@ function WorkflowEditor() {
                 delegationFields={delegationFields}
                 actions={catalog?.actions ?? []}
                 programs={programs}
-                llmModel={catalog?.llmModel ?? "@cf/meta/llama-3.1-8b-instruct"}
+                llmModel={catalog?.llmModel ?? "@cf/qwen/qwen2.5-coder-32b-instruct"}
               />
             ) : (
               <p className="text-sm text-muted-foreground">Nodeを選択すると編集できます。</p>

@@ -1,5 +1,5 @@
 import { Result } from "@praha/byethrow";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DEFAULT_SANDBOX_LIMITS } from "@app/workflow-core";
 import type { SandboxLimits } from "@app/workflow-core";
@@ -190,5 +190,17 @@ describe("QuickJS sandbox (#160)", () => {
       "main_missing",
     ]);
     expect(validateProgramSource(`function main(input) { return input; }`)).toEqual([]);
+  });
+
+  it("terminates runaway code even when the clock does not advance (Cloudflare Workers)", async () => {
+    const frozen = Date.now();
+    const spy = vi.spyOn(Date, "now").mockReturnValue(frozen);
+    const result = await run(
+      `function main() { let i = 0; while (true) { i++; } }`,
+      {},
+      { timeoutMs: 50 },
+    );
+    spy.mockRestore();
+    expect(errorCode(result)).toBe("sandbox_timeout");
   });
 });

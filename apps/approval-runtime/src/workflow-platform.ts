@@ -10,6 +10,8 @@ import {
   gt,
   literal,
   parseBrand,
+  safeLogRecord,
+  systemCorrelation,
   rule,
   user,
 } from "@app/approval-core";
@@ -25,9 +27,15 @@ import type {
 } from "@app/approval-core";
 import {
   actionWorkflowInstanceId,
+  telemetrySinkFromEnv,
   type ActionWorkflowParams,
+  type TelemetryEnv,
 } from "@app/approval-runtime-cloudflare";
-import { DEFAULT_RESOURCE_LIMITS, staticCapabilityPolicy } from "@app/workflow-application";
+import {
+  DEFAULT_RESOURCE_LIMITS,
+  LlmProgramCodeGenerator,
+  staticCapabilityPolicy,
+} from "@app/workflow-application";
 import type { CapabilityPolicy } from "@app/workflow-application";
 import { createWorkflowPlatform } from "@app/workflow-platform";
 import type { WorkflowPlatform } from "@app/workflow-platform";
@@ -42,7 +50,7 @@ import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import { PREVIEW_EXECUTOR_KEY, PREVIEW_ORGANIZATION_ID } from "./preview-plan.ts";
 
-export type WorkflowPreviewEnv = {
+export type WorkflowPreviewEnv = TelemetryEnv & {
   DB: D1Database;
   ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
   WORKFLOW_RUNNER: Workflow<WorkflowRunnerParams>;
@@ -108,7 +116,9 @@ export const PREVIEW_PRIMITIVE_ACTIONS = [
   "notify.send",
 ] as const;
 
-export const PREVIEW_LLM_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+export const PREVIEW_LLM_MODEL = "@cf/qwen/qwen2.5-coder-32b-instruct";
+/** Program生成（Coding LLM）に使うmodel。 */
+export const PREVIEW_CODE_MODEL = "@cf/qwen/qwen2.5-coder-32b-instruct";
 
 export const PREVIEW_CAPABILITY_POLICY: CapabilityPolicy = {
   actions: [
@@ -176,7 +186,29 @@ export function previewWorkflowPlatform(env: WorkflowPreviewEnv): WorkflowPlatfo
     schemaResolver: previewSchemaResolver,
     scheduler: () => ({ schedule: (key) => runner.start(key) }),
     sandbox: new QuickJsSandbox(workerdQuickJsModule),
+    ...(env.AI
+      ? {
+          codeGenerator: new LlmProgramCodeGenerator({
+            provider: new WorkersAiLlmProvider(env.AI),
+            model: PREVIEW_CODE_MODEL,
+            maxOutputTokens: 1024,
+          }),
+        }
+      : {}),
     pollIntervalSeconds: 10,
+    onEffectRetry: (input) =>
+      telemetrySinkFromEnv(env).emit(
+        safeLogRecord({
+          level: "warn",
+          event: "workflow.retry",
+          correlation: systemCorrelation({
+            component: "workflow",
+            operation: `workflow.effect.${input.kind}`,
+            organizationId: input.organizationId,
+          }),
+          attributes: { errorCode: input.code, eventType: input.effectId, retriable: true },
+        }),
+      ),
     governance: {
       capabilityPolicy: staticCapabilityPolicy(PREVIEW_CAPABILITY_POLICY),
       ...(env.AI ? { llmProvider: new WorkersAiLlmProvider(env.AI) } : {}),
@@ -246,6 +278,21 @@ export async function bootstrapPreviewCatalog(platform: WorkflowPlatform, now: s
     },
   });
   if (Result.isFailure(binding)) return binding;
+  // Composite Action（Studioでpublishする`expense.reimburse`）へのworkflow-level approval。
+  const compositeBinding = await platform.governance.updateApprovalPolicyBinding({
+    organizationId: PREVIEW_ORGANIZATION_ID,
+    sourceActionRequestId: source,
+    actor: PREVIEW_ACTOR,
+    occurredAt: now,
+    binding: {
+      id: brandLiteral("ApprovalPolicyBindingId", "binding:preview-expense-reimburse"),
+      organizationId: PREVIEW_ORGANIZATION_ID,
+      policyKey: brandLiteral("ApprovalPolicyKey", "policy:preview-large-payment"),
+      selector: { actionTypes: [brandLiteral("ActionType", "expense.reimburse")] },
+      enabled: true,
+    },
+  });
+  if (Result.isFailure(compositeBinding)) return compositeBinding;
   return Result.succeed({ actions: PREVIEW_PRIMITIVE_ACTIONS.length });
 }
 

@@ -14,12 +14,17 @@ const runModel = Result.fn({
     model: string;
     inputs: Record<string, unknown>;
   }): Promise<unknown> => input.ai.run(input.model, input.inputs),
-  catch: (error): EffectHandlerError =>
-    new EffectHandlerError(
-      "llm_provider_unavailable",
-      true,
-      error instanceof Error ? error.message : "Workers AIの呼び出しに失敗しました",
-    ),
+  catch: (error): EffectHandlerError => {
+    const message = error instanceof Error ? error.message : "Workers AIの呼び出しに失敗しました";
+    // Workers AIのerrorは「<4桁code>: message」形式。codeだけをerror codeへ載せる（messageはlogへ出さない）。
+    const code = /\b(\d{4})\b/.exec(message)?.[1];
+    // 5xxxは入力 / model起因（再試行しても成功しない）ためfail-closedに、それ以外は一時障害として再試行する。
+    return new EffectHandlerError(
+      code ? `workers_ai_${code}` : "llm_provider_unavailable",
+      !code?.startsWith("5"),
+      message,
+    );
+  },
 });
 
 function record(value: unknown): Record<string, unknown> {

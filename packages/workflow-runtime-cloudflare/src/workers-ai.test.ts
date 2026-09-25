@@ -43,4 +43,15 @@ describe("Workers AI LLM provider (#161)", () => {
       retriable: true,
     });
   });
+
+  it("treats Workers AI 5xxx input / model errors as non-retriable", async () => {
+    const provider = new WorkersAiLlmProvider({
+      run: async () => Promise.reject(new Error("5028: model is not available")),
+    });
+    const result = await provider.complete({ model: "m", prompt: "p", maxOutputTokens: 1 });
+    expect(Result.isFailure(result) && result.error).toMatchObject({
+      code: "workers_ai_5028",
+      retriable: false,
+    });
+  });
 });

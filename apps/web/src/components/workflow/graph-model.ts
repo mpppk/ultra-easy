@@ -181,12 +181,12 @@ export function createNode(
       return {
         ...base,
         type,
-        model: "@cf/meta/llama-3.1-8b-instruct",
+        model: "@cf/qwen/qwen2.5-coder-32b-instruct",
         prompt: literal("要約してください"),
         maxOutputTokens: 256,
         capabilities: {
           llm: {
-            models: ["@cf/meta/llama-3.1-8b-instruct"],
+            models: ["@cf/qwen/qwen2.5-coder-32b-instruct"],
             maxCalls: 1,
             maxInputTokens: 2000,
             maxOutputTokens: 256,

@@ -59,6 +59,14 @@ export type WorkflowRuntimeDependencies = {
   admission?: WorkflowAdmissionController;
   /** in-flight作用をpollする間隔（秒）。child ActionRequestの承認待ち等。 */
   pollIntervalSeconds?: number;
+  /** 作用の配送 / pollが一時失敗した（次のroundで再試行する）ことの通知（telemetry用）。 */
+  onEffectRetry?: (input: {
+    organizationId: OrganizationId;
+    runId: WorkflowRunId;
+    effectId: string;
+    kind: string;
+    code: string;
+  }) => void;
 };
 
 export type WorkflowAdvanceResult = {
@@ -427,7 +435,16 @@ export class WorkflowRuntime {
     if (!reported) return Result.succeed(null);
     if (Result.isFailure(reported)) {
       // 一時障害は作用を未確定のまま残し、次のroundで再試行する。
-      if (reported.error.retriable) return Result.succeed(null);
+      if (reported.error.retriable) {
+        this.deps.onEffectRetry?.({
+          organizationId: context.run.state.organizationId,
+          runId: context.run.state.runId,
+          effectId: String(context.effect.id),
+          kind: context.effect.request.kind,
+          code: reported.error.code,
+        });
+        return Result.succeed(null);
+      }
       return Result.succeed({
         type: "failed",
         code: reported.error.code,
