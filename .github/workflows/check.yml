@@ -26,6 +26,9 @@ jobs:
           ./fga model test --tests packages/approval-fga/openfga/store.fga.yaml
       - name: Build Web Preview
         run: vp -C apps/web run build:preview
+      # #167: Knowledge Workspace example app (build + wrangler bindings).
+      - name: Dry-run Knowledge Workspace
+        run: vp -C apps/knowledge run deploy:dry-run
       - name: Dry-run Approval Runtime Preview
         run: vp -C apps/approval-runtime run deploy:dry-run
       # #84: stagingとproductionのwrangler環境（non-inheritableなbinding宣言）を検証する。
@@ -51,3 +54,20 @@ jobs:
       - name: Stop OpenFGA test server
         if: always()
         run: docker rm -f openfga-test || true
+
+  # #167: browser E2E of the Knowledge Workspace demo scenario (fresh local D1).
+  knowledge-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
+        with:
+          node-version: "24"
+          cache: true
+      - name: Install dependencies
+        run: vp install
+      - name: Install Chromium
+        working-directory: apps/knowledge
+        run: node_modules/.bin/playwright install --with-deps chromium
+      - name: Knowledge E2E
+        run: vp -C apps/knowledge run test:e2e

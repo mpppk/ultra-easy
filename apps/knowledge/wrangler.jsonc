@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Knowledge Workspace example app (#167): an independent application that
+  // integrates with ultra-easy through its public boundary only.
+  "name": "ultra-easy-knowledge",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    // "demo": fixture principals selectable in the UI (local / demo only).
+    // "auth0": trusted Auth0 session only (not wired yet, fails closed).
+    "KNOWLEDGE_AUTH_MODE": "demo",
+    // "mock": the in-app stand-in for the ultra-easy public API (Workflow Engine
+    // is still being built, #154-#165). Replace with a Service Binding later.
+    "ULTRA_EASY_MODE": "mock",
+    "KNOWLEDGE_ORGANIZATION_ID": "org_acme",
+  },
+  // Secrets (wrangler secret put): SESSION_SECRET, KNOWLEDGE_MCP_TOKEN.
+  "d1_databases": [
+    {
+      // Knowledge-owned data (pages, revisions, snapshots, search, effects).
+      "binding": "KNOWLEDGE_DB",
+      "database_name": "ultra-easy-knowledge",
+      "migrations_dir": "../../packages/knowledge-d1/migrations",
+    },
+    {
+      // State of the ultra-easy stand-in (ActionRequests, runs, approvals,
+      // authorization). Kept apart from Knowledge data on purpose.
+      "binding": "ULTRA_EASY_MOCK_DB",
+      "database_name": "ultra-easy-knowledge-mock-platform",
+      "migrations_dir": "./ultra-easy-mock/migrations",
+    },
+  ],
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@app/knowledge-d1",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "scripts": {
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@app/knowledge-core": "workspace:*",
+    "@praha/byethrow": "^0.12.0"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "@app/knowledge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*",
+    "#components/*": "./src/components/*.tsx",
+    "#lib/*": "./src/lib/*.ts",
+    "#hooks/*": "./src/hooks/*.ts"
+  },
+  "scripts": {
+    "dev": "vp dev --port 3001",
+    "test": "vp test",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "build": "vp build",
+    "preview": "vp preview",
+    "generate-routes": "tsr generate",
+    "db:migrate:local": "wrangler d1 migrations apply KNOWLEDGE_DB --local && wrangler d1 migrations apply ULTRA_EASY_MOCK_DB --local",
+    "deploy:dry-run": "vp build && wrangler deploy --dry-run",
+    "bootstrap": "vp build && wrangler deploy && wrangler d1 migrations apply KNOWLEDGE_DB --remote && wrangler d1 migrations apply ULTRA_EASY_MOCK_DB --remote",
+    "deploy": "vp build && wrangler d1 migrations apply KNOWLEDGE_DB --remote && wrangler d1 migrations apply ULTRA_EASY_MOCK_DB --remote && wrangler deploy"
+  },
+  "dependencies": {
+    "@app/knowledge-core": "workspace:*",
+    "@app/knowledge-d1": "workspace:*",
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.38.0",
+    "@praha/byethrow": "^0.12.0",
+    "@tanstack/react-router": "^1.170.39",
+    "@tanstack/react-start": "^1.168.58",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.4.0",
+    "lucide-react": "^1.47.0",
+    "radix-ui": "^1.6.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.26.0",
+    "@cloudflare/workers-types": "^5.20260911.1",
+    "@playwright/test": "^1.55.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/router-cli": "^1.132.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "tailwindcss": "^4.3.3",
+    "tw-animate-css": "^1.4.0",
+    "wrangler": "^4.70.0"
+  }
+}
