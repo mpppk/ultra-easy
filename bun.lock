@@ -93,6 +93,7 @@
       "name": "@app/approval-core",
       "version": "0.0.0",
       "dependencies": {
+        "@app/expression-core": "workspace:*",
         "@praha/byethrow": "^0.12.0",
         "@praha/error-factory": "^1.4.1",
       },
@@ -162,6 +163,14 @@
         "@praha/error-factory": "^1.4.1",
       },
     },
+    "packages/expression-core": {
+      "name": "@app/expression-core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@praha/byethrow": "^0.12.0",
+        "@praha/error-factory": "^1.4.1",
+      },
+    },
     "tests": {
       "name": "@app/tests",
       "version": "0.0.0",
@@ -198,6 +207,8 @@
     "@app/approval-runtime-cloudflare": ["@app/approval-runtime-cloudflare@workspace:packages/approval-runtime-cloudflare"],
 
     "@app/approval-runtime-memory": ["@app/approval-runtime-memory@workspace:packages/approval-runtime-memory"],
+
+    "@app/expression-core": ["@app/expression-core@workspace:packages/expression-core"],
 
     "@app/tests": ["@app/tests@workspace:tests"],
 
