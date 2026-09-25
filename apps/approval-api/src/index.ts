@@ -113,29 +113,26 @@ function decisionProcessor(env: ApprovalApiEnv): ApprovalDecisionCommandProcesso
   );
 }
 
+/**
+ * 配送期限が到来したpending Decision commandをorganization横断で再配送する。
+ * retriable失敗はprocessorがbackoff付きでpendingへ戻し、上限超過だけをfailedにする。
+ */
 async function sweepPendingDecisions(env: ApprovalApiEnv, now: string): Promise<void> {
   const repository = new D1PublicApiRepository(env.DB);
   const processor = decisionProcessor(env);
-  const organizations = await listRecentOrganizations(env.DB, 50);
-  if (Result.isFailure(organizations)) {
-    console.error("decision sweep organizations failed", { code: organizations.error.code });
+  const pending = await repository.listDuePending({ now, limit: 100 });
+  if (Result.isFailure(pending)) {
+    console.error("decision sweep list failed", { code: pending.error.code });
     return;
   }
-  for (const organizationId of organizations.value) {
-    const pending = await repository.listPending({ organizationId, limit: 100 });
-    if (Result.isFailure(pending)) {
-      console.error("decision sweep list failed", { code: pending.error.code });
-      continue;
-    }
-    for (const record of pending.value) {
-      const processed = await processor.process({
-        organizationId,
-        commandId: record.command.id,
-        appliedAt: now,
-      });
-      if (Result.isFailure(processed)) {
-        console.error("decision sweep process failed", { code: processed.error.code });
-      }
+  for (const record of pending.value) {
+    const processed = await processor.process({
+      organizationId: record.command.organizationId as OrganizationId,
+      commandId: record.command.id,
+      now,
+    });
+    if (Result.isFailure(processed)) {
+      console.error("decision sweep process failed", { code: processed.error.code });
     }
   }
 }
@@ -198,7 +195,7 @@ function buildApi(input: {
       const processed = await processor.process({
         organizationId,
         commandId,
-        appliedAt: new Date().toISOString(),
+        now: new Date().toISOString(),
       });
       if (Result.isFailure(processed)) {
         console.error("decision inline process failed", { code: processed.error.code });

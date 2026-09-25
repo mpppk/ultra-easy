@@ -11,7 +11,15 @@ import type {
 
 import type { ActionRequestView } from "./action-request-service.ts";
 
-export type ApprovalCommandStatus = "pending" | "applied" | "rejected" | "failed";
+/**
+ * Decision commandの状態。
+ * - pending: 受付済み・Workflowへ未配送（retriable失敗後の再試行待ちを含む）
+ * - delivered: Workflowへ配送済みで、業務上の受理/却下が未確定
+ * - applied: WorkflowがDecisionを受理した
+ * - rejected: WorkflowがDecisionを業務制約で却下した
+ * - failed: 配送を諦めた（非retriable失敗、またはretry上限超過）
+ */
+export type ApprovalCommandStatus = "pending" | "delivered" | "applied" | "rejected" | "failed";
 export type ApprovalCommandType = "approve" | "reject" | "cancel";
 
 export type PublicApiProblem = {
@@ -38,6 +46,10 @@ export type ApprovalCommandRecord = {
   command: ApprovalCommand;
   actorUserId?: UserId;
   comment?: string;
+  /** Workflowへの配送を試みた回数（retriable失敗ごとに加算）。 */
+  attemptCount?: number;
+  /** retriable失敗後、次に配送を試みてよい時刻。 */
+  nextAttemptAt?: string;
 };
 
 export type ApprovalTaskView = {
@@ -60,6 +72,18 @@ export type ApprovalTaskView = {
   expiresAt?: string;
   activatedAt: string;
   closedAt?: string;
+};
+
+/**
+ * Decision受付時の事前検証に使うTaskの制約。最終判定はWorkflow Interpreterで再検証する。
+ */
+export type ApprovalTaskDecisionContext = {
+  task: ApprovalTaskView;
+  requireCommentOn: readonly ApprovalDecisionValue[];
+  /** selfApproval=denyで承認できないuser（authority principal等）。 */
+  selfApprovalDeniedUserId?: string;
+  candidateUserIds: readonly string[];
+  decidedUserIds: readonly string[];
 };
 
 export type PageInfo = {
@@ -96,6 +120,12 @@ export interface ApprovalReadRepository {
     viewerUserId?: UserId;
   }): Result.ResultAsync<ApprovalTaskView | null, PublicApiRepositoryError>;
 
+  getApprovalTaskDecisionContext(input: {
+    organizationId: OrganizationId;
+    taskId: ApprovalTaskId;
+    viewerUserId: UserId;
+  }): Result.ResultAsync<ApprovalTaskDecisionContext | null, PublicApiRepositoryError>;
+
   listActionRequestTasks(input: {
     organizationId: OrganizationId;
     actionRequestId: ActionRequestId;
@@ -115,6 +145,11 @@ export interface ApprovalReadRepository {
   }): Result.ResultAsync<ApprovalTaskPage, PublicApiRepositoryError>;
 }
 
+export type ApprovalCommandTransitionResult =
+  | { type: "updated"; record: ApprovalCommandRecord }
+  /** 現在の状態がfromに含まれず更新しなかった（他のworker / Workflowが先に遷移させた）。 */
+  | { type: "stale"; record: ApprovalCommandRecord };
+
 export interface ApprovalCommandRepository {
   createPending(
     record: ApprovalCommandRecord,
@@ -128,16 +163,38 @@ export interface ApprovalCommandRepository {
     commandId: string;
   }): Result.ResultAsync<ApprovalCommandRecord | null, PublicApiRepositoryError>;
 
-  update(input: {
+  /**
+   * pendingかつ配送期限（nextAttemptAt）到来済みで、他workerのleaseが切れているcommandを
+   * leaseUntilまで確保する。確保できなければnullを返す（inline処理とsweepの並行実行を避ける）。
+   */
+  claim(input: {
     organizationId: OrganizationId;
     commandId: string;
-    status: Exclude<ApprovalCommandStatus, "pending">;
+    now: string;
+    leaseUntil: string;
+  }): Result.ResultAsync<ApprovalCommandRecord | null, PublicApiRepositoryError>;
+
+  /** 現在の状態がfromのいずれかのときだけtoへ遷移する（compare-and-set）。 */
+  transition(input: {
+    organizationId: OrganizationId;
+    commandId: string;
+    from: readonly ApprovalCommandStatus[];
+    to: Exclude<ApprovalCommandStatus, "pending">;
     appliedAt?: string;
     error?: PublicApiProblem;
-  }): Result.ResultAsync<ApprovalCommandRecord, PublicApiRepositoryError>;
+  }): Result.ResultAsync<ApprovalCommandTransitionResult, PublicApiRepositoryError>;
 
-  listPending(input: {
+  /** retriable失敗: pendingのままattemptCountを加算し、nextAttemptAtまで再配送を遅らせる。 */
+  scheduleRetry(input: {
     organizationId: OrganizationId;
+    commandId: string;
+    nextAttemptAt: string;
+    error: PublicApiProblem;
+  }): Result.ResultAsync<ApprovalCommandTransitionResult, PublicApiRepositoryError>;
+
+  /** organizationを横断して、配送期限が到来したpending commandを古い順に返す。 */
+  listDuePending(input: {
+    now: string;
     limit: number;
   }): Result.ResultAsync<ApprovalCommandRecord[], PublicApiRepositoryError>;
 }
@@ -152,6 +209,11 @@ export class ApprovalCommandApplicationError extends Error {
   constructor(
     readonly code:
       | "approval_task_not_found"
+      | "approval_task_closed"
+      | "approval_user_already_decided"
+      | "approval_self_approval_denied"
+      | "approval_candidate_rejected"
+      | "approval_comment_required"
       | "approval_command_conflict"
       | "approval_command_not_found"
       | "approval_command_repository_failed"
@@ -161,6 +223,54 @@ export class ApprovalCommandApplicationError extends Error {
   ) {
     super(message);
   }
+}
+
+/**
+ * Workflowへ送る前にbusiness constraintを事前評価する（spec part-14 10項）。
+ * dynamic resolutionの候補判定は現在のrelationに依存するため、ここではsnapshot候補だけを見る。
+ * 最終受理判定はWorkflow Interpreter側で再検証する。
+ */
+function precheckDecision(
+  context: ApprovalTaskDecisionContext,
+  input: { userId: UserId; decision: ApprovalDecisionValue; comment?: string },
+): ApprovalCommandApplicationError | null {
+  const userId = String(input.userId);
+  if (context.task.status !== "pending") {
+    return new ApprovalCommandApplicationError(
+      "approval_task_closed",
+      false,
+      "Approval taskは既に終了しています",
+    );
+  }
+  if (context.decidedUserIds.includes(userId)) {
+    return new ApprovalCommandApplicationError(
+      "approval_user_already_decided",
+      false,
+      "このApproval taskへは既にDecision済みです",
+    );
+  }
+  if (context.selfApprovalDeniedUserId === userId) {
+    return new ApprovalCommandApplicationError(
+      "approval_self_approval_denied",
+      false,
+      "自己承認はpolicyで禁止されています",
+    );
+  }
+  if (context.task.resolution === "snapshot" && !context.candidateUserIds.includes(userId)) {
+    return new ApprovalCommandApplicationError(
+      "approval_candidate_rejected",
+      false,
+      "このApproval taskの承認候補者ではありません",
+    );
+  }
+  if (context.requireCommentOn.includes(input.decision) && !input.comment?.trim()) {
+    return new ApprovalCommandApplicationError(
+      "approval_comment_required",
+      false,
+      `${input.decision} Decisionにはcommentが必要です`,
+    );
+  }
+  return null;
 }
 
 export class ApprovalDecisionCommandService {
@@ -178,7 +288,7 @@ export class ApprovalDecisionCommandService {
     comment?: string;
     now: string;
   }): Result.ResultAsync<ApprovalCommand, ApprovalCommandApplicationError> {
-    const task = await this.readRepository.getApprovalTask({
+    const task = await this.readRepository.getApprovalTaskDecisionContext({
       organizationId: input.organizationId,
       taskId: input.taskId,
       viewerUserId: input.userId,
@@ -201,11 +311,13 @@ export class ApprovalDecisionCommandService {
         ),
       );
     }
+    const rejection = precheckDecision(task.value, input);
+    if (rejection) return Result.fail(rejection);
 
     const command: ApprovalCommand = {
       id: this.idGenerator.next(),
       organizationId: String(input.organizationId),
-      actionRequestId: task.value.actionRequestId,
+      actionRequestId: task.value.task.actionRequestId,
       taskId: String(input.taskId),
       type: input.decision,
       status: "pending",
@@ -256,7 +368,10 @@ export class ApprovalDecisionCommandService {
 }
 
 export type ApprovalDecisionApplyResult =
+  /** Decisionが同期的に受理された（in-process runtime）。 */
   | { type: "applied" }
+  /** Workflowへ配送した。受理/却下はWorkflowがcommandへ書き戻す。 */
+  | { type: "delivered" }
   | { type: "rejected"; code: string; message: string };
 
 export interface ApprovalDecisionSink {
@@ -287,48 +402,81 @@ function commandProblem(input: {
   };
 }
 
+export type ApprovalDecisionRetryPolicy = {
+  /** この回数だけ配送に失敗したらfailedで確定する。 */
+  maxAttempts: number;
+  /** 1回目の失敗後の待機。以降は2倍ずつmaxDelayMsまで伸ばす。 */
+  baseDelayMs: number;
+  maxDelayMs: number;
+  /** claimしたcommandを他workerから隠す期間。sinkのtimeoutより長くする。 */
+  leaseMs: number;
+};
+
+export const DEFAULT_APPROVAL_DECISION_RETRY_POLICY: ApprovalDecisionRetryPolicy = {
+  maxAttempts: 10,
+  baseDelayMs: 30_000,
+  maxDelayMs: 60 * 60_000,
+  leaseMs: 60_000,
+};
+
+function addMilliseconds(iso: string, ms: number): string {
+  return new Date(Date.parse(iso) + ms).toISOString();
+}
+
+function repositoryFailure(error: PublicApiRepositoryError): ApprovalCommandApplicationError {
+  return new ApprovalCommandApplicationError(
+    "approval_command_repository_failed",
+    error.retriable,
+    error.message,
+  );
+}
+
 export class ApprovalDecisionCommandProcessor {
+  private readonly retryPolicy: ApprovalDecisionRetryPolicy;
+
   constructor(
     private readonly commandRepository: ApprovalCommandRepository,
     private readonly sink: ApprovalDecisionSink,
-  ) {}
+    retryPolicy: Partial<ApprovalDecisionRetryPolicy> = {},
+  ) {
+    this.retryPolicy = { ...DEFAULT_APPROVAL_DECISION_RETRY_POLICY, ...retryPolicy };
+  }
 
   async process(input: {
     organizationId: OrganizationId;
     commandId: string;
-    appliedAt: string;
+    now: string;
   }): Result.ResultAsync<ApprovalCommand, ApprovalCommandApplicationError> {
-    const loaded = await this.commandRepository.load(input);
-    if (Result.isFailure(loaded)) {
-      return Result.fail(
-        new ApprovalCommandApplicationError(
-          "approval_command_repository_failed",
-          loaded.error.retriable,
-          loaded.error.message,
-        ),
-      );
-    }
-    if (!loaded.value) {
-      return Result.fail(
-        new ApprovalCommandApplicationError(
-          "approval_command_not_found",
-          false,
-          "Approval commandが見つかりません",
-        ),
-      );
+    const claimed = await this.commandRepository.claim({
+      organizationId: input.organizationId,
+      commandId: input.commandId,
+      now: input.now,
+      leaseUntil: addMilliseconds(input.now, this.retryPolicy.leaseMs),
+    });
+    if (Result.isFailure(claimed)) return Result.fail(repositoryFailure(claimed.error));
+    if (!claimed.value) {
+      // 処理済み・他workerがlease中・retry待ちのいずれか。現在の状態をそのまま返す。
+      const loaded = await this.commandRepository.load(input);
+      if (Result.isFailure(loaded)) return Result.fail(repositoryFailure(loaded.error));
+      if (!loaded.value) {
+        return Result.fail(
+          new ApprovalCommandApplicationError(
+            "approval_command_not_found",
+            false,
+            "Approval commandが見つかりません",
+          ),
+        );
+      }
+      return Result.succeed(loaded.value.command);
     }
 
-    const record = loaded.value;
-    if (record.command.status !== "pending") return Result.succeed(record.command);
+    const record = claimed.value;
     if (
       record.command.type === "cancel" ||
       record.command.taskId === undefined ||
       record.actorUserId === undefined
     ) {
-      const updated = await this.commandRepository.update({
-        organizationId: input.organizationId,
-        commandId: input.commandId,
-        status: "failed",
+      return this.finish(input, "failed", {
         error: commandProblem({
           status: 422,
           code: "unsupported_command",
@@ -336,16 +484,6 @@ export class ApprovalDecisionCommandProcessor {
           detail: "このprocessorはapprove/reject Decisionのみを処理します",
         }),
       });
-      if (Result.isFailure(updated)) {
-        return Result.fail(
-          new ApprovalCommandApplicationError(
-            "approval_command_repository_failed",
-            updated.error.retriable,
-            updated.error.message,
-          ),
-        );
-      }
-      return Result.succeed(updated.value.command);
     }
 
     const applied = await this.sink.apply({
@@ -360,56 +498,71 @@ export class ApprovalDecisionCommandProcessor {
     });
 
     if (Result.isFailure(applied)) {
-      const failed = await this.commandRepository.update({
-        organizationId: input.organizationId,
-        commandId: input.commandId,
-        status: "failed",
+      const attempts = (record.attemptCount ?? 0) + 1;
+      if (applied.error.retriable && attempts < this.retryPolicy.maxAttempts) {
+        const delay = Math.min(
+          this.retryPolicy.baseDelayMs * 2 ** (attempts - 1),
+          this.retryPolicy.maxDelayMs,
+        );
+        const scheduled = await this.commandRepository.scheduleRetry({
+          organizationId: input.organizationId,
+          commandId: input.commandId,
+          nextAttemptAt: addMilliseconds(input.now, delay),
+          error: commandProblem({
+            status: 503,
+            code: applied.error.code,
+            title: "Decision commandの配送を再試行します",
+            detail: "Workflowへの配送が一時的に失敗しました",
+          }),
+        });
+        if (Result.isFailure(scheduled)) return Result.fail(repositoryFailure(scheduled.error));
+        return Result.succeed(scheduled.value.record.command);
+      }
+      return this.finish(input, "failed", {
         error: commandProblem({
           status: applied.error.retriable ? 503 : 422,
           code: applied.error.code,
           title: "Decision commandの適用に失敗しました",
-          detail: applied.error.message,
+          detail: applied.error.retriable
+            ? "Workflowへの配送が再試行上限に達しました"
+            : "Decision commandを適用できません",
         }),
       });
-      if (Result.isFailure(failed)) {
-        return Result.fail(
-          new ApprovalCommandApplicationError(
-            "approval_command_repository_failed",
-            failed.error.retriable,
-            failed.error.message,
-          ),
-        );
-      }
-      return Result.succeed(failed.value.command);
     }
 
-    const status = applied.value.type === "applied" ? "applied" : "rejected";
-    const updated = await this.commandRepository.update({
+    if (applied.value.type === "rejected") {
+      return this.finish(input, "rejected", {
+        appliedAt: input.now,
+        error: commandProblem({
+          status: 422,
+          code: applied.value.code,
+          title: "Decision commandは拒否されました",
+          detail: applied.value.message,
+        }),
+      });
+    }
+    return this.finish(
+      input,
+      applied.value.type,
+      applied.value.type === "applied" ? { appliedAt: input.now } : {},
+    );
+  }
+
+  private async finish(
+    input: { organizationId: OrganizationId; commandId: string },
+    to: Exclude<ApprovalCommandStatus, "pending">,
+    fields: { appliedAt?: string; error?: PublicApiProblem },
+  ): Result.ResultAsync<ApprovalCommand, ApprovalCommandApplicationError> {
+    // pendingからだけ遷移させる。Workflowが先にapplied/rejectedを書いていればそれを優先する。
+    const updated = await this.commandRepository.transition({
       organizationId: input.organizationId,
       commandId: input.commandId,
-      status,
-      appliedAt: input.appliedAt,
-      ...(applied.value.type === "rejected"
-        ? {
-            error: commandProblem({
-              status: 422,
-              code: applied.value.code,
-              title: "Decision commandは拒否されました",
-              detail: applied.value.message,
-            }),
-          }
-        : {}),
+      from: ["pending"],
+      to,
+      ...fields,
     });
-    if (Result.isFailure(updated)) {
-      return Result.fail(
-        new ApprovalCommandApplicationError(
-          "approval_command_repository_failed",
-          updated.error.retriable,
-          updated.error.message,
-        ),
-      );
-    }
-    return Result.succeed(updated.value.command);
+    if (Result.isFailure(updated)) return Result.fail(repositoryFailure(updated.error));
+    return Result.succeed(updated.value.record.command);
   }
 }
 

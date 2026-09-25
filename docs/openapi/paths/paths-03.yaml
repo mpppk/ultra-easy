@@ -47,7 +47,13 @@
                 comment: セキュリティ要件を満たしていません
     responses:
       '202':
-        description: Decision command を受理した。最終適用結果は ApprovalCommand で確認する。
+        description: |-
+          Decision command を受理した。最終適用結果は ApprovalCommand で確認する。
+          受付前に business constraint を事前評価し、終了済み Task / 既決 user は 409
+          (approval_task_closed / approval_user_already_decided)、自己承認 / snapshot 候補外は 403
+          (approval_self_approval_denied / approval_candidate_rejected)、comment 必須違反は 422
+          (approval_comment_required) を返す。最終判定は Workflow で再検証し、却下は command の
+          rejected と監査 event approval_decision.rejected に残る（Workflow は待機を継続する）。
         content:
           application/json:
             schema:

@@ -10,6 +10,7 @@ import {
   ConsoleTelemetrySink,
   ApproverResolverProviderError,
   expireApprovalRuntime,
+  isApprovalDecisionRejection,
   nextApprovalRuntimeExpiry,
   recordApprovalDecision,
   startApprovalRuntime,
@@ -20,6 +21,7 @@ import type {
   ActionExecutionResult,
   ActionRequestId,
   ApprovalDecisionEvent,
+  ApprovalDecisionRejectionError,
   ApprovalPlanChecksum,
   ApprovalRuntimeState,
   ApproverResolver,
@@ -27,9 +29,11 @@ import type {
   OrganizationId,
 } from "@app/approval-core";
 import {
+  D1ActionEventRepository,
   D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
   D1MaterializedPlanRepository,
+  D1PublicApiRepository,
 } from "@app/approval-d1";
 import {
   ClientCredentialsTokenProvider,
@@ -54,6 +58,20 @@ export type ActionWorkflowParams = {
   actionRequestId: ActionRequestId;
   approvalPlanChecksum: ApprovalPlanChecksum;
 };
+
+export const APPROVAL_DECISION_EVENT_TYPE = "approval-decision";
+
+/**
+ * approval-decision eventを組み立てる。ApprovalDecisionEventへ型付けし、commentや
+ * approvalBindingFingerprintなど任意fieldの取りこぼしを呼び出し側のcompile時に検出する。
+ * decidedAtはWorkflowがevent timestampで確定し直す。
+ */
+export function approvalDecisionWorkflowEvent(event: ApprovalDecisionEvent): {
+  type: typeof APPROVAL_DECISION_EVENT_TYPE;
+  payload: ApprovalDecisionEvent;
+} {
+  return { type: APPROVAL_DECISION_EVENT_TYPE, payload: { ...event } };
+}
 
 export async function actionWorkflowInstanceId(input: {
   organizationId: OrganizationId;
@@ -101,7 +119,10 @@ type RuntimeTransition =
   | { type: "failed"; code: string; message: string }
   | { type: "retry"; error: Error };
 type RuntimeFailure = Extract<RuntimeTransition, { type: "failed" }>;
-type RuntimeStepResult = Exclude<RuntimeTransition, { type: "retry" }>;
+/** Decision 1件の業務上の却下。stateは変わらず、Workflowは同じTaskの待機を継続する。 */
+type DecisionRejected = { type: "decision_rejected"; code: string };
+type DecisionTransition = RuntimeTransition | DecisionRejected;
+type DecisionStepResult = Exclude<DecisionTransition, { type: "retry" }>;
 
 type DecisionWaitResult =
   | { type: "decision"; event: ApprovalDecisionEvent }
@@ -144,7 +165,7 @@ async function waitForDecision(input: {
 }): Promise<DecisionWaitResult> {
   try {
     const event = await input.step.waitForEvent<ApprovalDecisionEvent>(input.name, {
-      type: "approval-decision",
+      type: APPROVAL_DECISION_EVENT_TYPE,
       timeout: input.timeout,
     });
     return {
@@ -293,12 +314,60 @@ async function initializeRuntime(
   });
 }
 
+function retryOnCommandFailure(error: Error): Extract<RuntimeTransition, { type: "retry" }> {
+  return retry(new Error(`Approval command outcomeを保存できません: ${error.message}`));
+}
+
+/**
+ * 却下されたDecisionを監査イベントとcommand（rejected）へ記録する。runtime stateは変更しない。
+ * eventKeyとcommandのCASにより、step retryで再実行しても重複しない。
+ */
+async function rejectDecision(
+  env: ActionWorkflowEnv,
+  plan: MaterializedApprovalPlan,
+  event: ApprovalDecisionEvent,
+  error: ApprovalDecisionRejectionError,
+): Promise<DecisionTransition> {
+  const record = actionEventRecord({
+    organizationId: plan.organizationId,
+    occurredAt: event.decidedAt,
+    event: {
+      type: "approval_decision.rejected",
+      actionRequestId: plan.actionRequestId,
+      taskId: event.taskId,
+      decisionKey: event.idempotencyKey,
+      actorId: event.userId,
+      decision: event.decision,
+      code: error.code,
+    },
+  });
+  const appended = await new D1ActionEventRepository(env.DB).append(record);
+  if (Result.isFailure(appended)) return retry(appended.error);
+
+  const resolved = await new D1PublicApiRepository(env.DB).resolveOutcome({
+    organizationId: plan.organizationId,
+    commandId: event.idempotencyKey,
+    status: "rejected",
+    resolvedAt: event.decidedAt,
+    error: {
+      type: `urn:ultra-easy:problem:${error.code}`,
+      title: "Decisionは受理されませんでした",
+      status: 422,
+      code: error.code,
+      detail: error.message,
+    },
+  });
+  if (Result.isFailure(resolved)) return retryOnCommandFailure(resolved.error);
+  emitDomainEventTelemetry(new ConsoleTelemetrySink(), [record]);
+  return { type: "decision_rejected", code: error.code };
+}
+
 async function recordDecision(
   env: ActionWorkflowEnv,
   params: ActionWorkflowParams,
   state: ApprovalRuntimeState,
   event: ApprovalDecisionEvent,
-): Promise<RuntimeTransition> {
+): Promise<DecisionTransition> {
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
     organizationId: params.organizationId,
@@ -313,13 +382,28 @@ async function recordDecision(
     state,
     event,
   });
-  if (Result.isFailure(recorded)) return interpreterFailure(recorded.error);
-  return persistProjection({
+  if (Result.isFailure(recorded)) {
+    return isApprovalDecisionRejection(recorded.error)
+      ? rejectDecision(env, loaded.plan, event, recorded.error)
+      : interpreterFailure(recorded.error);
+  }
+  const persisted = await persistProjection({
     env,
     plan: loaded.plan,
     previousState: state,
     state: recorded.value.state,
   });
+  if (persisted.type !== "advanced") return persisted;
+
+  // commandの「applied」はWorkflowがDecisionを受理した時点で確定する（配送済みとは区別する）。
+  const resolved = await new D1PublicApiRepository(env.DB).resolveOutcome({
+    organizationId: loaded.plan.organizationId,
+    commandId: event.idempotencyKey,
+    status: "applied",
+    resolvedAt: event.decidedAt,
+  });
+  if (Result.isFailure(resolved)) return retryOnCommandFailure(resolved.error);
+  return persisted;
 }
 
 async function advanceRuntime(
@@ -380,13 +464,13 @@ async function expireRuntime(
   });
 }
 
-async function runRuntimeStep(
+async function runRuntimeStep<T extends DecisionTransition>(
   step: WorkflowStep,
   name: string,
   params: ActionWorkflowParams,
-  callback: () => Promise<RuntimeTransition>,
-): Promise<RuntimeStepResult> {
-  return step.do(name, async () => {
+  callback: () => Promise<T>,
+): Promise<Exclude<T, { type: "retry" }>> {
+  const result = await step.do(name, async (): Promise<DecisionStepResult> => {
     const transition = await callback();
     if (transition.type === "retry") {
       emitWorkflowRetry({
@@ -400,6 +484,7 @@ async function runRuntimeStep(
     }
     return transition;
   });
+  return result as Exclude<T, { type: "retry" }>;
 }
 
 function addSeconds(value: string, seconds: number): string {
@@ -669,6 +754,14 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         () => recordDecision(this.env, params, state, decision.event),
       );
       if (recorded.type === "failed") return outputFromTransition(params, recorded);
+      if (recorded.type === "decision_rejected") {
+        // invalid decisionは監査に残して無視し、同じTaskの待機を継続する。
+        if (Date.parse(decision.event.decidedAt) > Date.parse(logicalNow)) {
+          logicalNow = decision.event.decidedAt;
+        }
+        iteration += 1;
+        continue;
+      }
       state = recorded.state;
       logicalNow = decision.event.decidedAt;
 

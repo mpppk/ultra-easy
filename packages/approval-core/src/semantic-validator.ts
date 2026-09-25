@@ -17,7 +17,11 @@ export type SemanticValidationIssue = {
 };
 
 export type SemanticValidationResult =
-  | { valid: true }
+  | {
+      valid: true;
+      /** publishを妨げないが見直すべき設定（例: 業務承認での自己承認allow）。 */
+      warnings?: SemanticValidationIssue[];
+    }
   | { valid: false; issues: SemanticValidationIssue[] };
 
 export type PolicySemanticValidationOptions = {
@@ -280,6 +284,7 @@ function validateFlow(
   issues: SemanticValidationIssue[],
   stepKeys: Set<string>,
   options: PolicySemanticValidationOptions,
+  warnings: SemanticValidationIssue[] = [],
 ): void {
   if (flow.type === "none") {
     if ("children" in flow) {
@@ -294,7 +299,7 @@ function validateFlow(
       return;
     }
     flow.children.forEach((child, index) =>
-      validateFlow(child, `${path}.children[${index}]`, issues, stepKeys, options),
+      validateFlow(child, `${path}.children[${index}]`, issues, stepKeys, options, warnings),
     );
     return;
   }
@@ -343,7 +348,7 @@ function validateFlow(
     }
 
     flow.children.forEach((child, index) =>
-      validateFlow(child, `${path}.children[${index}]`, issues, stepKeys, options),
+      validateFlow(child, `${path}.children[${index}]`, issues, stepKeys, options, warnings),
     );
     return;
   }
@@ -427,6 +432,15 @@ function validateFlow(
     }
   }
 
+  if (flow.selfApproval?.mode === "allow" && flow.purpose !== "execution_consent") {
+    addIssue(
+      warnings,
+      "self_approval_allowed",
+      `${path}.selfApproval.mode`,
+      "execution_consent以外のStepで自己承認を許可しています。職務分離が必要な業務承認では原則denyにしてください。",
+    );
+  }
+
   if (flow.requireCommentOn) {
     for (const [index, decision] of flow.requireCommentOn.entries()) {
       if (decision !== "approve" && decision !== "reject") {
@@ -458,6 +472,7 @@ export function validateApprovalPolicySemantics(
 
   const ruleKeys = new Set<string>();
   const stepKeys = new Set<string>();
+  const warnings: SemanticValidationIssue[] = [];
 
   policy.rules.forEach((rule, index) => {
     const rulePath = `rules[${index}]`;
@@ -480,10 +495,11 @@ export function validateApprovalPolicySemantics(
       validateCondition(rule.when, `${rulePath}.when`, issues, options);
     }
 
-    validateFlow(rule.flow, `${rulePath}.flow`, issues, stepKeys, options);
+    validateFlow(rule.flow, `${rulePath}.flow`, issues, stepKeys, options, warnings);
   });
 
-  return issues.length === 0 ? { valid: true } : { valid: false, issues };
+  if (issues.length > 0) return { valid: false, issues };
+  return warnings.length > 0 ? { valid: true, warnings } : { valid: true };
 }
 
 export function isValidActionTypePattern(value: string): boolean {

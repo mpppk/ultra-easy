@@ -65,6 +65,7 @@ beforeEach(async () => {
     testEnv.DB.prepare("DELETE FROM approval_runtime_projections"),
     testEnv.DB.prepare("DELETE FROM approval_task_candidate_projections"),
     testEnv.DB.prepare("DELETE FROM action_requests"),
+    testEnv.DB.prepare("DELETE FROM approval_commands"),
   ]);
 });
 
@@ -507,7 +508,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     await introspector.dispose();
   });
 
-  it("AC-M5-007: stale Approval bindingのDecisionではExecutorへ進まない", async () => {
+  it("AC-M5-007: stale Approval bindingのDecisionは却下して待機を継続し、Executorへ進まない", async () => {
     const approval = await directStep("binding", bob, "root");
     const plan = await validPlan("cf-binding-mismatch", approval);
     await savePlan(plan);
@@ -526,20 +527,120 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       ),
     });
 
-    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
-    await introspector.waitForStatus("complete");
-    expect(await introspector.getOutput()).toMatchObject({
-      type: "failed",
-      code: "approval_decision_binding_mismatch",
-    });
-
+    const events = new D1ActionEventRepository(testEnv.DB);
+    await vi.waitFor(
+      async () => {
+        const audit = await events.listForAction({
+          organizationId,
+          actionRequestId: plan.actionRequestId,
+        });
+        assert(Result.isSuccess(audit));
+        expect(audit.value.map((record) => record.event)).toContainEqual(
+          expect.objectContaining({
+            type: "approval_decision.rejected",
+            decisionKey: "stale-binding",
+            code: "approval_decision_binding_mismatch",
+          }),
+        );
+      },
+      { timeout: 3_000 },
+    );
+    expect((await instance.status()).status).not.toBe("complete");
     const actionResult = await new D1ActionResultProjectionRepository(testEnv.DB).load({
       organizationId,
       actionRequestId: plan.actionRequestId,
     });
     assert(Result.isSuccess(actionResult));
     expect(actionResult.value).toBeNull();
+    const projection = await new D1ApprovalRuntimeProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(projection));
+    expect(projection.value?.status).toBe("pending");
+    expect(projection.value?.tasks[0]?.decisions).toHaveLength(0);
+    await instance.terminate();
+  });
+
+  it("#79/#80: 候補外・closed task・comment欠落のDecisionでは停止せず、正規のcomment付きDecisionで完走する", async () => {
+    const manager = await directStep("manager", bob, "root.children[0]");
+    const finance = {
+      ...(await directStep("finance", carol, "root.children[1]")),
+      requireCommentOn: ["approve" as const],
+    };
+    const plan = await validPlan("cf-invalid-decisions", {
+      type: "serial",
+      children: [manager, finance],
+    });
+    await savePlan(plan);
+    await testEnv.DB.prepare(
+      `INSERT INTO approval_commands (
+         command_id, organization_id, action_request_id, task_id, command_type, status,
+         actor_user_id, comment, created_at
+       ) VALUES
+         ('not-candidate', ?1, ?2, ?3, 'approve', 'delivered', 'user:alice', NULL, ?4),
+         ('finance-approved', ?1, ?2, ?5, 'approve', 'delivered', 'user:carol', 'looks good', ?4)`,
+    )
+      .bind(
+        organizationId,
+        plan.actionRequestId,
+        taskId(plan, manager),
+        "2026-09-13T00:00:00.000Z",
+        taskId(plan, finance),
+      )
+      .run();
+
+    const id = await actionWorkflowInstanceId(plan);
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    const instance = await createInstance(plan, id);
+    const send = (payload: ReturnType<typeof decision> & { comment?: string }) =>
+      instance.sendEvent({ type: "approval-decision", payload });
+
+    await send(decision(plan, manager, alice, "not-candidate"));
+    await send(decision(plan, manager, bob, "manager-approved"));
+    await send(decision(plan, manager, bob, "manager-again"));
+    await send(decision(plan, finance, carol, "finance-no-comment"));
+    await send({ ...decision(plan, finance, carol, "finance-approved"), comment: "looks good" });
+
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({ type: "completed", status: "executed" });
     await introspector.dispose();
+
+    const audit = await new D1ActionEventRepository(testEnv.DB).listForAction({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(audit));
+    const rejected = audit.value
+      .map((record) => record.event)
+      .filter((event) => event.type === "approval_decision.rejected")
+      .map((event) => [event.decisionKey, event.code]);
+    expect(rejected).toEqual([
+      ["not-candidate", "approval_candidate_rejected"],
+      ["manager-again", "approval_task_closed"],
+      ["finance-no-comment", "approval_comment_required"],
+    ]);
+    expect(audit.value.map((record) => record.event)).toContainEqual(
+      expect.objectContaining({
+        type: "step.approved",
+        decisionKey: "finance-approved",
+        actorId: carol,
+        comment: "looks good",
+      }),
+    );
+
+    const commands = await testEnv.DB.prepare(
+      "SELECT command_id, status, error_json FROM approval_commands WHERE organization_id = ? ORDER BY command_id",
+    )
+      .bind(organizationId)
+      .all<{ command_id: string; status: string; error_json: string | null }>();
+    expect(commands.results.map((row) => [row.command_id, row.status])).toEqual([
+      ["finance-approved", "applied"],
+      ["not-candidate", "rejected"],
+    ]);
+    expect(
+      JSON.parse(commands.results.find((row) => row.command_id === "not-candidate")!.error_json!),
+    ).toMatchObject({ code: "approval_candidate_rejected", status: 422 });
   });
 
   it("AC-M7-001: 同じActionRequestIdでもorganizationごとにPlan/Workflowを分離する", async () => {

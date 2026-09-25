@@ -550,15 +550,19 @@ async function materializeFlow(
       onUnresolved = { type: "deny" };
     }
 
-    let selfApproval: MaterializedSelfApproval | undefined;
-    if (flow.selfApproval) {
-      if (flow.selfApproval.subject) {
-        const subject = resolvePrincipalExpression(flow.selfApproval.subject, context);
-        if (Result.isFailure(subject)) return subject;
-        selfApproval = { mode: flow.selfApproval.mode, subject: { ...subject.value } };
-      } else {
-        selfApproval = { mode: flow.selfApproval.mode };
-      }
+    // selfApproval省略時の既定はPlanへ明示的に固定する。業務承認は職務分離のためdeny
+    // （subject省略 = authority principal）、execution_consentは本人同意が目的のためallow。
+    // 既定をinterpreterではなくmaterializationで解決することで、既存Planの挙動は変わらない。
+    const selfApprovalDefinition: NonNullable<typeof flow.selfApproval> = flow.selfApproval ?? {
+      mode: flow.purpose === "execution_consent" ? "allow" : "deny",
+    };
+    let selfApproval: MaterializedSelfApproval;
+    if (selfApprovalDefinition.subject) {
+      const subject = resolvePrincipalExpression(selfApprovalDefinition.subject, context);
+      if (Result.isFailure(subject)) return subject;
+      selfApproval = { mode: selfApprovalDefinition.mode, subject: { ...subject.value } };
+    } else {
+      selfApproval = { mode: selfApprovalDefinition.mode };
     }
 
     const materializedStepId = await createMaterializedStepId(stepSource);
@@ -584,7 +588,7 @@ async function materializeFlow(
       ...(onUnresolved ? { onUnresolved } : {}),
       ...(flow.expiresAfter ? { expiresAfter: { ...flow.expiresAfter } } : {}),
       ...(flow.requireCommentOn ? { requireCommentOn: [...flow.requireCommentOn] } : {}),
-      ...(selfApproval ? { selfApproval } : {}),
+      selfApproval,
     });
   }
 

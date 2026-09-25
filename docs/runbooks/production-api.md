@@ -41,7 +41,8 @@ Governance bootstrap rule (docs/governance-bootstrap.md) option 1
    `wrangler d1 execute DB --remote --file=packages/approval-d1/bootstrap/staging-seed.sql`
 4. Seed contents: 4 governance definitions, `staging:ticket-update`
    definition (executor `staging`), serial direct-user policy
-   (alice→bob), binding for `ticket.update`.
+   (alice→bob; v2 opts alice's step into self approval, see Decisions),
+   binding for `ticket.update`.
 
 ## FGA (staging)
 
@@ -99,10 +100,30 @@ Worker `ultra-easy-approval-api` versions `1b4d3e10` → `f9349dc3`
 
 ## Decisions
 
-`POST .../approval-tasks/:id/decisions` accepts (202) then delivers inline
-via `onDecisionAccepted` hook. Crash-window leftovers are swept by the cron
-(`listPending` + `ApprovalDecisionCommandProcessor`, idempotent).
-New `listPending` on `ApprovalCommandRepository` + D1 implementation.
+`POST .../approval-tasks/:id/decisions` pre-checks business constraints before
+accepting (spec part-14 §10): closed task / already decided → 409, self approval /
+non-candidate of a snapshot task → 403, missing required comment → 422. The final
+verdict is still re-validated by the Workflow interpreter.
+
+Accepted commands (202) are delivered inline via the `onDecisionAccepted` hook;
+leftovers are swept by the cron (`listDuePending` across organizations +
+`ApprovalDecisionCommandProcessor`). Command status (#79 / #88):
+
+- `pending` → claimed with a lease (`lease_until`) so inline + cron never deliver
+  concurrently. A retriable delivery failure stays `pending` with
+  `attempt_count` / `next_attempt_at` backoff (30s doubling, max 1h, 10 attempts);
+  only exhausting the retries or a non-retriable failure becomes `failed`.
+- `delivered` = sent to the Workflow. The Workflow writes the business outcome with
+  a compare-and-set: `applied` (accepted) or `rejected` (+ `error.code`, and an
+  `approval_decision.rejected` audit event). A rejected decision never stops the
+  Workflow; it keeps waiting on the same task.
+- Migration `0015_approval_command_delivery.sql` adds the columns + due index.
+
+Self approval (#87): an omitted `selfApproval` is materialized as `deny`
+(subject = authority principal), except `purpose: execution_consent` which defaults
+to `allow`. Existing Plans keep their old semantics. The staging seed publishes
+policy version 2 that opts alice's steps into `allow` explicitly (alice is the only
+requester in staging); bob's steps keep the SoD default.
 
 ## Idempotency
 

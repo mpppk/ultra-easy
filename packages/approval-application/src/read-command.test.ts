@@ -21,8 +21,11 @@ import type {
   ActionRequestView,
   ApprovalCommandRecord,
   ApprovalCommandRepository,
+  ApprovalCommandStatus,
+  ApprovalDecisionApplyResult,
   ApprovalDecisionSink,
   ApprovalReadRepository,
+  ApprovalTaskDecisionContext,
   ApprovalTaskPage,
   ApprovalTaskView,
   IdempotencyRecord,
@@ -80,6 +83,21 @@ const taskView: ApprovalTaskView = {
 class FakeReadRepository implements ApprovalReadRepository {
   action = structuredClone(actionView);
   task = structuredClone(taskView);
+  decisionContext: Omit<ApprovalTaskDecisionContext, "task"> = {
+    requireCommentOn: [],
+    candidateUserIds: [String(alice)],
+    decidedUserIds: [],
+  };
+
+  getApprovalTaskDecisionContext(input: { organizationId: OrganizationId }) {
+    return Promise.resolve(
+      Result.succeed(
+        String(input.organizationId) === this.action.organizationId
+          ? structuredClone({ ...this.decisionContext, task: this.task })
+          : null,
+      ),
+    );
+  }
 
   getActionRequest(input: { organizationId: OrganizationId }) {
     return Promise.resolve(
@@ -120,6 +138,7 @@ class FakeReadRepository implements ApprovalReadRepository {
 
 class FakeCommandRepository implements ApprovalCommandRepository {
   readonly records = new Map<string, ApprovalCommandRecord>();
+  readonly leases = new Map<string, string>();
 
   createPending(record: ApprovalCommandRecord) {
     const key = record.command.id;
@@ -142,22 +161,31 @@ class FakeCommandRepository implements ApprovalCommandRepository {
     );
   }
 
-  listPending(input: { organizationId: OrganizationId; limit: number }) {
-    const records = [...this.records.values()]
-      .filter(
-        (record) =>
-          record.command.organizationId === String(input.organizationId) &&
-          record.command.status === "pending",
-      )
-      .slice(0, input.limit)
-      .map((record) => structuredClone(record));
-    return Promise.resolve(Result.succeed(records));
-  }
-
-  update(input: {
+  claim(input: {
     organizationId: OrganizationId;
     commandId: string;
-    status: "applied" | "rejected" | "failed";
+    now: string;
+    leaseUntil: string;
+  }) {
+    const current = this.records.get(input.commandId);
+    if (
+      !current ||
+      current.command.organizationId !== String(input.organizationId) ||
+      current.command.status !== "pending" ||
+      (current.nextAttemptAt !== undefined && current.nextAttemptAt > input.now) ||
+      (this.leases.get(input.commandId) ?? "") > input.now
+    ) {
+      return Promise.resolve(Result.succeed(null));
+    }
+    this.leases.set(input.commandId, input.leaseUntil);
+    return Promise.resolve(Result.succeed(structuredClone(current)));
+  }
+
+  transition(input: {
+    organizationId: OrganizationId;
+    commandId: string;
+    from: readonly ApprovalCommandStatus[];
+    to: Exclude<ApprovalCommandStatus, "pending">;
     appliedAt?: string;
     error?: ApprovalCommandRecord["command"]["error"];
   }) {
@@ -169,17 +197,64 @@ class FakeCommandRepository implements ApprovalCommandRepository {
         ),
       );
     }
+    if (!input.from.includes(current.command.status)) {
+      return Promise.resolve(
+        Result.succeed({ type: "stale" as const, record: structuredClone(current) }),
+      );
+    }
     const updated: ApprovalCommandRecord = {
       ...current,
       command: {
         ...current.command,
-        status: input.status,
+        status: input.to,
         ...(input.appliedAt !== undefined ? { appliedAt: input.appliedAt } : {}),
         ...(input.error !== undefined ? { error: input.error } : {}),
       },
     };
     this.records.set(input.commandId, structuredClone(updated));
-    return Promise.resolve(Result.succeed(structuredClone(updated)));
+    this.leases.delete(input.commandId);
+    return Promise.resolve(
+      Result.succeed({ type: "updated" as const, record: structuredClone(updated) }),
+    );
+  }
+
+  scheduleRetry(input: {
+    organizationId: OrganizationId;
+    commandId: string;
+    nextAttemptAt: string;
+    error: ApprovalCommandRecord["command"]["error"];
+  }) {
+    const current = this.records.get(input.commandId);
+    if (!current || current.command.status !== "pending") {
+      return Promise.resolve(
+        Result.fail(
+          new PublicApiRepositoryError("approval_command_not_found", false, "command not found"),
+        ),
+      );
+    }
+    const updated: ApprovalCommandRecord = {
+      ...current,
+      command: { ...current.command, ...(input.error ? { error: input.error } : {}) },
+      attemptCount: (current.attemptCount ?? 0) + 1,
+      nextAttemptAt: input.nextAttemptAt,
+    };
+    this.records.set(input.commandId, structuredClone(updated));
+    this.leases.delete(input.commandId);
+    return Promise.resolve(
+      Result.succeed({ type: "updated" as const, record: structuredClone(updated) }),
+    );
+  }
+
+  listDuePending(input: { now: string; limit: number }) {
+    const records = [...this.records.values()]
+      .filter(
+        (record) =>
+          record.command.status === "pending" &&
+          (record.nextAttemptAt === undefined || record.nextAttemptAt <= input.now),
+      )
+      .slice(0, input.limit)
+      .map((record) => structuredClone(record));
+    return Promise.resolve(Result.succeed(records));
   }
 }
 
@@ -259,10 +334,11 @@ class FakeIdempotencyRepository implements IdempotencyRepository {
 
 class FakeSink implements ApprovalDecisionSink {
   calls = 0;
+  results: Result.Result<ApprovalDecisionApplyResult, PublicApiRepositoryError>[] = [];
 
   apply() {
     this.calls += 1;
-    return Promise.resolve(Result.succeed({ type: "applied" as const }));
+    return Promise.resolve(this.results.shift() ?? Result.succeed({ type: "applied" as const }));
   }
 }
 
@@ -381,7 +457,7 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     const processed = await processor.process({
       organizationId,
       commandId: accepted.id,
-      appliedAt: "2026-09-19T00:01:00.000Z",
+      now: "2026-09-19T00:01:00.000Z",
     });
     expect(Result.isSuccess(processed)).toBe(true);
     expect(sink.calls).toBe(1);
@@ -696,7 +772,7 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     const crossTenantProcess = await processor.process({
       organizationId: branded<OrganizationId>("org:other"),
       commandId: command.id,
-      appliedAt: "2026-09-19T00:10:00.000Z",
+      now: "2026-09-19T00:10:00.000Z",
     });
     expect(Result.isFailure(crossTenantProcess)).toBe(true);
     if (Result.isFailure(crossTenantProcess)) {
@@ -734,5 +810,225 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
       id: String(taskId),
       actionRequestId: String(actionRequestId),
     });
+  });
+
+  it("#79: Decision受付時にclosed task・既決・自己承認・候補外・comment欠落を4xxで早期に拒否する", async () => {
+    const cases: {
+      name: string;
+      mutate(harness: ReturnType<typeof createHarness>): void;
+      body: Record<string, unknown>;
+      status: number;
+      code: string;
+    }[] = [
+      {
+        name: "closed",
+        mutate: (harness) => {
+          harness.readRepository.task.status = "approved";
+        },
+        body: { decision: "approve" },
+        status: 409,
+        code: "approval_task_closed",
+      },
+      {
+        name: "already-decided",
+        mutate: (harness) => {
+          harness.readRepository.decisionContext.decidedUserIds = [String(alice)];
+        },
+        body: { decision: "approve" },
+        status: 409,
+        code: "approval_user_already_decided",
+      },
+      {
+        name: "self-approval",
+        mutate: (harness) => {
+          harness.readRepository.decisionContext.selfApprovalDeniedUserId = String(alice);
+        },
+        body: { decision: "approve" },
+        status: 403,
+        code: "approval_self_approval_denied",
+      },
+      {
+        name: "not-candidate",
+        mutate: (harness) => {
+          harness.readRepository.decisionContext.candidateUserIds = ["user:bob"];
+        },
+        body: { decision: "approve" },
+        status: 403,
+        code: "approval_candidate_rejected",
+      },
+      {
+        name: "comment-required",
+        mutate: (harness) => {
+          harness.readRepository.decisionContext.requireCommentOn = ["reject"];
+        },
+        body: { decision: "reject", comment: "   " },
+        status: 422,
+        code: "approval_comment_required",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const harness = createHarness();
+      testCase.mutate(harness);
+      const response = await harness.api.fetch(
+        request(
+          `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}/decisions`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "idempotency-key": `precheck-${testCase.name}`,
+            },
+            body: JSON.stringify(testCase.body),
+          },
+        ),
+      );
+      expect(response.status, testCase.name).toBe(testCase.status);
+      await expect(response.json()).resolves.toMatchObject({ code: testCase.code });
+      expect(harness.commandRepository.records.size, testCase.name).toBe(0);
+    }
+  });
+
+  async function acceptDecision(harness: ReturnType<typeof createHarness>, key: string) {
+    const post = await harness.api.fetch(
+      request(
+        `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}/decisions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "idempotency-key": key },
+          body: JSON.stringify({ decision: "approve", comment: "ok" }),
+        },
+      ),
+    );
+    expect(post.status).toBe(202);
+    return ((await post.json()) as { id: string }).id;
+  }
+
+  it("#88: retriableなsink失敗はpendingのままbackoffし、後続のsweepでdeliveredになる", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "retry-1");
+    const sink = new FakeSink();
+    sink.results = [
+      Result.fail(new PublicApiRepositoryError("decision_workflow_send_failed", true, "timeout")),
+      Result.succeed({ type: "delivered" }),
+    ];
+    const processor = new ApprovalDecisionCommandProcessor(harness.commandRepository, sink, {
+      baseDelayMs: 30_000,
+    });
+
+    const first = await processor.process({
+      organizationId,
+      commandId,
+      now: "2026-09-19T00:01:00.000Z",
+    });
+    assert(Result.isSuccess(first));
+    expect(first.value.status).toBe("pending");
+    const retrying = harness.commandRepository.records.get(commandId);
+    expect(retrying).toMatchObject({ attemptCount: 1, nextAttemptAt: "2026-09-19T00:01:30.000Z" });
+
+    // backoff期間中のsweepは配送しない
+    const early = await harness.commandRepository.listDuePending({
+      now: "2026-09-19T00:01:10.000Z",
+      limit: 10,
+    });
+    assert(Result.isSuccess(early));
+    expect(early.value).toHaveLength(0);
+    const skipped = await processor.process({
+      organizationId,
+      commandId,
+      now: "2026-09-19T00:01:10.000Z",
+    });
+    assert(Result.isSuccess(skipped));
+    expect(sink.calls).toBe(1);
+
+    const due = await harness.commandRepository.listDuePending({
+      now: "2026-09-19T00:01:30.000Z",
+      limit: 10,
+    });
+    assert(Result.isSuccess(due));
+    expect(due.value.map((record) => record.command.id)).toEqual([commandId]);
+    const second = await processor.process({
+      organizationId,
+      commandId,
+      now: "2026-09-19T00:01:30.000Z",
+    });
+    assert(Result.isSuccess(second));
+    expect(second.value.status).toBe("delivered");
+    expect(sink.calls).toBe(2);
+  });
+
+  it("#88: retry上限に達したretriable失敗だけをfailedで確定する", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "retry-limit");
+    const sink = new FakeSink();
+    sink.results = [
+      Result.fail(new PublicApiRepositoryError("decision_workflow_send_failed", true, "timeout")),
+      Result.fail(new PublicApiRepositoryError("decision_workflow_send_failed", true, "timeout")),
+    ];
+    const processor = new ApprovalDecisionCommandProcessor(harness.commandRepository, sink, {
+      maxAttempts: 2,
+      baseDelayMs: 0,
+    });
+    const first = await processor.process({
+      organizationId,
+      commandId,
+      now: "2026-09-19T00:02:00.000Z",
+    });
+    assert(Result.isSuccess(first));
+    expect(first.value.status).toBe("pending");
+    const second = await processor.process({
+      organizationId,
+      commandId,
+      now: "2026-09-19T00:02:00.000Z",
+    });
+    assert(Result.isSuccess(second));
+    expect(second.value).toMatchObject({
+      status: "failed",
+      error: { code: "decision_workflow_send_failed", status: 503 },
+    });
+    expect(second.value.error?.detail).not.toContain("timeout");
+  });
+
+  it("#88: 並行してprocessしても配送は1回で、最終状態は後退しない", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "concurrent");
+    const sink = new FakeSink();
+    sink.results = [Result.succeed({ type: "delivered" }), Result.succeed({ type: "delivered" })];
+    const processor = new ApprovalDecisionCommandProcessor(harness.commandRepository, sink);
+
+    const [inline, sweep] = await Promise.all([
+      processor.process({ organizationId, commandId, now: "2026-09-19T00:03:00.000Z" }),
+      processor.process({ organizationId, commandId, now: "2026-09-19T00:03:00.000Z" }),
+    ]);
+    assert(Result.isSuccess(inline));
+    assert(Result.isSuccess(sweep));
+    expect(sink.calls).toBe(1);
+
+    // Workflowが受理をapplied（CAS）で書き戻した後は、processorが後から状態を戻せない
+    const resolved = await harness.commandRepository.transition({
+      organizationId,
+      commandId,
+      from: ["pending", "delivered"],
+      to: "applied",
+      appliedAt: "2026-09-19T00:03:01.000Z",
+    });
+    assert(Result.isSuccess(resolved));
+    expect(resolved.value.type).toBe("updated");
+    const late = await harness.commandRepository.transition({
+      organizationId,
+      commandId,
+      from: ["pending"],
+      to: "failed",
+    });
+    assert(Result.isSuccess(late));
+    expect(late.value).toMatchObject({ type: "stale", record: { command: { status: "applied" } } });
+    const again = await processor.process({
+      organizationId,
+      commandId,
+      now: "2026-09-19T00:04:00.000Z",
+    });
+    assert(Result.isSuccess(again));
+    expect(again.value.status).toBe("applied");
+    expect(sink.calls).toBe(1);
   });
 });

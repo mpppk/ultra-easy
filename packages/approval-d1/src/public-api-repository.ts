@@ -4,7 +4,10 @@ import type {
   ActionRequestView,
   ApprovalCommandRecord,
   ApprovalCommandRepository,
+  ApprovalCommandStatus,
+  ApprovalCommandTransitionResult,
   ApprovalReadRepository,
+  ApprovalTaskDecisionContext,
   ApprovalTaskPage,
   ApprovalTaskView,
   IdempotencyRecord,
@@ -23,6 +26,7 @@ import type {
   OrganizationId,
   UserId,
 } from "@app/approval-core";
+import { selfApprovalSubject } from "@app/approval-core";
 
 import {
   D1ActionResultProjectionRepository,
@@ -41,6 +45,7 @@ type TaskRow = {
   materialized_step_id: string;
   status: ApprovalTaskView["status"];
   candidate_user_ids: string;
+  decisions?: string;
   activated_at: string;
   expires_at: string | null;
   closed_at: string | null;
@@ -52,13 +57,19 @@ type CommandRow = {
   action_request_id: string;
   task_id: string | null;
   command_type: "approve" | "reject" | "cancel";
-  status: "pending" | "applied" | "rejected" | "failed";
+  status: ApprovalCommandStatus;
   actor_user_id: string | null;
   comment: string | null;
   error_json: string | null;
   created_at: string;
   applied_at: string | null;
+  attempt_count: number | null;
+  next_attempt_at: string | null;
 };
+
+const COMMAND_COLUMNS = `command_id, organization_id, action_request_id, task_id, command_type,
+                  status, actor_user_id, comment, error_json, created_at, applied_at,
+                  attempt_count, next_attempt_at`;
 
 type IdempotencyRow = {
   organization_id: string;
@@ -201,6 +212,8 @@ function commandRecord(
     },
     ...(row.actor_user_id !== null ? { actorUserId: row.actor_user_id as UserId } : {}),
     ...(row.comment !== null ? { comment: row.comment } : {}),
+    ...(row.attempt_count ? { attemptCount: row.attempt_count } : {}),
+    ...(row.next_attempt_at !== null ? { nextAttemptAt: row.next_attempt_at } : {}),
   });
 }
 
@@ -424,6 +437,77 @@ export class D1PublicApiRepository
     });
   }
 
+  async getApprovalTaskDecisionContext(input: {
+    organizationId: OrganizationId;
+    taskId: ApprovalTaskId;
+    viewerUserId: UserId;
+  }): Result.ResultAsync<ApprovalTaskDecisionContext | null, PublicApiRepositoryError> {
+    const row = await firstRow<TaskRow>(
+      this.db
+        .prepare(
+          `SELECT task_id, action_request_id, materialized_step_id, status,
+                  candidate_user_ids, decisions, activated_at, expires_at, closed_at
+             FROM approval_tasks
+            WHERE organization_id = ? AND task_id = ?`,
+        )
+        .bind(input.organizationId, input.taskId),
+    );
+    if (Result.isFailure(row)) return row;
+    if (!row.value) return Result.succeed(null);
+    const task = await this.taskFromRow({
+      organizationId: input.organizationId,
+      row: row.value,
+      viewerUserId: input.viewerUserId,
+    });
+    if (Result.isFailure(task)) return task;
+
+    const loaded = await this.plans.load({
+      organizationId: input.organizationId,
+      actionRequestId: row.value.action_request_id as ActionRequestId,
+    });
+    if (loaded.type !== "found") {
+      return Result.fail(
+        new PublicApiRepositoryError(
+          "approval_task_plan_not_found",
+          loaded.type === "repository_error",
+          "message" in loaded ? loaded.message : `Plan load failed: ${loaded.type}`,
+        ),
+      );
+    }
+    const step = findStep(loaded.plan.flow, row.value.materialized_step_id);
+    if (!step) {
+      return Result.fail(
+        new PublicApiRepositoryError(
+          "approval_task_step_not_found",
+          false,
+          "Approval taskに対応するMaterialized Stepが見つかりません",
+        ),
+      );
+    }
+    const candidates = parseJson(row.value.candidate_user_ids);
+    if (Result.isFailure(candidates)) return candidates;
+    const decisions = parseJson(row.value.decisions ?? "[]");
+    if (Result.isFailure(decisions)) return decisions;
+    const selfSubject = selfApprovalSubject(loaded.plan, step);
+    return Result.succeed({
+      task: task.value,
+      requireCommentOn: step.requireCommentOn ?? [],
+      ...(selfSubject?.type === "user" ? { selfApprovalDeniedUserId: String(selfSubject.id) } : {}),
+      candidateUserIds: Array.isArray(candidates.value)
+        ? candidates.value.filter((value): value is string => typeof value === "string")
+        : [],
+      decidedUserIds: Array.isArray(decisions.value)
+        ? decisions.value.flatMap((decision: unknown) =>
+            typeof decision === "object" &&
+            decision !== null &&
+            typeof (decision as { userId?: unknown }).userId === "string"
+              ? [(decision as { userId: string }).userId]
+              : [],
+          )
+        : [],
+    });
+  }
+
   async listActionRequestTasks(input: {
     organizationId: OrganizationId;
     actionRequestId: ActionRequestId;
@@ -601,8 +685,7 @@ export class D1PublicApiRepository
     const row = await firstRow<CommandRow>(
       this.db
         .prepare(
-          `SELECT command_id, organization_id, action_request_id, task_id, command_type,
-                  status, actor_user_id, comment, error_json, created_at, applied_at
+          `SELECT ${COMMAND_COLUMNS}
              FROM approval_commands
             WHERE organization_id = ? AND command_id = ?`,
         )
@@ -614,21 +697,156 @@ export class D1PublicApiRepository
     return Result.isFailure(mapped) ? mapped : Result.succeed(mapped.value);
   }
 
-  async listPending(input: {
+  async claim(input: {
     organizationId: OrganizationId;
+    commandId: string;
+    now: string;
+    leaseUntil: string;
+  }): Result.ResultAsync<ApprovalCommandRecord | null, PublicApiRepositoryError> {
+    const claimed = await runStatement(
+      this.db
+        .prepare(
+          `UPDATE approval_commands
+              SET lease_until = ?
+            WHERE organization_id = ? AND command_id = ?
+              AND status = 'pending'
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+              AND (lease_until IS NULL OR lease_until <= ?)`,
+        )
+        .bind(input.leaseUntil, input.organizationId, input.commandId, input.now, input.now),
+    );
+    if (Result.isFailure(claimed)) return claimed;
+    if (!claimed.value.success) {
+      return Result.fail(
+        new PublicApiRepositoryError(
+          "approval_command_claim_failed",
+          true,
+          claimed.value.error ?? "Approval commandを確保できませんでした",
+        ),
+      );
+    }
+    if ((claimed.value.meta?.changes ?? 0) === 0) return Result.succeed(null);
+    return this.load(input);
+  }
+
+  async transition(input: {
+    organizationId: OrganizationId;
+    commandId: string;
+    from: readonly ApprovalCommandStatus[];
+    to: Exclude<ApprovalCommandStatus, "pending">;
+    appliedAt?: string;
+    error?: ApprovalCommandRecord["command"]["error"];
+  }): Result.ResultAsync<ApprovalCommandTransitionResult, PublicApiRepositoryError> {
+    const errorJson = input.error !== undefined ? stringifyJson(input.error) : Result.succeed(null);
+    if (Result.isFailure(errorJson)) return errorJson;
+    if (input.from.length === 0) {
+      return Result.fail(
+        new PublicApiRepositoryError(
+          "approval_command_transition_invalid",
+          false,
+          "遷移元の状態を1つ以上指定してください",
+        ),
+      );
+    }
+    const placeholders = input.from.map(() => "?").join(", ");
+    return this.compareAndSet(
+      input,
+      this.db
+        .prepare(
+          `UPDATE approval_commands
+              SET status = ?, applied_at = COALESCE(?, applied_at),
+                  error_json = COALESCE(?, error_json), lease_until = NULL
+            WHERE organization_id = ? AND command_id = ? AND status IN (${placeholders})`,
+        )
+        .bind(
+          input.to,
+          input.appliedAt ?? null,
+          errorJson.value,
+          input.organizationId,
+          input.commandId,
+          ...input.from,
+        ),
+    );
+  }
+
+  /**
+   * WorkflowがDecisionを受理/却下した結果をcommandへ書き戻す（pending/deliveredからのCAS）。
+   * commandを経由しないDecision（preview harness等）は該当行が無いためupdated=falseになる。
+   */
+  async resolveOutcome(input: {
+    organizationId: OrganizationId;
+    commandId: string;
+    status: "applied" | "rejected";
+    resolvedAt: string;
+    error?: ApprovalCommandRecord["command"]["error"];
+  }): Result.ResultAsync<{ updated: boolean }, PublicApiRepositoryError> {
+    const errorJson = input.error !== undefined ? stringifyJson(input.error) : Result.succeed(null);
+    if (Result.isFailure(errorJson)) return errorJson;
+    const updated = await runStatement(
+      this.db
+        .prepare(
+          `UPDATE approval_commands
+              SET status = ?, applied_at = ?, error_json = ?, lease_until = NULL
+            WHERE organization_id = ? AND command_id = ? AND status IN ('pending', 'delivered')`,
+        )
+        .bind(
+          input.status,
+          input.resolvedAt,
+          errorJson.value,
+          input.organizationId,
+          input.commandId,
+        ),
+    );
+    if (Result.isFailure(updated)) return updated;
+    if (!updated.value.success) {
+      return Result.fail(
+        new PublicApiRepositoryError(
+          "approval_command_update_failed",
+          true,
+          updated.value.error ?? "Approval commandを更新できませんでした",
+        ),
+      );
+    }
+    return Result.succeed({ updated: (updated.value.meta?.changes ?? 0) > 0 });
+  }
+
+  async scheduleRetry(input: {
+    organizationId: OrganizationId;
+    commandId: string;
+    nextAttemptAt: string;
+    error: ApprovalCommandRecord["command"]["error"];
+  }): Result.ResultAsync<ApprovalCommandTransitionResult, PublicApiRepositoryError> {
+    const errorJson = stringifyJson(input.error);
+    if (Result.isFailure(errorJson)) return errorJson;
+    return this.compareAndSet(
+      input,
+      this.db
+        .prepare(
+          `UPDATE approval_commands
+              SET attempt_count = attempt_count + 1, next_attempt_at = ?,
+                  error_json = ?, lease_until = NULL
+            WHERE organization_id = ? AND command_id = ? AND status = 'pending'`,
+        )
+        .bind(input.nextAttemptAt, errorJson.value, input.organizationId, input.commandId),
+    );
+  }
+
+  async listDuePending(input: {
+    now: string;
     limit: number;
   }): Result.ResultAsync<ApprovalCommandRecord[], PublicApiRepositoryError> {
     const rows = await allRows<CommandRow>(
       this.db
         .prepare(
-          `SELECT command_id, organization_id, action_request_id, task_id, command_type,
-                  status, actor_user_id, comment, error_json, created_at, applied_at
+          `SELECT ${COMMAND_COLUMNS}
              FROM approval_commands
-            WHERE organization_id = ? AND status = 'pending'
+            WHERE status = 'pending'
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+              AND (lease_until IS NULL OR lease_until <= ?)
             ORDER BY created_at ASC
             LIMIT ?`,
         )
-        .bind(input.organizationId, input.limit),
+        .bind(input.now, input.now, input.limit),
     );
     if (Result.isFailure(rows)) return rows;
     const records: ApprovalCommandRecord[] = [];
@@ -640,37 +858,17 @@ export class D1PublicApiRepository
     return Result.succeed(records);
   }
 
-  async update(input: {
-    organizationId: OrganizationId;
-    commandId: string;
-    status: "applied" | "rejected" | "failed";
-    appliedAt?: string;
-    error?: ApprovalCommandRecord["command"]["error"];
-  }): Result.ResultAsync<ApprovalCommandRecord, PublicApiRepositoryError> {
-    const errorJson = input.error !== undefined ? stringifyJson(input.error) : Result.succeed(null);
-    if (Result.isFailure(errorJson)) return errorJson;
-
-    const updated = await runStatement(
-      this.db
-        .prepare(
-          `UPDATE approval_commands
-              SET status = ?, applied_at = ?, error_json = ?
-            WHERE organization_id = ? AND command_id = ?`,
-        )
-        .bind(
-          input.status,
-          input.appliedAt ?? null,
-          errorJson.value,
-          input.organizationId,
-          input.commandId,
-        ),
-    );
+  private async compareAndSet(
+    input: { organizationId: OrganizationId; commandId: string },
+    statement: D1PreparedStatementLike,
+  ): Result.ResultAsync<ApprovalCommandTransitionResult, PublicApiRepositoryError> {
+    const updated = await runStatement(statement);
     if (Result.isFailure(updated)) return updated;
-    if (!updated.value.success || (updated.value.meta?.changes ?? 0) === 0) {
+    if (!updated.value.success) {
       return Result.fail(
         new PublicApiRepositoryError(
           "approval_command_update_failed",
-          !updated.value.success,
+          true,
           updated.value.error ?? "Approval commandを更新できませんでした",
         ),
       );
@@ -680,13 +878,16 @@ export class D1PublicApiRepository
     if (!loaded.value) {
       return Result.fail(
         new PublicApiRepositoryError(
-          "approval_command_updated_missing",
-          true,
-          "更新後のApproval commandを取得できません",
+          "approval_command_not_found",
+          false,
+          "Approval commandが見つかりません",
         ),
       );
     }
-    return Result.succeed(loaded.value);
+    return Result.succeed({
+      type: (updated.value.meta?.changes ?? 0) > 0 ? "updated" : "stale",
+      record: loaded.value,
+    });
   }
 
   private async loadIdempotency(input: {

@@ -2,6 +2,7 @@ import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 
 import type { ActionDefinition } from "./action-definition.ts";
+import type { ApproverResolver } from "./approver-resolver.ts";
 import { always, approve, authorityPrincipal, definePolicy, managerOf, rule } from "./builder.ts";
 import type {
   ActionDefinitionKey,
@@ -25,6 +26,9 @@ import {
   materializeApprovalPlan,
   verifyMaterializedApprovalPlan,
 } from "./materialization.ts";
+import { ApprovalSelfApprovalDeniedError } from "./interpreter/errors.ts";
+import { recordApprovalDecision, startApprovalRuntime } from "./interpreter/runtime.ts";
+import { validateApprovalPolicySemantics } from "./semantic-validator.ts";
 import { createTicketActionRequest, fixtureIds } from "./testing/fixtures.ts";
 
 function branded<T extends string>(value: string): T {
@@ -343,5 +347,106 @@ describe("Materialized Plan verification", () => {
       type: "invalid",
       code: "organization_mismatch",
     });
+  });
+});
+
+describe("#87 selfApproval default", () => {
+  function selfApprovalSource(input: {
+    purpose?: "business_approval" | "execution_consent";
+    selfApproval?: { mode: "allow" | "deny" };
+  }) {
+    const source = policySource({ resolution: "dynamic" });
+    const policy = definePolicy({
+      key: String(source.policy.key),
+      name: "Self approval policy",
+      rules: [
+        rule("default", {
+          when: always(),
+          flow: approve({
+            key: "manager",
+            approver: managerOf(authorityPrincipal()),
+            resolution: "dynamic",
+            ...(input.purpose ? { purpose: input.purpose } : {}),
+            ...(input.selfApproval ? { selfApproval: input.selfApproval } : {}),
+          }),
+        }),
+      ],
+    });
+    return { ...source, policy };
+  }
+
+  const everyoneResolver: ApproverResolver = {
+    async check() {
+      return Result.succeed(true);
+    },
+    async list() {
+      return Result.succeed({ userIds: [fixtureIds.alice, fixtureIds.bob], complete: true });
+    },
+  };
+
+  it("selfApproval省略のbusiness_approvalはdenyで固定し、申請者本人のDecisionを拒否する", async () => {
+    const plan = await materialize({
+      sources: [selfApprovalSource({ purpose: "business_approval" })],
+    });
+    assert(plan.flow.type === "approval");
+    expect(plan.flow.selfApproval).toEqual({ mode: "deny" });
+
+    const started = await startApprovalRuntime({
+      plan,
+      resolver: everyoneResolver,
+      startedAt: "2026-09-11T00:00:00.000Z",
+    });
+    assert(Result.isSuccess(started));
+    expect(started.value.tasks[0]?.candidateUserIds.map(String)).toEqual([String(fixtureIds.bob)]);
+    const decided = await recordApprovalDecision({
+      plan,
+      resolver: everyoneResolver,
+      state: started.value,
+      event: {
+        idempotencyKey: "self",
+        taskId: started.value.tasks[0]!.id,
+        userId: fixtureIds.alice,
+        decision: "approve",
+        decidedAt: "2026-09-11T00:01:00.000Z",
+      },
+    });
+    assert(Result.isFailure(decided));
+    expect(decided.error).toBeInstanceOf(ApprovalSelfApprovalDeniedError);
+  });
+
+  it("purpose省略もdeny、execution_consentだけは既定allow、明示指定はそのまま固定する", async () => {
+    const omitted = await materialize({ sources: [selfApprovalSource({})] });
+    assert(omitted.flow.type === "approval");
+    expect(omitted.flow.selfApproval).toEqual({ mode: "deny" });
+
+    const consent = await materialize({
+      sources: [selfApprovalSource({ purpose: "execution_consent" })],
+    });
+    assert(consent.flow.type === "approval");
+    expect(consent.flow.selfApproval).toEqual({ mode: "allow" });
+
+    const explicit = await materialize({
+      sources: [
+        selfApprovalSource({ purpose: "business_approval", selfApproval: { mode: "allow" } }),
+      ],
+    });
+    assert(explicit.flow.type === "approval");
+    expect(explicit.flow.selfApproval).toEqual({ mode: "allow" });
+  });
+
+  it("業務承認で自己承認をallowするpolicyにsemantic warningを出す", () => {
+    const business = selfApprovalSource({
+      purpose: "business_approval",
+      selfApproval: { mode: "allow" },
+    });
+    expect(validateApprovalPolicySemantics(business.policy)).toEqual({
+      valid: true,
+      warnings: [expect.objectContaining({ code: "self_approval_allowed" })],
+    });
+    const consent = selfApprovalSource({
+      purpose: "execution_consent",
+      selfApproval: { mode: "allow" },
+    });
+    expect(validateApprovalPolicySemantics(consent.policy)).toEqual({ valid: true });
   });
 });

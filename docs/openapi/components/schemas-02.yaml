@@ -134,8 +134,15 @@ CancelActionRequestInput:
   additionalProperties: false
 ApprovalCommandStatus:
   type: string
+  description: |-
+    pending: 受付済み・Workflowへ未配送（一時障害後のbackoff待ちを含む）。
+    delivered: Workflowへ配送済みで、受理/却下が未確定。
+    applied: WorkflowがDecisionを受理した。
+    rejected: WorkflowがDecisionを業務制約（closed task・候補外・自己承認等）で却下した。error.codeに理由が入る。
+    failed: 配送を諦めた（非retriable失敗、またはretry上限超過）。
   enum:
   - pending
+  - delivered
   - applied
   - rejected
   - failed
