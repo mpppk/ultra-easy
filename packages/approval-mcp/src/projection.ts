@@ -186,6 +186,17 @@ export function projectActionRequest(view: ActionRequestView): McpTerminalProjec
           provenance: "execution",
         }),
       };
+    case "failed":
+      return {
+        status: "failed",
+        statusMessage: "ActionRequest workflow failed and requires operator investigation",
+        error: executionProtocolError({
+          actionRequestId: view.id,
+          code: view.result?.code,
+          message: view.result?.message,
+          provenance: "execution",
+        }),
+      };
     case "cancelled":
       return { status: "cancelled", statusMessage: "ActionRequest was cancelled" };
   }

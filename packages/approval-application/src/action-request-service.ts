@@ -12,6 +12,8 @@ import {
   executeAuthorizedAction,
   executorFailureStatus,
   executorGuaranteeLevel,
+  foldActionRequestStatus,
+  isTerminalActionRequestStatus,
   materializeApprovalPlan,
   reauthorizeActionForExecution,
   validateActionInput,
@@ -28,6 +30,7 @@ import type {
   ActionExecutor,
   ActionRequest,
   ActionRequestId,
+  ActionRequestStatus,
   ActionResultRecord,
   ActionResultRepository,
   AuthorizationEvidence,
@@ -59,19 +62,8 @@ export type TrustedActionRequestContext = {
   now: string;
 };
 
-export type ActionRequestPublicStatus =
-  | "evaluating"
-  | "pending_approval"
-  | "approved"
-  | "executing"
-  | "executed"
-  | "rejected"
-  | "cancelled"
-  | "expired"
-  | "authorization_revoked"
-  | "authorization_check_failed"
-  | "execution_failed"
-  | "execution_unknown";
+/** ActionRequestの状態はcoreの状態機械（#101）で導出する。 */
+export type ActionRequestPublicStatus = ActionRequestStatus;
 
 export type ActionRequestView = {
   id: string;
@@ -335,14 +327,22 @@ async function verifyPreparedActionRequest(
   return Result.succeed(undefined);
 }
 
+/**
+ * submit応答のview。statusはこのsubmitで記録したdomain eventをcoreの状態機械でfoldして
+ * 導出し、read API（同じeventのfold）と一致させる。
+ */
 function requestView(input: {
   request: ActionRequest;
   plan: MaterializedApprovalPlan;
-  status: ActionRequestPublicStatus;
+  events: readonly ActionEventRecord[];
   now: string;
   result?: ActionRequestView["result"];
 }): ActionRequestView {
   const approvalRequired = input.plan.flow.type !== "none";
+  const status = foldActionRequestStatus(
+    input.events.map((record) => record.event),
+    { approvalRequired },
+  );
   return {
     id: String(input.plan.actionRequestId),
     organizationId: String(input.plan.organizationId),
@@ -351,7 +351,7 @@ function requestView(input: {
     ...(input.request.origin.caller ? { caller: input.request.origin.caller } : {}),
     action: input.request.action,
     origin: input.request.origin.type,
-    status: input.status,
+    status,
     approval: { required: approvalRequired },
     ...(input.result ? { result: input.result } : {}),
     checksums: {
@@ -361,7 +361,7 @@ function requestView(input: {
     },
     createdAt: input.now,
     updatedAt: input.now,
-    ...(input.status === "pending_approval" ? {} : { completedAt: input.now }),
+    ...(isTerminalActionRequestStatus(status) ? { completedAt: input.now } : {}),
   };
 }
 
@@ -609,13 +609,11 @@ export class ActionRequestApplicationService {
       return Result.fail(planPersistenceError(saved));
     }
 
-    const initialAudit = await appendAudit(
-      this.dependencies.eventRepository,
-      actionPlanAuditEvents({
-        plan,
-        authorizationEvidence: preparation.prepared.authorizationEvidence,
-      }),
-    );
+    const initialEvents = actionPlanAuditEvents({
+      plan,
+      authorizationEvidence: preparation.prepared.authorizationEvidence,
+    });
+    const initialAudit = await appendAudit(this.dependencies.eventRepository, initialEvents);
     if (Result.isFailure(initialAudit)) return initialAudit;
 
     const now = input.now ?? preparation.prepared.preparedAt;
@@ -633,16 +631,11 @@ export class ActionRequestApplicationService {
         request,
         plan,
         workflowInstanceId: started.value.workflowInstanceId,
-        view: requestView({
-          request,
-          plan,
-          status: "pending_approval",
-          now,
-        }),
+        view: requestView({ request, plan, events: initialEvents, now }),
       });
     }
 
-    return this.executeImmediately({ actionRequestId, request, plan, now });
+    return this.executeImmediately({ actionRequestId, request, plan, now, initialEvents });
   }
 
   async submit(input: {
@@ -668,8 +661,9 @@ export class ActionRequestApplicationService {
     request: ActionRequest;
     plan: MaterializedApprovalPlan;
     now: string;
+    initialEvents: readonly ActionEventRecord[];
   }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
-    const { actionRequestId, request, plan, now } = input;
+    const { actionRequestId, request, plan, now, initialEvents } = input;
     const base = { organizationId: plan.organizationId, actionRequestId, completedAt: now };
 
     const reauthorized = await reauthorizeActionForExecution({
@@ -710,7 +704,7 @@ export class ActionRequestApplicationService {
         view: requestView({
           request,
           plan,
-          status: "authorization_revoked",
+          events: [...initialEvents, ...recorded.value],
           now,
           result: { status: "authorization_revoked", code, message: reason },
         }),
@@ -780,7 +774,7 @@ export class ActionRequestApplicationService {
       view: requestView({
         request,
         plan,
-        status: "executed",
+        events: [...initialEvents, ...recorded.value],
         now,
         result: {
           status: "executed",
@@ -797,16 +791,14 @@ export class ActionRequestApplicationService {
       authorizationEvidence?: AuthorizationEvidence;
       retriable?: boolean;
     },
-  ): Result.ResultAsync<void, ActionRequestApplicationError> {
+  ): Result.ResultAsync<readonly ActionEventRecord[], ActionRequestApplicationError> {
     const { authorizationEvidence, retriable, ...record } = outcome;
-    const saved = await this.dependencies.resultRepository.save(
-      record,
-      actionExecutionOutcomeEvents({
-        ...record,
-        ...(authorizationEvidence ? { authorizationEvidence } : {}),
-        ...(retriable !== undefined ? { retriable } : {}),
-      }),
-    );
+    const events = actionExecutionOutcomeEvents({
+      ...record,
+      ...(authorizationEvidence ? { authorizationEvidence } : {}),
+      ...(retriable !== undefined ? { retriable } : {}),
+    });
+    const saved = await this.dependencies.resultRepository.save(record, events);
     if (Result.isFailure(saved)) {
       return Result.fail(
         new ActionRequestApplicationError(
@@ -816,6 +808,6 @@ export class ActionRequestApplicationService {
         ),
       );
     }
-    return Result.succeed(undefined);
+    return Result.succeed(events);
   }
 }

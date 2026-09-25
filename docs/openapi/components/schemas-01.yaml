@@ -75,9 +75,13 @@ ActionRequestStatus:
   - authorization_check_failed
   - execution_failed
   - execution_unknown
+  - failed
   description: |-
+    domain event（action_events）をcoreの状態機械（ActionRequestLifecycle）でfoldして導出する。
+    evaluating → pending_approval（承認あり）/ approved（承認不要）→ executing → 終端。
     execution_unknown: at-most-onceのexecutorが一時障害で失敗し、外部副作用の有無が不明（retryせず、
-    人手でreconcileする）。承認不要の同期実行もWorkflow経路と同じ終端状態を返す。
+    人手でreconcileする）。failed: Workflowが異常終了した（workflow.failed、runbookで調査する）。
+    承認不要の同期実行もWorkflow経路と同じ終端状態を返す。
 ActionResult:
   type: object
   required:

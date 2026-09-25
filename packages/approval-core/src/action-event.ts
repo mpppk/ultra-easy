@@ -122,6 +122,18 @@ export type ActionEvent =
       stepKey: ApprovalStepKey;
     }
   | {
+      /** approval runtimeがapprovedへ遷移した（承認完了。再認可・実行はこの後）。 */
+      type: "approval.approved";
+      actionRequestId: ActionRequestId;
+    }
+  | {
+      /** Workflowが異常終了し、ActionRequestを先へ進められない（stuck検知・alertの対象）。 */
+      type: "workflow.failed";
+      actionRequestId: ActionRequestId;
+      workflowInstanceId: string;
+      code: string;
+    }
+  | {
       type: "action.reauthorized";
       actionRequestId: ActionRequestId;
       evidence: AuthorizationEvidence;
@@ -379,6 +391,16 @@ export function actionRuntimeTransitionEvents(input: {
           materializedStepId: task.materializedStepId,
           stepKey: step.stepKey,
         },
+      }),
+    );
+  }
+
+  if (input.previousState?.status !== "approved" && input.nextState.status === "approved") {
+    records.push(
+      actionEventRecord({
+        organizationId: input.plan.organizationId,
+        occurredAt: input.nextState.completedAt ?? input.nextState.startedAt,
+        event: { type: "approval.approved", actionRequestId: input.plan.actionRequestId },
       }),
     );
   }
