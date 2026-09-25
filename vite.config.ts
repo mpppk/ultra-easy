@@ -25,6 +25,11 @@ export default defineConfig({
           selector: "ThrowStatement",
           message: "throwは禁止です。失敗は@praha/byethrowのResultで明示的に返してください。",
         },
+        {
+          selector: "CallExpression[callee.name=/^decodeURI(Component)?$/]",
+          message:
+            "decodeURIComponentはURIErrorを投げます。@app/approval-coreのdecodeUriComponent（Result）を使ってください。",
+        },
       ],
       "byethrow/consistent-namespace": "error",
       "byethrow/no-ambiguous-error-type": "error",
@@ -36,6 +41,19 @@ export default defineConfig({
       "byethrow/prefer-result-maybe-async": "error",
     },
     overrides: [
+      {
+        // 例外を投げるdecodeURIComponentをResultで包む唯一の場所。
+        files: ["packages/approval-core/src/uri.ts"],
+        rules: {
+          "eslint-js/no-restricted-syntax": [
+            "error",
+            {
+              selector: "ThrowStatement",
+              message: "throwは禁止です。失敗は@praha/byethrowのResultで明示的に返してください。",
+            },
+          ],
+        },
+      },
       {
         files: ["packages/approval-core/src/**/*.ts"],
         excludeFiles: [

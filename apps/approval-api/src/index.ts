@@ -370,9 +370,19 @@ export default {
       }
       return buildApi({ env, authorizerBinding }).fetch(request);
     } catch (error) {
+      // 例外messageは応答に含めない（#93）。
+      console.error("approval api unhandled error", {
+        code: "unhandled_error",
+        name: error instanceof Error ? error.name : typeof error,
+      });
       return Response.json(
-        { error: error instanceof Error ? error.message : String(error) },
-        { status: 500 },
+        {
+          type: "urn:ultra-easy:problem:internal_error",
+          title: "Internal Server Error",
+          status: 500,
+          code: "internal_error",
+        },
+        { status: 500, headers: { "content-type": "application/problem+json" } },
       );
     }
   },

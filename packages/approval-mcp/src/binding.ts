@@ -201,15 +201,14 @@ export async function validateMcpToolBindingsAgainstActionDefinitions(input: {
   const issues: McpToolBindingIssue[] = [];
   for (const binding of input.bindings) {
     if (binding.status !== "active") continue;
-    const resolved = await Result.fn({
-      try: async () => input.resolver.resolve(binding.actionType),
-      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-    })();
-    if (Result.isFailure(resolved)) {
+    const resolved = await input.resolver.resolve(binding.actionType);
+    if (Result.isFailure(resolved) || !resolved.value) {
       issues.push({
         bindingId: binding.id,
         code: "invalid_target",
-        message: `Action Definitionを解決できません: ${resolved.error.message}`,
+        message: Result.isFailure(resolved)
+          ? `Action Definitionを解決できません: ${resolved.error.message}`
+          : `publishされたAction Definitionがありません: ${String(binding.actionType)}`,
       });
       continue;
     }

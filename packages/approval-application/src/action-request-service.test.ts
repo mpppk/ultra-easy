@@ -223,10 +223,10 @@ function createHarness(
   const policyBindingResolver = new FakePolicyResolver(
     input.approvalRequired ? [approvalPolicy()] : [],
   );
-  const schemaResolver: SchemaResolver = { resolve: () => schema };
+  const schemaResolver: SchemaResolver = { resolve: async () => Result.succeed(schema) };
   const eventRepository = new FakeEventRepository();
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: { resolve: () => definition },
+    actionDefinitionResolver: { resolve: async () => Result.succeed(definition) },
     schemaResolver,
     policyBindingResolver,
     authorizer,

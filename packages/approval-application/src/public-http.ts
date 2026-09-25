@@ -13,6 +13,7 @@ import type {
 } from "@app/approval-core";
 
 import type { ActionRequestView } from "./action-request-service.ts";
+import { pathParameters } from "./path-parameters.ts";
 import type { HttpTrustedContextError } from "./http.ts";
 import {
   ApprovalCommandApplicationError,
@@ -90,11 +91,11 @@ function problem(input: {
 }
 
 function repositoryErrorResponse(error: PublicApiRepositoryError): Response {
+  // D1 / providerのmessageは返さない（error codeで識別する）。
   return problem({
     status: error.retriable ? 503 : 500,
     code: error.code,
     title: "Public API read modelを利用できません",
-    detail: error.message,
   });
 }
 
@@ -142,11 +143,11 @@ function commandErrorResponse(error: ApprovalCommandApplicationError): Response 
       detail: error.message,
     });
   }
+  // repository障害等。内部messageは返さない。
   return problem({
-    status: error.retriable ? 503 : 422,
+    status: error.retriable ? 503 : 500,
     code: error.code,
     title: "Approval commandを処理できません",
-    detail: error.message,
   });
 }
 
@@ -227,7 +228,6 @@ async function idempotent(input: {
       status: 400,
       code: "idempotency_payload_hash_failed",
       title: "Request payloadを正規化できません",
-      detail: hashed.error.message,
     });
   }
   const now = input.clock.now();
@@ -457,9 +457,13 @@ export function createPublicHttpApi(input: {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
 
-      const createMatch = /^\/v1\/organizations\/([^/]+)\/action-requests$/.exec(url.pathname);
+      const createMatch = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/action-requests$/,
+        url.pathname,
+      );
+      if (createMatch instanceof Response) return createMatch;
       if (request.method === "POST" && createMatch?.[1]) {
-        const organizationId = decodeURIComponent(createMatch[1]) as OrganizationId;
+        const organizationId = createMatch[1] as OrganizationId;
         const principal = await authenticate({
           identityProvider: input.identityProvider,
           request,
@@ -477,11 +481,13 @@ export function createPublicHttpApi(input: {
         });
       }
 
-      const actionMatch = /^\/v1\/organizations\/([^/]+)\/action-requests\/([^/]+)$/.exec(
+      const actionMatch = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/action-requests\/([^/]+)$/,
         url.pathname,
       );
+      if (actionMatch instanceof Response) return actionMatch;
       if (request.method === "GET" && actionMatch?.[1] && actionMatch[2]) {
-        const organizationId = decodeURIComponent(actionMatch[1]) as OrganizationId;
+        const organizationId = actionMatch[1] as OrganizationId;
         const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
@@ -491,7 +497,7 @@ export function createPublicHttpApi(input: {
         if (viewer instanceof Response) return viewer;
         const loaded = await loadReadableActionRequest({
           organizationId,
-          actionRequestId: decodeURIComponent(actionMatch[2]) as ActionRequestId,
+          actionRequestId: actionMatch[2] as ActionRequestId,
           viewer,
           readRepository: input.readRepository,
           ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
@@ -499,10 +505,13 @@ export function createPublicHttpApi(input: {
         return loaded instanceof Response ? loaded : responseJson(loaded);
       }
 
-      const actionTasksMatch =
-        /^\/v1\/organizations\/([^/]+)\/action-requests\/([^/]+)\/tasks$/.exec(url.pathname);
+      const actionTasksMatch = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/action-requests\/([^/]+)\/tasks$/,
+        url.pathname,
+      );
+      if (actionTasksMatch instanceof Response) return actionTasksMatch;
       if (request.method === "GET" && actionTasksMatch?.[1] && actionTasksMatch[2]) {
-        const organizationId = decodeURIComponent(actionTasksMatch[1]) as OrganizationId;
+        const organizationId = actionTasksMatch[1] as OrganizationId;
         const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
@@ -510,7 +519,7 @@ export function createPublicHttpApi(input: {
           operation: "action_request.read",
         });
         if (viewer instanceof Response) return viewer;
-        const actionRequestId = decodeURIComponent(actionTasksMatch[2]) as ActionRequestId;
+        const actionRequestId = actionTasksMatch[2] as ActionRequestId;
         const action = await loadReadableActionRequest({
           organizationId,
           actionRequestId,
@@ -538,9 +547,13 @@ export function createPublicHttpApi(input: {
           : responseJson(tasks.value);
       }
 
-      const inboxMatch = /^\/v1\/organizations\/([^/]+)\/me\/approval-tasks$/.exec(url.pathname);
+      const inboxMatch = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/me\/approval-tasks$/,
+        url.pathname,
+      );
+      if (inboxMatch instanceof Response) return inboxMatch;
       if (request.method === "GET" && inboxMatch?.[1]) {
-        const organizationId = decodeURIComponent(inboxMatch[1]) as OrganizationId;
+        const organizationId = inboxMatch[1] as OrganizationId;
         const user = await authenticateUser({
           identityProvider: input.identityProvider,
           request,
@@ -577,11 +590,13 @@ export function createPublicHttpApi(input: {
           : responseJson(tasks.value);
       }
 
-      const taskMatch = /^\/v1\/organizations\/([^/]+)\/approval-tasks\/([^/]+)$/.exec(
+      const taskMatch = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/approval-tasks\/([^/]+)$/,
         url.pathname,
       );
+      if (taskMatch instanceof Response) return taskMatch;
       if (request.method === "GET" && taskMatch?.[1] && taskMatch[2]) {
-        const organizationId = decodeURIComponent(taskMatch[1]) as OrganizationId;
+        const organizationId = taskMatch[1] as OrganizationId;
         const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
@@ -596,7 +611,7 @@ export function createPublicHttpApi(input: {
         });
         const task = await input.readRepository.getApprovalTask({
           organizationId,
-          taskId: decodeURIComponent(taskMatch[2]) as ApprovalTaskId,
+          taskId: taskMatch[2] as ApprovalTaskId,
           ...(viewer.type === "user" ? { viewerUserId: viewer.id } : {}),
         });
         if (Result.isFailure(task)) return repositoryErrorResponse(task.error);
@@ -613,11 +628,14 @@ export function createPublicHttpApi(input: {
         return responseJson(task.value);
       }
 
-      const decisionMatch =
-        /^\/v1\/organizations\/([^/]+)\/approval-tasks\/([^/]+)\/decisions$/.exec(url.pathname);
+      const decisionMatch = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/approval-tasks\/([^/]+)\/decisions$/,
+        url.pathname,
+      );
+      if (decisionMatch instanceof Response) return decisionMatch;
       if (request.method === "POST" && decisionMatch?.[1] && decisionMatch[2]) {
-        const organizationId = decodeURIComponent(decisionMatch[1]) as OrganizationId;
-        const taskId = decodeURIComponent(decisionMatch[2]) as ApprovalTaskId;
+        const organizationId = decisionMatch[1] as OrganizationId;
+        const taskId = decisionMatch[2] as ApprovalTaskId;
         const user = await authenticateUser({
           identityProvider: input.identityProvider,
           request,
@@ -696,11 +714,13 @@ export function createPublicHttpApi(input: {
         });
       }
 
-      const commandMatch = /^\/v1\/organizations\/([^/]+)\/approval-commands\/([^/]+)$/.exec(
+      const commandMatch = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/approval-commands\/([^/]+)$/,
         url.pathname,
       );
+      if (commandMatch instanceof Response) return commandMatch;
       if (request.method === "GET" && commandMatch?.[1] && commandMatch[2]) {
-        const organizationId = decodeURIComponent(commandMatch[1]) as OrganizationId;
+        const organizationId = commandMatch[1] as OrganizationId;
         const viewer = await authenticate({
           identityProvider: input.identityProvider,
           request,
@@ -715,7 +735,7 @@ export function createPublicHttpApi(input: {
         });
         const record = await input.decisionService.get({
           organizationId,
-          commandId: decodeURIComponent(commandMatch[2]),
+          commandId: commandMatch[2],
         });
         if (Result.isFailure(record)) return commandErrorResponse(record.error);
         if (!record.value) return commandNotFound;

@@ -1,3 +1,4 @@
+import type { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import type { SchemaKey } from "./domain/brand.ts";
@@ -16,8 +17,21 @@ export type SchemaReference = {
  *
  * approval-coreはZod等の具体的なSchemaライブラリを認識しない。
  */
+export class SchemaResolverError extends Error {
+  readonly name = "SchemaResolverError";
+
+  constructor(
+    readonly code: string,
+    readonly retriable: boolean,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export interface SchemaResolver {
-  resolve(ref: SchemaReference): StandardSchemaV1 | Promise<StandardSchemaV1>;
+  /** 未登録のSchema referenceはnull（Action Definitionの設定不備）。依存障害はerror。 */
+  resolve(ref: SchemaReference): Result.ResultAsync<StandardSchemaV1 | null, SchemaResolverError>;
 }
 
 export type SchemaValidationResult<Output> =

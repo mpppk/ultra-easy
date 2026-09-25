@@ -50,6 +50,26 @@ Oxlintの`no-restricted-syntax`で`ThrowStatement`をリポジトリ全体から
 
 CIでは`vp check`を実行し、`throw`文が追加された場合は失敗させる。
 
+`decodeURIComponent` / `decodeURI`は不正なpercent-encodingで`URIError`を投げるため、同じ
+`no-restricted-syntax`で直接呼び出しを禁止する。`@app/approval-core`の`decodeUriComponent`（Result）
+を使い、HTTP routeでは`pathParameters`（400 `invalid_path_parameter`）を通す。
+
+## HTTPエラーの対応付け
+
+Port（`ActionDefinitionResolver` / `SchemaResolver`等）はPromiseのrejectではなく`ResultAsync`で失敗を返し、
+「見つからない（入力誤り・設定不備）」はnull、依存障害だけをerrorにする。HTTP adapterはerror codeから
+statusを明示的な対応表で決める（`actionRequestErrorStatus`）。
+
+| 種別                              | status    | 例                                                                                  |
+| --------------------------------- | --------- | ----------------------------------------------------------------------------------- |
+| 利用者の入力誤り                  | 400 / 422 | `invalid_path_parameter`、`action_type_not_found`、`action_input_validation_failed` |
+| 状態競合・重複                    | 409       | `action_request_already_exists`、`idempotency_key_reused`                           |
+| 依存障害（retriable）             | 503       | D1 / FGA / Workflowの一時障害                                                       |
+| 契約違反・設定不備（非retriable） | 500       | `schema_not_found`、FGAのrelation未定義（`authorization_provider_failed`）          |
+
+応答の`detail`は利用者の入力に由来する安全な文言だけにする。D1・provider・例外のmessageは返さず、
+error codeで識別する（最上位のcatchも固定のproblemを返す）。
+
 ## 境界での例外変換
 
 例外を投げうるAPIを呼び出す場合、その例外をそのまま上位へ伝播させない。境界でByethrowへ変換する。

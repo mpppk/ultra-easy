@@ -229,8 +229,10 @@ function harness(options: {
     },
   };
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: { resolve: () => AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION },
-    schemaResolver: { resolve: () => relationshipUpdateInputSchema() },
+    actionDefinitionResolver: {
+      resolve: async () => Result.succeed(AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION),
+    },
+    schemaResolver: { resolve: async () => Result.succeed(relationshipUpdateInputSchema()) },
     policyBindingResolver: { resolve: async () => Result.succeed([relationshipPolicy()]) },
     authorizer,
     executor,

@@ -41,6 +41,7 @@ import type {
   SchemaResolver,
   VersionedApprovalPolicyBinding,
 } from "@app/approval-core";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import type {
   ActionRequestDependencyError,
@@ -170,7 +171,9 @@ export type ActionRequestPreparation =
 
 export type ActionRequestApplicationErrorCode =
   | "action_definition_resolution_failed"
+  | "action_type_not_found"
   | "schema_resolution_failed"
+  | "schema_not_found"
   | "action_input_validation_failed"
   | "action_input_not_object"
   | "authorization_provider_failed"
@@ -227,32 +230,8 @@ export type ActionRequestApplicationServiceDependencies = {
   idGenerator: ActionRequestIdGenerator;
 };
 
-const resolveActionDefinition = Result.fn({
-  try: async (input: {
-    resolver: ActionDefinitionResolver;
-    action: Action;
-  }): Promise<ActionDefinition> => input.resolver.resolve(input.action.type),
-  catch: (error): ActionRequestApplicationError =>
-    new ActionRequestApplicationError(
-      "action_definition_resolution_failed",
-      true,
-      error instanceof Error ? error.message : "Action Definitionの解決に失敗しました",
-    ),
-});
-
-const resolveSchema = Result.fn({
-  try: async (input: { resolver: SchemaResolver; definition: ActionDefinition }) =>
-    input.resolver.resolve(input.definition.inputSchema),
-  catch: (error): ActionRequestApplicationError =>
-    new ActionRequestApplicationError(
-      "schema_resolution_failed",
-      true,
-      error instanceof Error ? error.message : "Action input schemaの解決に失敗しました",
-    ),
-});
-
 const validateSchema = Result.fn({
-  try: async (input: { schema: Awaited<ReturnType<SchemaResolver["resolve"]>>; value: unknown }) =>
+  try: async (input: { schema: StandardSchemaV1; value: unknown }) =>
     validateActionInput(input.schema, input.value),
   catch: (error): ActionRequestApplicationError =>
     new ActionRequestApplicationError(
@@ -394,17 +373,45 @@ export class ActionRequestApplicationService {
   }): Result.ResultAsync<ActionRequestEvaluation, ActionRequestApplicationError> {
     const actionRequestId = this.dependencies.idGenerator.next();
 
-    const definition = await resolveActionDefinition({
-      resolver: this.dependencies.actionDefinitionResolver,
-      action: input.action,
-    });
-    if (Result.isFailure(definition)) return definition;
+    const definition = await this.dependencies.actionDefinitionResolver.resolve(input.action.type);
+    if (Result.isFailure(definition)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "action_definition_resolution_failed",
+          definition.error.retriable,
+          definition.error.message,
+        ),
+      );
+    }
+    if (!definition.value) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "action_type_not_found",
+          false,
+          `publishされていないaction typeです: ${String(input.action.type)}`,
+        ),
+      );
+    }
 
-    const schema = await resolveSchema({
-      resolver: this.dependencies.schemaResolver,
-      definition: definition.value,
-    });
-    if (Result.isFailure(schema)) return schema;
+    const schema = await this.dependencies.schemaResolver.resolve(definition.value.inputSchema);
+    if (Result.isFailure(schema)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "schema_resolution_failed",
+          schema.error.retriable,
+          schema.error.message,
+        ),
+      );
+    }
+    if (!schema.value) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "schema_not_found",
+          false,
+          `Action Definitionのinput schemaが登録されていません: ${String(definition.value.inputSchema.key)}`,
+        ),
+      );
+    }
 
     const validated = await validateSchema({ schema: schema.value, value: input.action.input });
     if (Result.isFailure(validated)) return validated;

@@ -2,6 +2,7 @@ import { Result } from "@praha/byethrow";
 
 import {
   approvalFlowPresentation,
+  decodeUriComponent,
   isManagedRelationship,
   RELATIONSHIP_AUDIT_EVENT_TYPES,
   RELATIONSHIP_SYNC_STATUSES,
@@ -786,12 +787,11 @@ export function createAuthorizationAdminHttpApi(input: {
       if (request.method === "GET" && detail?.[1]) {
         const caller = await authorize(request, "viewer");
         if (caller instanceof Response) return caller;
-        let tupleKey: string;
-        try {
-          tupleKey = decodeURIComponent(detail[1]);
-        } catch {
+        const decodedKey = decodeUriComponent(detail[1]);
+        if (Result.isFailure(decodedKey)) {
           return problem({ status: 400, code: "invalid_tuple_key", title: "tuple keyが不正です" });
         }
+        const tupleKey = decodedKey.value;
         const loaded = await input.relationships.get({
           organizationId: caller.organizationId,
           tupleKey,

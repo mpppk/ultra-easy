@@ -153,8 +153,8 @@ describe("MCP Gateway 1: ActionType ↔ MCP Tool Binding / Registry", () => {
       ],
     ]);
     const resolver = {
-      resolve(actionType: ActionType) {
-        return definitions.get(String(actionType)) ?? Promise.reject(new Error("not published"));
+      async resolve(actionType: ActionType) {
+        return Result.succeed(definitions.get(String(actionType)) ?? null);
       },
     };
 

@@ -1,5 +1,5 @@
 export type * from "./domain/index.ts";
-export type * from "./action-definition.ts";
+export * from "./action-definition.ts";
 export * from "./action-event.ts";
 export * from "./action-execution.ts";
 export * from "./action-execution-record.ts";
@@ -25,3 +25,4 @@ export * from "./rate-limit.ts";
 export * from "./policy-evaluator.ts";
 export * from "./schema.ts";
 export * from "./semantic-validator.ts";
+export * from "./uri.ts";

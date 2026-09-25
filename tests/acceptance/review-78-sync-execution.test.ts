@@ -106,8 +106,8 @@ function harness(input: { reauthorization?: "allow" | "deny"; executor?: Scenari
   const db = migratedSqliteD1();
   const executor = input.executor ?? new ScenarioExecutor("idempotent", "succeed");
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: { resolve: () => definition },
-    schemaResolver: { resolve: () => schema },
+    actionDefinitionResolver: { resolve: async () => Result.succeed(definition) },
+    schemaResolver: { resolve: async () => Result.succeed(schema) },
     policyBindingResolver: {
       resolve: async () =>
         Result.succeed([

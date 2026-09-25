@@ -410,8 +410,8 @@ function createHarness() {
   const views = new Map<string, ActionRequestView>();
 
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: { resolve: () => definition },
-    schemaResolver: { resolve: () => schema } satisfies SchemaResolver,
+    actionDefinitionResolver: { resolve: async () => Result.succeed(definition) },
+    schemaResolver: { resolve: async () => Result.succeed(schema) } satisfies SchemaResolver,
     policyBindingResolver: new ScenarioPolicies(),
     authorizer,
     executor,

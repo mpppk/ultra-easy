@@ -4,6 +4,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   ActionExecutorRegistry,
   ConsoleTelemetrySink,
+  decodeUriComponent,
   GOVERNANCE_ACTION_DEFINITIONS,
   GOVERNANCE_ACTION_TYPES,
   GovernanceActionExecutor,
@@ -415,29 +416,42 @@ async function getOperatorDashboard(request: Request, env: PreviewRuntimeEnv): P
   return json(view.value, { status: 200 });
 }
 
+/** 1つのcaptureをdecodeする。不一致はnull、不正なpercent-encodingは400。 */
+function pathParameter(pattern: RegExp, url: URL): string | null | Response {
+  const match = pattern.exec(url.pathname);
+  if (!match?.[1]) return null;
+  const decoded = decodeUriComponent(match[1]);
+  return Result.isFailure(decoded)
+    ? json({ error: "invalid path parameter", code: "invalid_path_parameter" }, { status: 400 })
+    : decoded.value;
+}
+
 async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
   const url = new URL(request.url);
   if (request.method === "POST" && url.pathname === "/preview/approval-runs") {
     return startRun(request, env);
   }
 
-  const decisionMatch = /^\/preview\/approval-runs\/([^/]+)\/decisions$/.exec(url.pathname);
-  if (request.method === "POST" && decisionMatch?.[1]) {
-    return sendDecision(request, decodeURIComponent(decisionMatch[1]) as ActionRequestId, env);
+  const decisionMatch = pathParameter(/^\/preview\/approval-runs\/([^/]+)\/decisions$/, url);
+  if (decisionMatch instanceof Response) return decisionMatch;
+  if (request.method === "POST" && decisionMatch) {
+    return sendDecision(request, decisionMatch as ActionRequestId, env);
   }
 
-  const forceCancelMatch = /^\/preview\/approval-runs\/([^/]+)\/force-cancel$/.exec(url.pathname);
-  if (request.method === "POST" && forceCancelMatch?.[1]) {
-    return forceCancelRun(request, decodeURIComponent(forceCancelMatch[1]) as ActionRequestId, env);
+  const forceCancelMatch = pathParameter(/^\/preview\/approval-runs\/([^/]+)\/force-cancel$/, url);
+  if (forceCancelMatch instanceof Response) return forceCancelMatch;
+  if (request.method === "POST" && forceCancelMatch) {
+    return forceCancelRun(request, forceCancelMatch as ActionRequestId, env);
   }
 
   if (request.method === "GET" && url.pathname === "/operator/dashboard") {
     return getOperatorDashboard(request, env);
   }
 
-  const statusMatch = /^\/preview\/approval-runs\/([^/]+)$/.exec(url.pathname);
-  if (request.method === "GET" && statusMatch?.[1]) {
-    return getRun(decodeURIComponent(statusMatch[1]) as ActionRequestId, env);
+  const statusMatch = pathParameter(/^\/preview\/approval-runs\/([^/]+)$/, url);
+  if (statusMatch instanceof Response) return statusMatch;
+  if (request.method === "GET" && statusMatch) {
+    return getRun(statusMatch as ActionRequestId, env);
   }
 
   return new Response("Not Found", { status: 404 });

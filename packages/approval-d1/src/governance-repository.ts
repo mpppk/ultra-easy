@@ -5,6 +5,7 @@ import {
   type VersionedPolicyBindingResolver,
 } from "@app/approval-application";
 import {
+  ActionDefinitionResolverError,
   GovernancePersistenceError,
   resolvePolicyBindings,
   type ActionDefinition,
@@ -374,23 +375,37 @@ export class D1PublishedActionDefinitionResolver implements ActionDefinitionReso
     private readonly organizationId: OrganizationId,
   ) {}
 
-  async resolve(actionType: ActionType): Promise<ActionDefinition> {
-    const row = await this.db
-      .prepare(
-        `SELECT definition_json
-           FROM published_action_definitions
-          WHERE organization_id = ? AND action_type = ?
-          ORDER BY version DESC
-          LIMIT 1`,
-      )
-      .bind(this.organizationId, actionType)
-      .first<ActionDefinitionRow>();
-    if (!row) {
-      return Promise.reject(
-        new Error(`Published Action Definitionが見つかりません: ${String(actionType)}`),
+  async resolve(
+    actionType: ActionType,
+  ): Result.ResultAsync<ActionDefinition | null, ActionDefinitionResolverError> {
+    const row = await first<ActionDefinitionRow>(
+      this.db
+        .prepare(
+          `SELECT definition_json
+             FROM published_action_definitions
+            WHERE organization_id = ? AND action_type = ?
+            ORDER BY version DESC
+            LIMIT 1`,
+        )
+        .bind(this.organizationId, actionType),
+    );
+    if (Result.isFailure(row)) {
+      return Result.fail(
+        new ActionDefinitionResolverError(row.error.code, row.error.retriable, row.error.message),
       );
     }
-    return JSON.parse(row.definition_json) as ActionDefinition;
+    if (!row.value) return Result.succeed(null);
+    const parsed = parse<ActionDefinition>(row.value.definition_json);
+    if (Result.isFailure(parsed)) {
+      return Result.fail(
+        new ActionDefinitionResolverError(
+          "action_definition_corrupted",
+          false,
+          parsed.error.message,
+        ),
+      );
+    }
+    return Result.succeed(parsed.value);
   }
 }
 

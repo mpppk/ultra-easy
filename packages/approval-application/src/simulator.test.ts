@@ -211,9 +211,9 @@ function harness(
   const planRepository = new CountingPlanRepository();
   const workflowStarter = new CountingWorkflowStarter();
   const policyBindingResolver = new StaticPolicyResolver(input.approval ? [approvalBinding()] : []);
-  const schemaResolver: SchemaResolver = { resolve: () => schema };
+  const schemaResolver: SchemaResolver = { resolve: async () => Result.succeed(schema) };
   const application = new ActionRequestApplicationService({
-    actionDefinitionResolver: { resolve: () => definition },
+    actionDefinitionResolver: { resolve: async () => Result.succeed(definition) },
     schemaResolver,
     policyBindingResolver,
     authorizer,
