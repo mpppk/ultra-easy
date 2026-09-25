@@ -1,8 +1,15 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
 
-import type { Condition, ValueExpression } from "./domain/condition.ts";
-import type { JsonValue } from "./domain/json.ts";
+import {
+  APPROVAL_FIELD_NAMESPACES,
+  createFieldResolver,
+  evaluateCondition as evaluateSharedCondition,
+  isFieldPathAllowed,
+} from "@app/expression-core";
+import type { ExpressionError, FieldResolver } from "@app/expression-core";
+
+import type { Condition } from "./domain/condition.ts";
 import type { PolicyEvaluationContext } from "./domain/evaluation.ts";
 
 export class PolicyFieldNotAllowedError extends ErrorFactory({
@@ -79,270 +86,58 @@ export type ConditionEvaluationResult = Result.Result<
   ConditionEvaluationError
 >;
 
-type ValueResolutionResult = Result.Result<JsonValue, ConditionEvaluationError>;
-
-const ALLOWED_FIELD_PREFIXES = [
-  "action.input",
-  "actor",
-  "authority",
-  "origin",
-  "organization.settings",
-  "attributes",
-] as const;
-
 const matched = (): ConditionEvaluationResult => Result.succeed({ type: "matched" as const });
 const notMatched = (): ConditionEvaluationResult =>
   Result.succeed({ type: "not_matched" as const });
 
-function failed<T>(error: ConditionEvaluationError): Result.Result<T, ConditionEvaluationError> {
-  return Result.fail(error);
-}
-
 export function isAllowedPolicyFieldPath(path: string): boolean {
-  if (path === "now") {
-    return true;
-  }
-
-  return ALLOWED_FIELD_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}.`));
+  return isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, path);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function invalidRuntimeValue(value: unknown, path?: string): ConditionEvaluationError | undefined {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return undefined;
-  }
-
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
-      return new PolicyInvalidNumberError({
-        code: "invalid_number",
-        path,
-      });
-    }
-    return undefined;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const error = invalidRuntimeValue(item, path);
-      if (error) return error;
-    }
-    return undefined;
-  }
-
-  if (isRecord(value) && Object.getPrototypeOf(value) === Object.prototype) {
-    for (const item of Object.values(value)) {
-      const error = invalidRuntimeValue(item, path);
-      if (error) return error;
-    }
-    return undefined;
-  }
-
-  return new PolicyInvalidValueError({
-    code: "invalid_value",
-    path,
+/**
+ * Approval用Field Resolver。参照範囲は`APPROVAL_FIELD_NAMESPACES`に限定し、
+ * `now`は有効な日時文字列であることを検証する。
+ */
+export function approvalFieldResolver(context: PolicyEvaluationContext): FieldResolver {
+  return createFieldResolver({
+    policy: APPROVAL_FIELD_NAMESPACES,
+    root: context,
+    dateTimeFields: ["now"],
   });
 }
 
-function resolveField(path: string, context: PolicyEvaluationContext): ValueResolutionResult {
-  if (!isAllowedPolicyFieldPath(path)) {
-    return failed(
-      new PolicyFieldNotAllowedError({
+/** 共有評価器のerrorを、既存のPolicy評価error contractへ写像する。 */
+function toPolicyError(error: ExpressionError): ConditionEvaluationError {
+  switch (error.code) {
+    case "field_not_allowed":
+      return new PolicyFieldNotAllowedError({
         code: "field_not_allowed",
-        path,
-        reason: "not_allowed",
-      }),
-    );
+        path: error.path,
+        reason: error.reason,
+      });
+    case "field_missing":
+      return new PolicyFieldMissingError({ code: "field_missing", path: error.path });
+    case "invalid_value":
+      return new PolicyInvalidValueError({ code: "invalid_value", path: error.path });
+    case "type_mismatch":
+      return new PolicyTypeMismatchError({
+        code: "type_mismatch",
+        path: error.path,
+        detail: error.detail,
+      });
+    case "invalid_number":
+      return new PolicyInvalidNumberError({ code: "invalid_number", path: error.path });
+    case "invalid_date":
+      return new PolicyInvalidDateError({ code: "invalid_date", path: error.path });
   }
-
-  if (path === "now") {
-    if (!Number.isFinite(Date.parse(context.now))) {
-      return failed(
-        new PolicyInvalidDateError({
-          code: "invalid_date",
-          path,
-        }),
-      );
-    }
-    return Result.succeed(context.now);
-  }
-
-  const segments = path.split(".");
-  let current: unknown = context;
-
-  for (const segment of segments) {
-    if (segment === "__proto__" || segment === "prototype" || segment === "constructor") {
-      return failed(
-        new PolicyFieldNotAllowedError({
-          code: "field_not_allowed",
-          path,
-          reason: "unsafe",
-        }),
-      );
-    }
-
-    if (typeof current !== "object" || current === null || !Object.hasOwn(current, segment)) {
-      return failed(
-        new PolicyFieldMissingError({
-          code: "field_missing",
-          path,
-        }),
-      );
-    }
-
-    current = (current as Record<string, unknown>)[segment];
-  }
-
-  const error = invalidRuntimeValue(current, path);
-  if (error) return failed(error);
-
-  return Result.succeed(current as JsonValue);
 }
 
-function resolveValue(
-  expression: ValueExpression,
-  context: PolicyEvaluationContext,
-): ValueResolutionResult {
-  if (expression.type === "field") {
-    return resolveField(expression.path, context);
-  }
-
-  const error = invalidRuntimeValue(expression.value);
-  if (error) return failed(error);
-  return Result.succeed(expression.value);
-}
-
-function equalJson(left: JsonValue, right: JsonValue): boolean {
-  if (left === right) return true;
-  if (left === null || right === null) return false;
-  if (typeof left !== typeof right) return false;
-
-  if (Array.isArray(left)) {
-    if (!Array.isArray(right) || left.length !== right.length) return false;
-    return left.every((value, index) => equalJson(value, right[index] as JsonValue));
-  }
-
-  if (isRecord(left)) {
-    if (!isRecord(right)) return false;
-    const leftKeys = Object.keys(left).sort();
-    const rightKeys = Object.keys(right).sort();
-    if (leftKeys.length !== rightKeys.length) return false;
-    if (!leftKeys.every((key, index) => key === rightKeys[index])) return false;
-    return leftKeys.every((key) => equalJson(left[key] as JsonValue, right[key] as JsonValue));
-  }
-
-  return false;
-}
-
-function evaluateComparison(
-  condition: Extract<Condition, { type: "comparison" }>,
-  context: PolicyEvaluationContext,
-): ConditionEvaluationResult {
-  const left = resolveValue(condition.left, context);
-  if (Result.isFailure(left)) return left;
-  const right = resolveValue(condition.right, context);
-  if (Result.isFailure(right)) return right;
-
-  if (condition.operator === "eq" || condition.operator === "ne") {
-    const equal = equalJson(left.value, right.value);
-    return (condition.operator === "eq" ? equal : !equal) ? matched() : notMatched();
-  }
-
-  if (typeof left.value === "number" && typeof right.value === "number") {
-    const isMatched =
-      condition.operator === "gt"
-        ? left.value > right.value
-        : condition.operator === "gte"
-          ? left.value >= right.value
-          : condition.operator === "lt"
-            ? left.value < right.value
-            : left.value <= right.value;
-    return isMatched ? matched() : notMatched();
-  }
-
-  if (typeof left.value === "string" && typeof right.value === "string") {
-    const isMatched =
-      condition.operator === "gt"
-        ? left.value > right.value
-        : condition.operator === "gte"
-          ? left.value >= right.value
-          : condition.operator === "lt"
-            ? left.value < right.value
-            : left.value <= right.value;
-    return isMatched ? matched() : notMatched();
-  }
-
-  return failed(
-    new PolicyTypeMismatchError({
-      code: "type_mismatch",
-      path: undefined,
-      detail: `順序比較${condition.operator}の左右は同じ比較可能型である必要があります。`,
-    }),
-  );
-}
-
+/** Approval Policyの条件を評価する（評価器はexpression-coreと共有、#155）。 */
 export function evaluateCondition(
   condition: Condition,
   context: PolicyEvaluationContext,
 ): ConditionEvaluationResult {
-  switch (condition.type) {
-    case "comparison":
-      return evaluateComparison(condition, context);
-    case "and": {
-      const results = condition.conditions.map((child) => evaluateCondition(child, context));
-      const error = results.find(Result.isFailure);
-      if (error) return error;
-      return results.every((result) => Result.isSuccess(result) && result.value.type === "matched")
-        ? matched()
-        : notMatched();
-    }
-    case "or": {
-      const results = condition.conditions.map((child) => evaluateCondition(child, context));
-      const error = results.find(Result.isFailure);
-      if (error) return error;
-      return results.some((result) => Result.isSuccess(result) && result.value.type === "matched")
-        ? matched()
-        : notMatched();
-    }
-    case "not": {
-      const result = evaluateCondition(condition.condition, context);
-      if (Result.isFailure(result)) return result;
-      return result.value.type === "matched" ? notMatched() : matched();
-    }
-    case "in": {
-      const value = resolveValue(condition.value, context);
-      if (Result.isFailure(value)) return value;
-      for (const candidateExpression of condition.candidates) {
-        const candidate = resolveValue(candidateExpression, context);
-        if (Result.isFailure(candidate)) return candidate;
-        if (equalJson(value.value, candidate.value)) return matched();
-      }
-      return notMatched();
-    }
-    case "contains": {
-      const collection = resolveValue(condition.collection, context);
-      if (Result.isFailure(collection)) return collection;
-      const value = resolveValue(condition.value, context);
-      if (Result.isFailure(value)) return value;
-
-      if (typeof collection.value === "string" && typeof value.value === "string") {
-        return collection.value.includes(value.value) ? matched() : notMatched();
-      }
-      if (Array.isArray(collection.value)) {
-        return collection.value.some((item) => equalJson(item, value.value))
-          ? matched()
-          : notMatched();
-      }
-      return failed(
-        new PolicyTypeMismatchError({
-          code: "type_mismatch",
-          path: undefined,
-          detail: "containsのcollectionは文字列または配列である必要があります。",
-        }),
-      );
-    }
-  }
+  const result = evaluateSharedCondition(condition, approvalFieldResolver(context));
+  if (Result.isFailure(result)) return Result.fail(toPolicyError(result.error));
+  return result.value.type === "matched" ? matched() : notMatched();
 }

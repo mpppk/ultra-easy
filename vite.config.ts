@@ -130,9 +130,29 @@ export default defineConfig({
                     "!@standard-schema/spec",
                     "!@praha/byethrow",
                     "!@praha/error-factory",
+                    "!@app/expression-core",
                   ],
                   message:
                     "approval-coreのproduction codeから許可されていない外部packageへ直接依存しないでください。",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        // #155: 共有Expression Engineはpure / deterministic。外部I/Oを行うpackageへ依存させない。
+        files: ["packages/expression-core/src/**/*.ts"],
+        excludeFiles: ["packages/expression-core/src/**/*.test.ts"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                {
+                  group: ["*", "**/*", "!./**", "!@praha/byethrow", "!@praha/error-factory"],
+                  message:
+                    "expression-coreはpureな評価器です。@praha以外の外部package（I/Oを含む）へ依存しないでください。",
                 },
               ],
             },
