@@ -20,7 +20,8 @@ import type { ActionRequestView } from "./action-request-service.ts";
  * - failed: 配送を諦めた（非retriable失敗、またはretry上限超過）
  */
 export type ApprovalCommandStatus = "pending" | "delivered" | "applied" | "rejected" | "failed";
-export type ApprovalCommandType = "approve" | "reject" | "cancel";
+/** Decision command（cancelはcommandとして実装されていないため型に含めない、#103）。 */
+export type ApprovalCommandType = "approve" | "reject";
 
 export type PublicApiProblem = {
   type: string;
@@ -32,9 +33,9 @@ export type PublicApiProblem = {
 
 export type ApprovalCommand = {
   id: string;
-  organizationId: string;
-  actionRequestId: string;
-  taskId?: string;
+  organizationId: OrganizationId;
+  actionRequestId: ActionRequestId;
+  taskId?: ApprovalTaskId;
   type: ApprovalCommandType;
   status: ApprovalCommandStatus;
   error?: PublicApiProblem;
@@ -53,8 +54,8 @@ export type ApprovalCommandRecord = {
 };
 
 export type ApprovalTaskView = {
-  id: string;
-  actionRequestId: string;
+  id: ApprovalTaskId;
+  actionRequestId: ActionRequestId;
   materializedStepId: string;
   stepKey: string;
   name?: string;
@@ -323,9 +324,9 @@ export class ApprovalDecisionCommandService {
 
     const command: ApprovalCommand = {
       id: this.idGenerator.next(),
-      organizationId: String(input.organizationId),
+      organizationId: input.organizationId,
       actionRequestId: task.value.task.actionRequestId,
-      taskId: String(input.taskId),
+      taskId: input.taskId,
       type: input.decision,
       status: "pending",
       createdAt: input.now,
@@ -479,11 +480,7 @@ export class ApprovalDecisionCommandProcessor {
     }
 
     const record = claimed.value;
-    if (
-      record.command.type === "cancel" ||
-      record.command.taskId === undefined ||
-      record.actorUserId === undefined
-    ) {
+    if (record.command.taskId === undefined || record.actorUserId === undefined) {
       return this.finish(input, "failed", {
         error: commandProblem({
           status: 422,
@@ -496,8 +493,8 @@ export class ApprovalDecisionCommandProcessor {
 
     const applied = await this.sink.apply({
       organizationId: input.organizationId,
-      actionRequestId: record.command.actionRequestId as ActionRequestId,
-      taskId: record.command.taskId as ApprovalTaskId,
+      actionRequestId: record.command.actionRequestId,
+      taskId: record.command.taskId,
       userId: record.actorUserId,
       decision: record.command.type,
       decidedAt: record.command.createdAt,

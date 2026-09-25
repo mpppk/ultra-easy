@@ -247,10 +247,11 @@ export class D1AuthorizationRelationshipStore
     );
     if (Result.isFailure(relationship)) return relationship;
     if (!relationship.value) return Result.succeed(null);
-    return Result.succeed({
-      mutation: mutationRecord(row),
-      relationship: relationshipRecord(relationship.value),
-    });
+    const mutation = mutationRecord(row);
+    if (Result.isFailure(mutation)) return mutation;
+    const relationshipRow = relationshipRecord(relationship.value);
+    if (Result.isFailure(relationshipRow)) return relationshipRow;
+    return Result.succeed({ mutation: mutation.value, relationship: relationshipRow.value });
   }
 
   private async currentStatus(
@@ -528,11 +529,9 @@ export class D1AuthorizationRelationshipStore
         .bind(input.organizationId, input.idleBefore, Math.max(1, Math.min(100, input.limit))),
     );
     if (Result.isFailure(rows)) return rows;
+    // WHERE organization_id = ? で絞っているため入力のorganizationIdと一致する。
     return Result.succeed(
-      rows.value.map((row) => ({
-        organizationId: row.organization_id as OrganizationId,
-        tupleKey: row.tuple_key,
-      })),
+      rows.value.map((row) => ({ organizationId: input.organizationId, tupleKey: row.tuple_key })),
     );
   }
 }

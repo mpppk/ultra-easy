@@ -16,6 +16,7 @@ import type {
   D1RunResultLike,
 } from "./materialized-plan-repository.ts";
 import { prepareNotificationOutboxInsert } from "./notification-outbox-repository.ts";
+import { storedBrand } from "./stored-brand.ts";
 
 type StoredActionEventRow = {
   sequence: number;
@@ -349,11 +350,16 @@ export class D1ActionEventRepository implements ActionEventRepository {
     for (const row of rows.value) {
       const event = parseEvent(row.event_json);
       if (Result.isFailure(event)) return event;
-      if (actionRequestIds.at(-1) !== row.action_request_id) {
-        actionRequestIds.push(row.action_request_id as ActionRequestId);
+      if (String(actionRequestIds.at(-1)) !== row.action_request_id) {
+        const actionRequestId = storedBrand("ActionRequestId", row.action_request_id, (message) =>
+          repositoryError(undefined, message),
+        );
+        if (Result.isFailure(actionRequestId)) return actionRequestId;
+        actionRequestIds.push(actionRequestId.value);
       }
       records.push({
-        organizationId: row.organization_id as OrganizationId,
+        // WHERE organization_id = ? で絞っているため入力のorganizationIdと一致する。
+        organizationId: input.organizationId,
         eventKey: row.event_key,
         occurredAt: row.occurred_at,
         event: event.value,
@@ -384,7 +390,7 @@ export class D1ActionEventRepository implements ActionEventRepository {
       const event = parseEvent(row.event_json);
       if (Result.isFailure(event)) return event;
       records.push({
-        organizationId: row.organization_id as OrganizationId,
+        organizationId: input.organizationId,
         eventKey: row.event_key,
         occurredAt: row.occurred_at,
         event: event.value,

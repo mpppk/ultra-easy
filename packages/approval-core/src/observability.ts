@@ -1,6 +1,7 @@
 import type { ActionEventRecord } from "./action-event.ts";
 import type { ActionRequestId, OrganizationId } from "./domain/brand.ts";
 import type { PrincipalRef } from "./domain/principal.ts";
+import { brandLiteral } from "./domain/brand.ts";
 
 export type TelemetryComponent =
   | "http"
@@ -28,7 +29,7 @@ export type CorrelationContext = {
 };
 
 /** 特定organizationに属さないsystem処理（cron task等）のcorrelationに使うorganization ID。 */
-export const SYSTEM_ORGANIZATION_ID = "organization:_system" as OrganizationId;
+export const SYSTEM_ORGANIZATION_ID = brandLiteral("OrganizationId", "organization:_system");
 
 /** ActionRequestに紐づかないsystem処理のcorrelation。 */
 export function systemCorrelation(input: {

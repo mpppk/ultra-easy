@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { sha256Digest } from "./domain/brand.ts";
 
 import type { OrganizationId, Sha256Digest } from "./domain/brand.ts";
 import type { JsonObject, JsonValue } from "./domain/json.ts";
@@ -198,7 +199,7 @@ const digestBytes = Result.fn({
     const hex = Array.from(new Uint8Array(digest), (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");
-    return `sha256:${hex}` as Sha256Digest;
+    return sha256Digest(hex);
   },
   catch: (): AttachmentIntegrityError =>
     new AttachmentIntegrityError(

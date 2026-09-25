@@ -1,11 +1,11 @@
 import { Result } from "@praha/byethrow";
+import { brandLiteral } from "@app/approval-core";
 
 import {
   DEFAULT_OPERATOR_ALERT_THRESHOLDS,
   evaluateOperatorAlerts,
   safeLogRecord,
   systemCorrelation,
-  type ActionRequestId,
   type NotificationSink,
   type OperatorAlertThresholds,
   type OrganizationId,
@@ -161,7 +161,7 @@ export async function evaluateOrganizationAlerts(input: {
         event: firing ? "alert.firing" : "alert.resolved",
         correlation: {
           organizationId: input.organizationId,
-          actionRequestId: "action:operator-alert" as ActionRequestId,
+          actionRequestId: brandLiteral("ActionRequestId", "action:operator-alert"),
           correlationId: `operator-alert:${String(input.organizationId)}:${transition.key}`,
           component: ALERT_COMPONENT[transition.key],
           operation: "operator.alert",

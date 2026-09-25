@@ -1,18 +1,10 @@
 import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { brandLiteral } from "./domain/brand.ts";
 
 import type { ActionDefinition } from "./action-definition.ts";
 import { sha256CanonicalJson, type CanonicalJsonError } from "./canonical-json.ts";
-import type {
-  ActionDefinitionKey,
-  ActionType,
-  ExecutorKey,
-  OrganizationId,
-  RelationName,
-  ResourceId,
-  ResourceType,
-  SchemaKey,
-} from "./domain/brand.ts";
+import type { ActionType, OrganizationId, RelationName } from "./domain/brand.ts";
 import type { ResourceRef } from "./domain/action.ts";
 
 /**
@@ -23,37 +15,39 @@ import type { ResourceRef } from "./domain/action.ts";
  * bootstrap-only (IaC / version-controlled) and is never a Managed
  * Relationship, so no console action can widen console privileges.
  */
-export const AUTHORIZATION_ADMIN_OBJECT_TYPE = "authorization_admin";
-export const AUTHORIZATION_ADMIN_ROOT_ID = "root";
+export const AUTHORIZATION_ADMIN_OBJECT_TYPE = brandLiteral("ResourceType", "authorization_admin");
+export const AUTHORIZATION_ADMIN_ROOT_ID = brandLiteral("ResourceId", "root");
 export const AUTHORIZATION_ADMIN_ROOT_OBJECT = `${AUTHORIZATION_ADMIN_OBJECT_TYPE}:${AUTHORIZATION_ADMIN_ROOT_ID}`;
 
 export const AUTHORIZATION_ADMIN_RELATIONS = {
-  viewer: "viewer" as RelationName,
-  editor: "editor" as RelationName,
+  viewer: brandLiteral("RelationName", "viewer"),
+  editor: brandLiteral("RelationName", "editor"),
 } as const;
 
 export type AuthorizationAdminPermission = keyof typeof AUTHORIZATION_ADMIN_RELATIONS;
 
 export const AUTHORIZATION_ADMIN_RESOURCE: ResourceRef = {
-  type: AUTHORIZATION_ADMIN_OBJECT_TYPE as ResourceType,
-  id: AUTHORIZATION_ADMIN_ROOT_ID as ResourceId,
+  type: AUTHORIZATION_ADMIN_OBJECT_TYPE,
+  id: AUTHORIZATION_ADMIN_ROOT_ID,
 };
 
 export const AUTHORIZATION_ACTION_TYPES = {
-  relationshipUpdate: "authorization.relationship.update" as ActionType,
+  relationshipUpdate: brandLiteral("ActionType", "authorization.relationship.update"),
 } as const;
 
-export const AUTHORIZATION_EXECUTOR_KEY = "authorization" as ExecutorKey;
+export const AUTHORIZATION_EXECUTOR_KEY = brandLiteral("ExecutorKey", "authorization");
 
-export const AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY =
-  "authorization:relationship-update" as SchemaKey;
+export const AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY = brandLiteral(
+  "SchemaKey",
+  "authorization:relationship-update",
+);
 
 /**
  * Bootstrap-installed Action Definition for governed relationship mutation.
  * One ActionRequest carries exactly one tuple mutation (v1).
  */
 export const AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION: ActionDefinition = {
-  key: "authorization:relationship-update" as ActionDefinitionKey,
+  key: brandLiteral("ActionDefinitionKey", "authorization:relationship-update"),
   version: 1,
   actionType: AUTHORIZATION_ACTION_TYPES.relationshipUpdate,
   inputSchema: { key: AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY, version: 1 },

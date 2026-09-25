@@ -300,8 +300,8 @@ describe("Relationships presentation (AC-M9-004 / AC-M9-005)", () => {
     relationshipStatus?: string,
   ): ActionRequestView {
     return {
-      id: "action:1",
-      organizationId: "organization:staging",
+      id: "action:1" as never,
+      organizationId: "organization:staging" as never,
       actor: { type: "user", id: "user:editor" as never },
       authorityPrincipal: { type: "user", id: "user:editor" as never },
       action: {} as never,

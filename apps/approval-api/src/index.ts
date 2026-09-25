@@ -10,7 +10,8 @@ import {
 } from "@app/approval-application";
 import {
   ConsoleTelemetrySink,
-  type ActionRequestId,
+  newIdentifier,
+  parseBrand,
   type OrganizationId,
 } from "@app/approval-core";
 import {
@@ -80,8 +81,10 @@ type ApprovalApiEnv = ActionWorkflowEnv & {
   OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
 };
 
-function stagingOrganizationId(env: ApprovalApiEnv): OrganizationId {
-  return env.AUTH0_ORGANIZATION_ID as OrganizationId;
+/** deploymentが担当するorganization（env）をsmart constructorで検証する。不正ならnull。 */
+function deploymentOrganizationId(env: ApprovalApiEnv): OrganizationId | null {
+  const parsed = parseBrand("OrganizationId", env.AUTH0_ORGANIZATION_ID);
+  return Result.isSuccess(parsed) ? parsed.value : null;
 }
 
 function decisionProcessor(env: ApprovalApiEnv): ApprovalDecisionCommandProcessor {
@@ -107,7 +110,7 @@ async function sweepPendingDecisions(
   let failedCode: string | undefined;
   for (const record of pending.value) {
     const processed = await processor.process({
-      organizationId: record.command.organizationId as OrganizationId,
+      organizationId: record.command.organizationId,
       commandId: record.command.id,
       now,
     });
@@ -118,12 +121,16 @@ async function sweepPendingDecisions(
     : Result.succeed({ processed: pending.value.length });
 }
 
-function buildApi(input: { env: ApprovalApiEnv; authorizerBinding: ActionServiceBinding }): {
+function buildApi(input: {
+  env: ApprovalApiEnv;
+  authorizerBinding: ActionServiceBinding;
+  organizationId: OrganizationId;
+}): {
   fetch(request: Request): Promise<Response>;
 } {
   const env = input.env;
   const telemetry = new ConsoleTelemetrySink();
-  const organizationId = stagingOrganizationId(env);
+  const organizationId = input.organizationId;
   const membership = readAuth0OrganizationMembership(env);
   const identity = new Auth0IdentityProvider({
     domain: env.AUTH0_DOMAIN,
@@ -143,7 +150,7 @@ function buildApi(input: { env: ApprovalApiEnv; authorizerBinding: ActionService
     authorizer,
     executor: createActionExecutorRegistry(env),
     workflowStarter: new CloudflareActionWorkflowStarter(env.ACTION_WORKFLOW),
-    idGenerator: { next: () => `action:${crypto.randomUUID()}` as ActionRequestId },
+    idGenerator: { next: () => newIdentifier("ActionRequestId", "action") },
   });
   const rateLimiter = new D1FixedWindowRateLimiter(env.DB);
   const actionRequestApi = createActionRequestHttpApi({
@@ -223,9 +230,9 @@ async function reconcileRelationships(
 ): Result.ResultAsync<{ reconciled: number }, { code: string }> {
   const coordinator = relationshipCoordinator(env);
   if (!coordinator) return Result.succeed({ reconciled: 0 });
-  const reconciled = await coordinator.reconcilePending({
-    organizationId: stagingOrganizationId(env),
-  });
+  const organizationId = deploymentOrganizationId(env);
+  if (!organizationId) return Result.fail({ code: "invalid_organization_id" });
+  const reconciled = await coordinator.reconcilePending({ organizationId });
   if (Result.isFailure(reconciled)) return reconciled;
   return Result.succeed({ reconciled: reconciled.value.reconciled });
 }
@@ -241,7 +248,11 @@ export default {
           { status: 500 },
         );
       }
-      return buildApi({ env, authorizerBinding }).fetch(request);
+      const organizationId = deploymentOrganizationId(env);
+      if (!organizationId) {
+        return Response.json({ error: "AUTH0_ORGANIZATION_IDが不正です" }, { status: 500 });
+      }
+      return buildApi({ env, authorizerBinding, organizationId }).fetch(request);
     } catch (error) {
       // 例外messageは応答に含めない（#93）。
       console.error("approval api unhandled error", {

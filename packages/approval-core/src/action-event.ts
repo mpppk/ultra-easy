@@ -45,6 +45,8 @@ export type ActionEvent =
       caller?: PrincipalRef;
       delegationChain?: DelegationHop[];
       actionFingerprint: ActionFingerprint;
+      /** 呼び出し元が監査相関のために渡した任意の参照値（HTTPの`clientReference`）。 */
+      clientReference?: string;
     }
   | {
       type: "action.authorized";
@@ -243,6 +245,7 @@ export function actionEventRecord(input: {
 export function actionPlanAuditEvents(input: {
   plan: MaterializedApprovalPlan;
   authorizationEvidence?: AuthorizationEvidence;
+  clientReference?: string;
 }): ActionEventRecord[] {
   const { plan } = input;
   const occurredAt = plan.evaluationSnapshot.evaluatedAt;
@@ -258,6 +261,7 @@ export function actionPlanAuditEvents(input: {
       ? { delegationChain: plan.evaluationSnapshot.authority.delegation.chain }
       : {}),
     actionFingerprint: plan.actionFingerprint,
+    ...(input.clientReference !== undefined ? { clientReference: input.clientReference } : {}),
   };
   const materialized: ActionEvent = {
     type: "approval_plan.materialized",

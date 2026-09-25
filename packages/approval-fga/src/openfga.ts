@@ -1,5 +1,6 @@
 import { Result } from "@praha/byethrow";
 import { ErrorFactory } from "@praha/error-factory";
+import { brandLiteral, parseBrand } from "@app/approval-core";
 
 import type { FgaAccessTokenSupplier } from "./token-provider.ts";
 
@@ -225,7 +226,8 @@ export class OpenFgaClient {
     if (!this.actionRequestId && (operation === "check" || operation === "list_users")) return;
     const correlation = actionCorrelation({
       organizationId: this.organizationId,
-      actionRequestId: this.actionRequestId ?? ("action:authorization-admin" as ActionRequestId),
+      actionRequestId:
+        this.actionRequestId ?? brandLiteral("ActionRequestId", "action:authorization-admin"),
       component: "fga",
       operation,
     });
@@ -528,7 +530,9 @@ export class OpenFgaClient {
         "id" in user.object &&
         typeof user.object.id === "string"
       ) {
-        userIds.push(normalizeTypedRef("user", user.object.id) as UserId);
+        const userId = parseBrand("UserId", normalizeTypedRef("user", user.object.id));
+        if (Result.isSuccess(userId)) userIds.push(userId.value);
+        else concreteUsersOnly = false;
       } else {
         concreteUsersOnly = false;
       }

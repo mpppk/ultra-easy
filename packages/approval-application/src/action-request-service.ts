@@ -66,8 +66,8 @@ export type TrustedActionRequestContext = {
 export type ActionRequestPublicStatus = ActionRequestStatus;
 
 export type ActionRequestView = {
-  id: string;
-  organizationId: string;
+  id: ActionRequestId;
+  organizationId: OrganizationId;
   actor: PrincipalRef;
   authorityPrincipal: PrincipalRef;
   caller?: PrincipalRef;
@@ -148,6 +148,8 @@ export type PreparedActionRequest = {
   /** prepared planのflowがnone以外か。admission判断用で、callerに委ねない。 */
   approvalRequired: boolean;
   preparedAt: string;
+  /** 呼び出し元の参照値。`action.received`の監査イベントに残す（#103）。 */
+  clientReference?: string;
 };
 
 export type ActionRequestPreparation =
@@ -344,8 +346,8 @@ function requestView(input: {
     { approvalRequired },
   );
   return {
-    id: String(input.plan.actionRequestId),
-    organizationId: String(input.plan.organizationId),
+    id: input.plan.actionRequestId,
+    organizationId: input.plan.organizationId,
     actor: input.request.actor,
     authorityPrincipal: input.request.authority.principal,
     ...(input.request.origin.caller ? { caller: input.request.origin.caller } : {}),
@@ -539,6 +541,7 @@ export class ActionRequestApplicationService {
   async prepare(input: {
     action: Action;
     trustedContext: TrustedActionRequestContext;
+    clientReference?: string;
   }): Result.ResultAsync<ActionRequestPreparation, ActionRequestApplicationError> {
     const evaluated = await this.evaluate(input);
     if (Result.isFailure(evaluated)) return evaluated;
@@ -560,6 +563,7 @@ export class ActionRequestApplicationService {
         authorizationEvidence,
         approvalRequired: plan.flow.type !== "none",
         preparedAt: input.trustedContext.now,
+        ...(input.clientReference !== undefined ? { clientReference: input.clientReference } : {}),
       },
     });
   }
@@ -612,6 +616,9 @@ export class ActionRequestApplicationService {
     const initialEvents = actionPlanAuditEvents({
       plan,
       authorizationEvidence: preparation.prepared.authorizationEvidence,
+      ...(preparation.prepared.clientReference !== undefined
+        ? { clientReference: preparation.prepared.clientReference }
+        : {}),
     });
     const initialAudit = await appendAudit(this.dependencies.eventRepository, initialEvents);
     if (Result.isFailure(initialAudit)) return initialAudit;
@@ -638,15 +645,19 @@ export class ActionRequestApplicationService {
     return this.executeImmediately({ actionRequestId, request, plan, now, initialEvents });
   }
 
+  /**
+   * 1回で評価・commitする。重複submitの防止はtransportの責務（HTTPは`Idempotency-Key`、
+   * MCPはinvocation record）で、このserviceはidempotency keyを受け取らない（#103）。
+   */
   async submit(input: {
     action: Action;
     trustedContext: TrustedActionRequestContext;
-    idempotencyKey?: string;
     clientReference?: string;
   }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
     const prepared = await this.prepare({
       action: input.action,
       trustedContext: input.trustedContext,
+      ...(input.clientReference !== undefined ? { clientReference: input.clientReference } : {}),
     });
     if (Result.isFailure(prepared)) return prepared;
     return this.commit({ preparation: prepared.value, now: input.trustedContext.now });

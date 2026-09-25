@@ -199,8 +199,9 @@ export class D1ActionResultProjectionRepository implements ActionResultRepositor
     }
 
     return Result.succeed({
-      organizationId: row.value.organization_id as OrganizationId,
-      actionRequestId: row.value.action_request_id as ActionRequestId,
+      // WHERE句のキーと同じ値。
+      organizationId: input.organizationId,
+      actionRequestId: input.actionRequestId,
       ...(row.value.workflow_instance_id !== SYNCHRONOUS_EXECUTION_INSTANCE_ID
         ? { workflowInstanceId: row.value.workflow_instance_id }
         : {}),

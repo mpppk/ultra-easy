@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { brandLiteral } from "@app/approval-core";
 
 import {
   actionCorrelation,
@@ -272,7 +273,7 @@ export async function notifyAlertTransition(input: {
   const telemetry = input.telemetry ?? new ConsoleTelemetrySink();
   const correlation = actionCorrelation({
     organizationId: input.organizationId,
-    actionRequestId: "action:operator-alert" as ActionRequestId,
+    actionRequestId: brandLiteral("ActionRequestId", "action:operator-alert"),
     component: "notification",
     operation: "alert.notify",
   });

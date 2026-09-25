@@ -1,4 +1,6 @@
 import { Result } from "@praha/byethrow";
+import { brandLiteral } from "./domain/brand.ts";
+import { parseBrand } from "./domain/brand.ts";
 
 import type { ActionDefinition } from "./action-definition.ts";
 import {
@@ -7,14 +9,7 @@ import {
   type ActionExecutionResult,
   type ActionExecutor,
 } from "./action-execution.ts";
-import type {
-  ActionDefinitionKey,
-  ActionRequestId,
-  ActionType,
-  ExecutorKey,
-  OrganizationId,
-  SchemaKey,
-} from "./domain/brand.ts";
+import type { ActionRequestId, OrganizationId } from "./domain/brand.ts";
 import type { ApprovalPolicyBinding, ApprovalPolicyDefinition } from "./domain/policy.ts";
 import type { PrincipalRef } from "./domain/principal.ts";
 import {
@@ -23,15 +18,13 @@ import {
 } from "./semantic-validator.ts";
 
 export const GOVERNANCE_ACTION_TYPES = {
-  actionDefinitionPublish: "action_definition.publish" as ActionType,
-  approvalPolicyPublish: "approval_policy.publish" as ActionType,
-  approvalPolicyBindingUpdate: "approval_policy_binding.update" as ActionType,
-  adminForceCancel: "admin.force_cancel" as ActionType,
+  actionDefinitionPublish: brandLiteral("ActionType", "action_definition.publish"),
+  approvalPolicyPublish: brandLiteral("ActionType", "approval_policy.publish"),
+  approvalPolicyBindingUpdate: brandLiteral("ActionType", "approval_policy_binding.update"),
+  adminForceCancel: brandLiteral("ActionType", "admin.force_cancel"),
 } as const;
 
-export const GOVERNANCE_EXECUTOR_KEY = "governance" as ExecutorKey;
-
-const schema = (key: string) => ({ key: key as SchemaKey, version: 1 });
+export const GOVERNANCE_EXECUTOR_KEY = brandLiteral("ExecutorKey", "governance");
 
 /**
  * Bootstrap installs these definitions once. Thereafter changes to the
@@ -39,31 +32,40 @@ const schema = (key: string) => ({ key: key as SchemaKey, version: 1 });
  */
 export const GOVERNANCE_ACTION_DEFINITIONS: readonly ActionDefinition[] = [
   {
-    key: "governance:action-definition-publish" as ActionDefinitionKey,
+    key: brandLiteral("ActionDefinitionKey", "governance:action-definition-publish"),
     version: 1,
     actionType: GOVERNANCE_ACTION_TYPES.actionDefinitionPublish,
-    inputSchema: schema("governance:action-definition-publish"),
+    inputSchema: {
+      key: brandLiteral("SchemaKey", "governance:action-definition-publish"),
+      version: 1,
+    },
     executorKey: GOVERNANCE_EXECUTOR_KEY,
   },
   {
-    key: "governance:approval-policy-publish" as ActionDefinitionKey,
+    key: brandLiteral("ActionDefinitionKey", "governance:approval-policy-publish"),
     version: 1,
     actionType: GOVERNANCE_ACTION_TYPES.approvalPolicyPublish,
-    inputSchema: schema("governance:approval-policy-publish"),
+    inputSchema: {
+      key: brandLiteral("SchemaKey", "governance:approval-policy-publish"),
+      version: 1,
+    },
     executorKey: GOVERNANCE_EXECUTOR_KEY,
   },
   {
-    key: "governance:approval-policy-binding-update" as ActionDefinitionKey,
+    key: brandLiteral("ActionDefinitionKey", "governance:approval-policy-binding-update"),
     version: 1,
     actionType: GOVERNANCE_ACTION_TYPES.approvalPolicyBindingUpdate,
-    inputSchema: schema("governance:approval-policy-binding-update"),
+    inputSchema: {
+      key: brandLiteral("SchemaKey", "governance:approval-policy-binding-update"),
+      version: 1,
+    },
     executorKey: GOVERNANCE_EXECUTOR_KEY,
   },
   {
-    key: "governance:admin-force-cancel" as ActionDefinitionKey,
+    key: brandLiteral("ActionDefinitionKey", "governance:admin-force-cancel"),
     version: 1,
     actionType: GOVERNANCE_ACTION_TYPES.adminForceCancel,
-    inputSchema: schema("governance:admin-force-cancel"),
+    inputSchema: { key: brandLiteral("SchemaKey", "governance:admin-force-cancel"), version: 1 },
     executorKey: GOVERNANCE_EXECUTOR_KEY,
   },
 ];
@@ -288,13 +290,14 @@ export class GovernanceActionExecutor implements ActionExecutor {
       case String(GOVERNANCE_ACTION_TYPES.adminForceCancel): {
         const target = input.targetActionRequestId;
         const reason = input.reason;
-        if (typeof target !== "string" || target.length === 0) {
+        const parsedTarget = parseBrand("ActionRequestId", target);
+        if (Result.isFailure(parsedTarget)) {
           return fail("force_cancel_target_required", "targetActionRequestIdは必須です");
         }
         if (typeof reason !== "string" || reason.trim().length === 0) {
           return fail("force_cancel_reason_required", "force cancelには理由が必要です");
         }
-        const targetActionRequestId = target as ActionRequestId;
+        const targetActionRequestId = parsedTarget.value;
         const cancelled = await this.cancellation.cancel({
           organizationId: request.organizationId,
           actionRequestId: targetActionRequestId,
@@ -313,7 +316,7 @@ export class GovernanceActionExecutor implements ActionExecutor {
         return Result.succeed({
           status: "succeeded",
           output: {
-            targetActionRequestId: target,
+            targetActionRequestId: String(targetActionRequestId),
             duplicate: cancelled.value.duplicate,
             postReviewRequired: true,
           },

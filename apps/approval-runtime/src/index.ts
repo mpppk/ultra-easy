@@ -9,6 +9,7 @@ import {
   GOVERNANCE_ACTION_TYPES,
   GovernanceActionExecutor,
   computeActionFingerprint,
+  parseBrand,
 } from "@app/approval-core";
 import type {
   ActionExecutionRequest,
@@ -17,11 +18,8 @@ import type {
   ActionExecutorError,
   ActionRequestId,
   ApprovalDecisionEvent,
-  ApprovalTaskId,
   MaterializedApprovalPlan,
   NotificationSink,
-  OrganizationId,
-  UserId,
 } from "@app/approval-core";
 import {
   D1ActionEventRepository,
@@ -243,11 +241,16 @@ async function sendDecision(
   ) {
     return json({ error: "invalid decision payload" }, { status: 400 });
   }
+  const parsedTaskId = parseBrand("ApprovalTaskId", taskId);
+  const parsedUserId = parseBrand("UserId", userId);
+  if (Result.isFailure(parsedTaskId) || Result.isFailure(parsedUserId)) {
+    return json({ error: "invalid decision payload" }, { status: 400 });
+  }
 
   const event: ApprovalDecisionEvent = {
     idempotencyKey: crypto.randomUUID(),
-    taskId: taskId as ApprovalTaskId,
-    userId: userId as UserId,
+    taskId: parsedTaskId.value,
+    userId: parsedUserId.value,
     decision,
     decidedAt: new Date().toISOString(),
   };
@@ -330,16 +333,22 @@ async function forceCancelRun(
     return json({ error: fingerprint.error.message }, { status: 500 });
   }
 
-  const sourceActionRequestId = `preview-force-cancel:${String(actionRequestId)}`;
+  const sourceActionRequestId = parseBrand(
+    "ActionRequestId",
+    `preview-force-cancel:${String(actionRequestId)}`,
+  );
+  if (Result.isFailure(sourceActionRequestId)) {
+    return json({ error: "invalid preview run id" }, { status: 400 });
+  }
   const executor = new GovernanceActionExecutor(
     new D1GovernanceRepository(env.DB),
     new CloudflareWorkflowCancellationControl(env.DB, env.ACTION_WORKFLOW),
   );
   const executed = await executor.execute({
     organizationId: PREVIEW_ORGANIZATION_ID,
-    actionRequestId: sourceActionRequestId as ActionRequestId,
+    actionRequestId: sourceActionRequestId.value,
     actionFingerprint: fingerprint.value,
-    idempotencyKey: sourceActionRequestId,
+    idempotencyKey: sourceActionRequestId.value,
     action: governanceAction,
     authorizationEvidence: {
       evaluatedAt: new Date().toISOString(),
@@ -374,7 +383,7 @@ async function forceCancelRun(
   }
   const audit = await new D1GovernanceRepository(env.DB).loadForceCancelAudit({
     organizationId: PREVIEW_ORGANIZATION_ID,
-    sourceActionRequestId,
+    sourceActionRequestId: sourceActionRequestId.value,
   });
   if (Result.isFailure(audit)) {
     return json({ error: audit.error.message }, { status: 500 });
@@ -390,7 +399,7 @@ async function forceCancelRun(
   return json(
     {
       actionRequestId,
-      sourceActionRequestId,
+      sourceActionRequestId: sourceActionRequestId.value,
       initialStatus: initialProjection.value.status,
       initialLatestEvent: initialLatestEvent
         ? { type: initialLatestEvent.event.type, occurredAt: initialLatestEvent.occurredAt }
@@ -408,10 +417,11 @@ async function forceCancelRun(
 /** Operator dashboard snapshot。organization filter必須、未指定はpreview組織。 */
 async function getOperatorDashboard(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
   const raw = new URL(request.url).searchParams.get("organizationId")?.trim();
-  if (raw !== undefined && raw.length === 0) {
+  const parsed = raw === undefined ? null : parseBrand("OrganizationId", raw);
+  if (parsed && Result.isFailure(parsed)) {
     return json({ error: "organizationId must not be empty" }, { status: 400 });
   }
-  const organizationId = (raw ?? PREVIEW_ORGANIZATION_ID) as OrganizationId;
+  const organizationId = parsed ? parsed.value : PREVIEW_ORGANIZATION_ID;
   const view = await loadOperatorDashboardView(env.DB, {
     organizationId,
     thresholds: readOperatorAlertThresholds(env),
@@ -422,14 +432,15 @@ async function getOperatorDashboard(request: Request, env: PreviewRuntimeEnv): P
   return json(view.value, { status: 200 });
 }
 
-/** 1つのcaptureをdecodeする。不一致はnull、不正なpercent-encodingは400。 */
-function pathParameter(pattern: RegExp, url: URL): string | null | Response {
+/** ActionRequest IDの1 captureをdecode + 検証する。不一致はnull、不正な値は400。 */
+function pathParameter(pattern: RegExp, url: URL): ActionRequestId | null | Response {
   const match = pattern.exec(url.pathname);
   if (!match?.[1]) return null;
   const decoded = decodeUriComponent(match[1]);
-  return Result.isFailure(decoded)
+  const parsed = Result.isFailure(decoded) ? decoded : parseBrand("ActionRequestId", decoded.value);
+  return Result.isFailure(parsed)
     ? json({ error: "invalid path parameter", code: "invalid_path_parameter" }, { status: 400 })
-    : decoded.value;
+    : parsed.value;
 }
 
 async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
@@ -441,13 +452,13 @@ async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response
   const decisionMatch = pathParameter(/^\/preview\/approval-runs\/([^/]+)\/decisions$/, url);
   if (decisionMatch instanceof Response) return decisionMatch;
   if (request.method === "POST" && decisionMatch) {
-    return sendDecision(request, decisionMatch as ActionRequestId, env);
+    return sendDecision(request, decisionMatch, env);
   }
 
   const forceCancelMatch = pathParameter(/^\/preview\/approval-runs\/([^/]+)\/force-cancel$/, url);
   if (forceCancelMatch instanceof Response) return forceCancelMatch;
   if (request.method === "POST" && forceCancelMatch) {
-    return forceCancelRun(request, forceCancelMatch as ActionRequestId, env);
+    return forceCancelRun(request, forceCancelMatch, env);
   }
 
   if (request.method === "GET" && url.pathname === "/operator/dashboard") {
@@ -457,7 +468,7 @@ async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response
   const statusMatch = pathParameter(/^\/preview\/approval-runs\/([^/]+)$/, url);
   if (statusMatch instanceof Response) return statusMatch;
   if (request.method === "GET" && statusMatch) {
-    return getRun(statusMatch as ActionRequestId, env);
+    return getRun(statusMatch, env);
   }
 
   return new Response("Not Found", { status: 404 });

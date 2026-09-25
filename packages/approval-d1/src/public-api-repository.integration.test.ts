@@ -318,9 +318,9 @@ describe("D1PublicApiRepository", () => {
     const created = await repository.createPending({
       command: {
         id: "command:m6-d1",
-        organizationId: String(organizationId),
-        actionRequestId: "action-request:m6-d1",
-        taskId: String(taskId),
+        organizationId,
+        actionRequestId: "action-request:m6-d1" as ActionRequestId,
+        taskId,
         type: "approve",
         status: "pending",
         createdAt: "2026-09-19T00:00:02.000Z",
@@ -392,15 +392,15 @@ describe("D1PublicApiRepository", () => {
     const db = database();
     const repository = new D1PublicApiRepository(db);
     for (const [id, org] of [
-      ["command:quiet-org", "organization:quiet"],
-      ["command:busy-org", String(organizationId)],
+      ["command:quiet-org", "organization:quiet" as OrganizationId],
+      ["command:busy-org", organizationId],
     ] as const) {
       const created = await repository.createPending({
         command: {
           id,
           organizationId: org,
-          actionRequestId: "action-request:m6-d1",
-          taskId: String(taskId),
+          actionRequestId: "action-request:m6-d1" as ActionRequestId,
+          taskId,
           type: "approve",
           status: "pending",
           createdAt:
@@ -597,9 +597,9 @@ describe("D1PublicApiRepository", () => {
     const command = await repository.createPending({
       command: {
         id: "command:tenant-boundary",
-        organizationId: String(organizationId),
-        actionRequestId: String(plan.actionRequestId),
-        taskId: String(taskId),
+        organizationId,
+        actionRequestId: plan.actionRequestId,
+        taskId,
         type: "approve",
         status: "pending",
         createdAt: "2026-09-19T00:00:02.000Z",

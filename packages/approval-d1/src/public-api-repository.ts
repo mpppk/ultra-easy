@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { storedBrand } from "./stored-brand.ts";
 
 import type {
   ActionRequestView,
@@ -57,7 +58,7 @@ type CommandRow = {
   organization_id: string;
   action_request_id: string;
   task_id: string | null;
-  command_type: "approve" | "reject" | "cancel";
+  command_type: "approve" | "reject";
   status: ApprovalCommandStatus;
   actor_user_id: string | null;
   comment: string | null;
@@ -85,6 +86,10 @@ type IdempotencyRow = {
   created_at: string;
   updated_at: string;
 };
+
+function rowError(message: string): PublicApiRepositoryError {
+  return new PublicApiRepositoryError("public_api_row_invalid", false, message);
+}
 
 function repositoryError(error: unknown, fallback: string): PublicApiRepositoryError {
   return new PublicApiRepositoryError(
@@ -183,19 +188,35 @@ function commandRecord(
     if (Result.isFailure(parsed)) return parsed;
     error = parsed.value as ApprovalCommandRecord["command"]["error"];
   }
+  const organizationId = storedBrand("OrganizationId", row.organization_id, rowError);
+  if (Result.isFailure(organizationId)) return organizationId;
+  const actionRequestId = storedBrand("ActionRequestId", row.action_request_id, rowError);
+  if (Result.isFailure(actionRequestId)) return actionRequestId;
+  let taskId: ApprovalTaskId | undefined;
+  if (row.task_id !== null) {
+    const parsed = storedBrand("ApprovalTaskId", row.task_id, rowError);
+    if (Result.isFailure(parsed)) return parsed;
+    taskId = parsed.value;
+  }
+  let actorUserId: UserId | undefined;
+  if (row.actor_user_id !== null) {
+    const parsed = storedBrand("UserId", row.actor_user_id, rowError);
+    if (Result.isFailure(parsed)) return parsed;
+    actorUserId = parsed.value;
+  }
   return Result.succeed({
     command: {
       id: row.command_id,
-      organizationId: row.organization_id,
-      actionRequestId: row.action_request_id,
-      ...(row.task_id !== null ? { taskId: row.task_id } : {}),
+      organizationId: organizationId.value,
+      actionRequestId: actionRequestId.value,
+      ...(taskId !== undefined ? { taskId } : {}),
       type: row.command_type,
       status: row.status,
       ...(error !== undefined ? { error } : {}),
       createdAt: row.created_at,
       ...(row.applied_at !== null ? { appliedAt: row.applied_at } : {}),
     },
-    ...(row.actor_user_id !== null ? { actorUserId: row.actor_user_id as UserId } : {}),
+    ...(actorUserId !== undefined ? { actorUserId } : {}),
     ...(row.comment !== null ? { comment: row.comment } : {}),
     ...(row.attempt_count ? { attemptCount: row.attempt_count } : {}),
     ...(row.next_attempt_at !== null ? { nextAttemptAt: row.next_attempt_at } : {}),
@@ -211,8 +232,10 @@ function idempotencyRecord(
     if (Result.isFailure(parsed)) return parsed;
     responseBody = parsed.value as IdempotencyRecord["responseBody"];
   }
+  const organizationId = storedBrand("OrganizationId", row.organization_id, rowError);
+  if (Result.isFailure(organizationId)) return organizationId;
   return Result.succeed({
-    organizationId: row.organization_id as OrganizationId,
+    organizationId: organizationId.value,
     operation: row.operation,
     key: row.idempotency_key,
     requestHash: row.request_hash,
@@ -296,8 +319,8 @@ export class D1PublicApiRepository
       : undefined;
 
     return Result.succeed({
-      id: String(plan.plan.actionRequestId),
-      organizationId: String(plan.plan.organizationId),
+      id: plan.plan.actionRequestId,
+      organizationId: plan.plan.organizationId,
       actor: plan.plan.evaluationSnapshot.actor,
       authorityPrincipal: plan.plan.evaluationSnapshot.authority.principal,
       ...(plan.plan.evaluationSnapshot.origin.caller
@@ -340,12 +363,16 @@ export class D1PublicApiRepository
     /** 1回の一覧取得の中でPlanのload + checksum再検証を使い回す（#95 N+1）。 */
     planCache?: Map<string, Awaited<ReturnType<D1MaterializedPlanRepository["load"]>>>;
   }): Result.ResultAsync<ApprovalTaskView, PublicApiRepositoryError> {
+    const taskId = storedBrand("ApprovalTaskId", input.row.task_id, rowError);
+    if (Result.isFailure(taskId)) return taskId;
+    const actionRequestId = storedBrand("ActionRequestId", input.row.action_request_id, rowError);
+    if (Result.isFailure(actionRequestId)) return actionRequestId;
     const cached = input.planCache?.get(input.row.action_request_id);
     const loaded =
       cached ??
       (await this.plans.load({
         organizationId: input.organizationId,
-        actionRequestId: input.row.action_request_id as ActionRequestId,
+        actionRequestId: actionRequestId.value,
       }));
     input.planCache?.set(input.row.action_request_id, loaded);
     if (loaded.type !== "found") {
@@ -386,8 +413,8 @@ export class D1PublicApiRepository
           };
 
     return Result.succeed({
-      id: input.row.task_id,
-      actionRequestId: input.row.action_request_id,
+      id: taskId.value,
+      actionRequestId: actionRequestId.value,
       materializedStepId: input.row.materialized_step_id,
       stepKey: String(step.stepKey),
       ...(step.name !== undefined ? { name: step.name } : {}),
@@ -482,7 +509,7 @@ export class D1PublicApiRepository
 
     const loaded = await this.plans.load({
       organizationId: input.organizationId,
-      actionRequestId: row.value.action_request_id as ActionRequestId,
+      actionRequestId: task.value.actionRequestId,
     });
     if (loaded.type !== "found") {
       return Result.fail(
@@ -684,7 +711,7 @@ export class D1PublicApiRepository
     if ((inserted.value.meta?.changes ?? 0) > 0) return Result.succeed({ type: "created" });
 
     const existing = await this.load({
-      organizationId: record.command.organizationId as OrganizationId,
+      organizationId: record.command.organizationId,
       commandId: record.command.id,
     });
     if (Result.isFailure(existing)) return existing;

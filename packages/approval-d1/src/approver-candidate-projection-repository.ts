@@ -1,11 +1,11 @@
 import { Result } from "@praha/byethrow";
+import { storedBrand, storedBrands } from "./stored-brand.ts";
 
 import { ApproverCandidateProjectionRepositoryError } from "@app/approval-core";
 import type {
   ApprovalTaskCandidateProjection,
   ApprovalTaskId,
   ApproverCandidateProjectionRepository,
-  MaterializedStepId,
   OrganizationId,
   UserId,
 } from "@app/approval-core";
@@ -129,18 +129,23 @@ export class D1ApproverCandidateProjectionRepository implements ApproverCandidat
 
     const candidateIds = parseCandidateIds(row.value.candidate_user_ids);
     if (Result.isFailure(candidateIds)) return candidateIds;
-    if (
-      !Array.isArray(candidateIds.value) ||
-      candidateIds.value.some((userId) => typeof userId !== "string")
-    ) {
+    if (!Array.isArray(candidateIds.value)) {
       return Result.fail(repositoryError("保存済みcandidate user IDsの形式が不正です"));
     }
+    const candidateUserIds = storedBrands("UserId", candidateIds.value, repositoryError);
+    if (Result.isFailure(candidateUserIds)) return candidateUserIds;
+    const materializedStepId = storedBrand(
+      "MaterializedStepId",
+      row.value.materialized_step_id,
+      repositoryError,
+    );
+    if (Result.isFailure(materializedStepId)) return materializedStepId;
 
     return Result.succeed({
-      organizationId: row.value.organization_id as OrganizationId,
-      approvalTaskId: row.value.approval_task_id as ApprovalTaskId,
-      materializedStepId: row.value.materialized_step_id as MaterializedStepId,
-      candidateUserIds: candidateIds.value as UserId[],
+      organizationId: input.organizationId,
+      approvalTaskId: input.approvalTaskId,
+      materializedStepId: materializedStepId.value,
+      candidateUserIds: candidateUserIds.value,
       complete: row.value.complete === 1,
       resolvedAt: row.value.resolved_at,
       ...(row.value.source_revision ? { sourceRevision: row.value.source_revision } : {}),

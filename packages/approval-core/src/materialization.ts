@@ -1,4 +1,10 @@
 import { Result } from "@praha/byethrow";
+import {
+  authorizationObjectRefOf,
+  derivedIdentifier,
+  digestAs,
+  parseBrand,
+} from "./domain/brand.ts";
 
 import type { ActionDefinition } from "./action-definition.ts";
 import { sha256CanonicalJson } from "./canonical-json.ts";
@@ -418,8 +424,7 @@ function resolvePrincipalExpression(
 }
 
 function asAuthorizationObjectRef(type: string, id: string): AuthorizationObjectRef {
-  const prefix = `${type}:`;
-  return (id.startsWith(prefix) ? id : `${prefix}${id}`) as AuthorizationObjectRef;
+  return authorizationObjectRefOf(type, id);
 }
 
 function principalObjectRef(principal: PrincipalRef): AuthorizationObjectRef {
@@ -449,15 +454,16 @@ function resolveApproverTarget(
   if (approver.type === "user") {
     const userId = resolveValueExpression(approver.userId, context);
     if (Result.isFailure(userId)) return userId;
-    if (typeof userId.value !== "string") {
+    const parsedUserId = parseBrand("UserId", userId.value);
+    if (Result.isFailure(parsedUserId)) {
       return failure(
         "invalid_expression_value",
-        "user approverのuserIdはstringである必要があります",
+        "user approverのuserIdは空でない文字列である必要があります",
       );
     }
     return Result.succeed({
       type: "user",
-      userId: userId.value as UserId,
+      userId: parsedUserId.value,
       sourceKind: "user",
     });
   }
@@ -523,9 +529,7 @@ export async function createMaterializedStepId(
     flowPath: source.flowPath,
   });
   if (Result.isFailure(digest)) return digest;
-  return Result.succeed(
-    `mstep:${String(digest.value).slice("sha256:".length)}` as MaterializedStepId,
-  );
+  return Result.succeed(derivedIdentifier("MaterializedStepId", "mstep", digest.value));
 }
 
 async function materializeFlow(
@@ -716,7 +720,7 @@ export async function computeActionFingerprint(
     input: action.input,
   });
   if (Result.isFailure(digest)) return digest;
-  return Result.succeed(digest.value as unknown as ActionFingerprint);
+  return Result.succeed(digestAs("ActionFingerprint", digest.value));
 }
 
 export async function computeEvaluationSnapshotChecksum(
@@ -724,7 +728,7 @@ export async function computeEvaluationSnapshotChecksum(
 ): Result.ResultAsync<EvaluationSnapshotChecksum, MaterializationFailure> {
   const digest = await hashValue(snapshot);
   if (Result.isFailure(digest)) return digest;
-  return Result.succeed(digest.value as unknown as EvaluationSnapshotChecksum);
+  return Result.succeed(digestAs("EvaluationSnapshotChecksum", digest.value));
 }
 
 export async function computeApprovalPlanChecksum(input: {
@@ -734,7 +738,7 @@ export async function computeApprovalPlanChecksum(input: {
 }): Result.ResultAsync<ApprovalPlanChecksum, MaterializationFailure> {
   const digest = await hashValue(input);
   if (Result.isFailure(digest)) return digest;
-  return Result.succeed(digest.value as unknown as ApprovalPlanChecksum);
+  return Result.succeed(digestAs("ApprovalPlanChecksum", digest.value));
 }
 
 export async function computeApprovalBindingFingerprint(input: {
@@ -744,7 +748,7 @@ export async function computeApprovalBindingFingerprint(input: {
 }): Result.ResultAsync<ApprovalBindingFingerprint, MaterializationFailure> {
   const digest = await hashValue(input);
   if (Result.isFailure(digest)) return digest;
-  return Result.succeed(digest.value as unknown as ApprovalBindingFingerprint);
+  return Result.succeed(digestAs("ApprovalBindingFingerprint", digest.value));
 }
 
 export async function materializeApprovalPlan(input: {
@@ -1004,7 +1008,7 @@ export async function createSnapshotApproverCohort(input: {
   return {
     type: "materialized",
     cohort: {
-      id: `cohort:${String(digest.value).slice("sha256:".length)}` as SnapshotApproverCohortId,
+      id: derivedIdentifier("SnapshotApproverCohortId", "cohort", digest.value),
       materializedStepId: input.step.materializedStepId,
       candidateUserIds,
       resolvedAt: input.resolvedAt,

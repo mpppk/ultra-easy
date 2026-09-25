@@ -4,6 +4,7 @@ import {
   type RelationName,
   type ResourceRef,
 } from "@app/approval-core";
+import { brandLiteral } from "@app/approval-core";
 
 /**
  * Action → FGA relation map for this deployment. Shared by the
@@ -17,7 +18,7 @@ export function stagingActionRelation(action: {
 }): RelationName | null {
   // ticket.escalate is a staging fixture for parallel (any/all/quorum) approval flows.
   if (String(action.type) === "ticket.update" || String(action.type) === "ticket.escalate") {
-    return "can_execute" as RelationName;
+    return brandLiteral("RelationName", "can_execute");
   }
   return authorizationAdminActionRelation({ actionType: action.type, resource: action.resource });
 }
