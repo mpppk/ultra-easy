@@ -191,6 +191,36 @@ The exact thresholds are deployment-configurable. The baseline alert set is:
 
 Alerts should link operators to the Action correlation search and the M7 runbooks.
 
+### Implementation (#109)
+
+All alerts are evaluated every minute by the runtime cron (`evaluateRecentOrganizationAlerts`)
+and persisted in `operator_alert_states`; Slack alert text includes the runbook
+(`OPERATOR_ALERT_RUNBOOKS`).
+
+| Alert key                      | Signal source                                                                | Fires when                  |
+| ------------------------------ | ---------------------------------------------------------------------------- | --------------------------- |
+| `outbox_backlog`               | D1 outbox health                                                             | backlog > 100 for 10 min    |
+| `outbox_failures_increasing`   | D1 outbox health                                                             | failures increase for 5 min |
+| `executor_failures_increasing` | D1 `action_events`                                                           | failures increase for 5 min |
+| `approval_dwell_p95`           | D1 `action_events`                                                           | p95 > SLA (when configured) |
+| `workflow_failures`            | D1 `workflow.failed` events in the last 5 min                                | ≥ 1 (immediately)           |
+| `stuck_action_requests`        | D1 non-terminal projections idle ≥ 15 min without a result × Workflow status | ≥ 1 (immediately)           |
+| `fga_error_rate`               | Analytics Engine (`fga.error_total` / FGA call metrics, 5-min window)        | > 1% for 5 min              |
+| `fga_latency_p95`              | Analytics Engine (`fga.check_latency_ms` p95, 5-min window)                  | > 1 s for 10 min            |
+
+- **Stuck detection:** a projection in `pending` / `approved` that has not changed for
+  `OPERATOR_ALERT_STUCK_AFTER_MINUTES` (default 15) and has no `action_results` row is a
+  candidate (oldest 20 per organization). It is stuck when its Workflow instance is `complete`,
+  `errored`, `terminated`, or cannot be found (e.g. #79: the Workflow never started). A
+  Workflow still `waiting` for a decision is healthy. Each stuck request emits an `action.stuck`
+  log correlated by `actionRequestId` → `docs/runbooks/stuck-action-request.md`.
+- **FGA alerts** need the Analytics Engine SQL API: vars `ANALYTICS_ENGINE_ACCOUNT_ID` /
+  `TELEMETRY_DATASET` (in `wrangler.jsonc`) and the secret `ANALYTICS_ENGINE_API_TOKEN`
+  (API token with _Account Analytics: Read_ only, `wrangler secret put`). Without the secret the
+  FGA alerts are not evaluated (stay `ok`); a failed SQL call emits `alert.signal_unavailable`.
+- Overrides: `OPERATOR_ALERT_FGA_ERROR_RATE` (0.01), `OPERATOR_ALERT_FGA_LATENCY_P95_MS` (1000),
+  `OPERATOR_ALERT_STUCK_AFTER_MINUTES` (15).
+
 ## Rate limiting / approval spam mitigation
 
 The limiter key is:

@@ -14,3 +14,4 @@ export * from "./operator-alert-state-repository.ts";
 export * from "./rate-limit-repository.ts";
 export * from "./action-request-persistence.ts";
 export * from "./retention.ts";
+export * from "./operator-signals.ts";

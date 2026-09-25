@@ -6,6 +6,7 @@ import {
   ConsoleTelemetrySink,
   metricRecord,
   NotificationSinkError,
+  OPERATOR_ALERT_RUNBOOKS,
   safeLogRecord,
   type ActionRequestId,
   type NotificationRequest,
@@ -95,7 +96,7 @@ export function formatSlackAlertText(input: {
 }): string {
   return truncateText(
     `[ultra-easy alert] ${input.alertKey}: ${input.from} -> ${input.to} ` +
-      `org=${String(input.organizationId)}`,
+      `org=${String(input.organizationId)} runbook=${OPERATOR_ALERT_RUNBOOKS[input.alertKey]}`,
   );
 }
 

@@ -19,6 +19,15 @@ Use this runbook when an ActionRequest remains pending longer than its operation
   Workflow detects the cancellation at its next projection write (CAS conflict) and finishes as
   `cancelled` without applying the decision or executing the action.
 
+## Detection (#109)
+
+The `stuck_action_requests` alert fires when the cron finds a non-terminal ActionRequest
+(`pending` / `approved`, idle ≥ 15 min, no `action_results`) whose Workflow instance is
+`complete`, `errored`, `terminated` or missing. Each one emits an `action.stuck` warn log with
+`correlation.actionRequestId` and `errorCode` = `workflow_<status>` (`workflow_unavailable` when
+the instance cannot be found). `workflow_failures` fires on any `workflow.failed` event (the
+Workflow recorded its own abnormal end). Start from those IDs below.
+
 ## 1. Identify the request
 
 Start from the alert/log correlation ID and establish the tenant first. Query the runtime projection and append-only events using the same organization scope.
