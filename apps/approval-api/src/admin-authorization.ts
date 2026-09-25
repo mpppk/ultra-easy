@@ -35,12 +35,12 @@ import {
   tenantScopedOpenFgaObject,
   type FgaAccessTokenSupplier,
 } from "@app/approval-fga";
-import { ConsoleTelemetrySink } from "@app/approval-core";
+import { telemetrySinkFromEnv, type TelemetryEnv } from "@app/approval-runtime-cloudflare";
 
 import type { Auth0IdentityProvider } from "./auth0-identity.ts";
 import { stagingActionRelation } from "./action-relations.ts";
 
-export type AdminAuthorizationEnv = {
+export type AdminAuthorizationEnv = TelemetryEnv & {
   DB: D1DatabaseLike;
   OPENFGA_API_URL?: string;
   OPENFGA_STORE_ID?: string;
@@ -72,7 +72,7 @@ function readClient(env: AdminAuthorizationEnv, organizationId: OrganizationId) 
     authorizationModelId: env.OPENFGA_AUTHORIZATION_MODEL_ID,
     organizationId,
     tokenSupplier: supplier,
-    telemetry: new ConsoleTelemetrySink(),
+    telemetry: telemetrySinkFromEnv(env),
   });
 }
 

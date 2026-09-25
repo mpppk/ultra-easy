@@ -25,8 +25,12 @@ authorization mechanism.
 
 ## Safe structured telemetry
 
-`TelemetrySink` accepts only `SafeLogRecord | MetricRecord`. Default Worker logging uses
-`ConsoleTelemetrySink`, which writes one JSON object per record.
+`TelemetrySink` accepts only `SafeLogRecord | MetricRecord`. Workers build their sink with
+`telemetrySinkFromEnv(env)` (`packages/approval-runtime-cloudflare`): `ConsoleTelemetrySink`
+(one JSON object per record, Workers Logs) always, plus `AnalyticsEngineTelemetrySink` when the
+`TELEMETRY_ANALYTICS` binding exists (see [Time-series store](#time-series-store-workers-analytics-engine)).
+Sinks are fanned out by `CompositeTelemetrySink`, which isolates a failing sink so telemetry
+never breaks a request or Workflow step.
 
 Allowed log attributes are deliberately small: status/result/error code/event type/step IDs,
 retry flags/counts, duration and queue depth. Do **not** add arbitrary objects to this contract.
@@ -75,6 +79,62 @@ so the dashboard and audit reconstruction use the same source of truth.
 - Dashboard API: `GET /operator/dashboard?organizationId=` (Worker),
   `GET /api/preview/operator-dashboard` + `/preview/operator-dashboard` (web).
 - Operations: `docs/runbooks/operator-dashboard.md`.
+
+## Time-series store (Workers Analytics Engine)
+
+Issue: #108. Metrics are written to Workers Analytics Engine so dashboards and alerts can use
+p95 / rates over time without recomputing from D1 or depending on log sampling/retention.
+
+| Worker                                | Binding               | Dataset                        |
+| ------------------------------------- | --------------------- | ------------------------------ |
+| `ultra-easy-approval-api`             | `TELEMETRY_ANALYTICS` | `ultra_easy_telemetry_staging` |
+| `ultra-easy-approval-runtime-preview` | `TELEMETRY_ANALYTICS` | `ultra_easy_telemetry_preview` |
+
+A production environment binds its own dataset (e.g. `ultra_easy_telemetry_production`).
+
+Data point layout (`analyticsEngineDataPoint`; append new blobs at the end only):
+
+| Column    | Content                                                                   |
+| --------- | ------------------------------------------------------------------------- |
+| `index1`  | `organizationId` (sampling key)                                           |
+| `blob1`   | metric name (`fga.check_latency_ms`, ...) or `log.<event>` for warn/error |
+| `blob2`   | component (`http`, `workflow`, `fga`, ...)                                |
+| `blob3`   | operation                                                                 |
+| `blob4`   | safe error code                                                           |
+| `blob5`   | unit (`count` / `milliseconds` / `items`)                                 |
+| `blob6`   | result / status                                                           |
+| `blob7`   | `actionRequestId` (correlation drill-down)                                |
+| `blob8`   | log level for `log.*` rows                                                |
+| `double1` | metric value (1 for `log.*` rows)                                         |
+
+`info` logs (domain events) are not written; their SLIs are already metrics.
+
+Query with the SQL API (`POST https://api.cloudflare.com/client/v4/accounts/<account>/analytics_engine/sql`,
+API token with _Account Analytics: Read_), or connect Grafana's Cloudflare/ClickHouse-compatible
+data source to the same endpoint. Always weight by `_sample_interval`:
+
+```sql
+-- FGA Check p95 latency and error count per organization, 5-minute buckets
+SELECT index1 AS organization_id,
+       toStartOfInterval(timestamp, INTERVAL '5' MINUTE) AS bucket,
+       quantileExactWeighted(0.95)(double1, _sample_interval) AS p95_ms
+FROM ultra_easy_telemetry_staging
+WHERE blob1 = 'fga.check_latency_ms' AND timestamp > NOW() - INTERVAL '1' DAY
+GROUP BY organization_id, bucket ORDER BY bucket;
+
+-- Workflow failures by error code (alert: > 0 over 5 minutes)
+SELECT blob4 AS error_code, SUM(_sample_interval * double1) AS failures
+FROM ultra_easy_telemetry_staging
+WHERE blob1 = 'workflow.failure_total' AND timestamp > NOW() - INTERVAL '5' MINUTE
+GROUP BY error_code;
+
+-- FGA error rate over 5 minutes (alert: > 1%)
+SELECT sumIf(_sample_interval * double1, blob1 = 'fga.error_total')
+       / sumIf(_sample_interval, blob1 = 'fga.check_latency_ms') AS error_rate
+FROM ultra_easy_telemetry_staging
+WHERE blob1 IN ('fga.error_total', 'fga.check_latency_ms')
+  AND timestamp > NOW() - INTERVAL '5' MINUTE;
+```
 
 ## Minimum operator dashboard
 

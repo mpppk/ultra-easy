@@ -17,6 +17,13 @@
     "OPENFGA_AUTHORIZATION_MODEL_ID": "01M38K1Q55CCNETS1V6XHJZJTB",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
   },
+  // #108: SLI / metricの時系列store（docs/observability.md「Time-series store」）。
+  "analytics_engine_datasets": [
+    {
+      "binding": "TELEMETRY_ANALYTICS",
+      "dataset": "ultra_easy_telemetry_preview",
+    },
+  ],
   "services": [
     {
       "binding": "ACTION_AUTHORIZER",

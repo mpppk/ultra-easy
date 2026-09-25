@@ -1,4 +1,3 @@
-import { ConsoleTelemetrySink } from "@app/approval-core";
 import {
   D1ActionEventRepository,
   D1ActionResultProjectionRepository,
@@ -8,6 +7,7 @@ import {
 } from "@app/approval-d1";
 import { fgaTokenSupplierFromEnv, OpenFgaApproverResolver, OpenFgaClient } from "@app/approval-fga";
 
+import { telemetrySinkFromEnv } from "./analytics-engine-telemetry.ts";
 import { ServiceBindingActionAuthorizer, ServiceBindingActionExecutor } from "./service-binding.ts";
 import { createActionWorkflow } from "./workflow.ts";
 import type { ActionWorkflowDependencies, ActionWorkflowEnv } from "./workflow-dependencies.ts";
@@ -22,7 +22,7 @@ export function cloudflareWorkflowDependencies(env: ActionWorkflowEnv): ActionWo
   const cached = dependencyCache.get(env);
   if (cached) return cached;
 
-  const telemetry = new ConsoleTelemetrySink();
+  const telemetry = telemetrySinkFromEnv(env);
   const tokenSupplier = fgaTokenSupplierFromEnv(env);
   const dependencies: ActionWorkflowDependencies = {
     plans: new D1MaterializedPlanRepository(env.DB),

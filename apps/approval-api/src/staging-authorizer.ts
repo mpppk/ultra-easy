@@ -8,7 +8,8 @@ import {
   OpenFgaClient,
   sharedFgaTokenProvider,
 } from "@app/approval-fga";
-import { ConsoleTelemetrySink, parseBrand } from "@app/approval-core";
+import { parseBrand } from "@app/approval-core";
+import { telemetrySinkFromEnv, type TelemetryEnv } from "@app/approval-runtime-cloudflare";
 
 import { stagingActionRelation } from "./action-relations.ts";
 
@@ -116,7 +117,7 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
         ...(actionRequestId
           ? {
               actionRequestId,
-              telemetry: new ConsoleTelemetrySink(),
+              telemetry: telemetrySinkFromEnv(this.env as TelemetryEnv),
             }
           : {}),
       }),

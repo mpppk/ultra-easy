@@ -8,3 +8,4 @@ export * from "./telemetry.ts";
 export * from "./operations.ts";
 export * from "./cloudflare-workflow.ts";
 export * from "./workflow-dependencies.ts";
+export * from "./analytics-engine-telemetry.ts";

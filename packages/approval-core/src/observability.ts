@@ -352,3 +352,24 @@ export class ConsoleTelemetrySink implements TelemetrySink {
     console.log(JSON.stringify(record));
   }
 }
+
+/**
+ * 複数のsinkへ同じrecordを出す。1つのsinkの失敗（binding障害等）が他のsinkや業務処理を
+ * 止めないよう、sinkごとに隔離する（telemetryはbest effort）。
+ */
+export class CompositeTelemetrySink implements TelemetrySink {
+  constructor(
+    private readonly sinks: readonly TelemetrySink[],
+    private readonly onSinkError: (error: unknown) => void = () => undefined,
+  ) {}
+
+  emit(record: TelemetryRecord): void {
+    for (const sink of this.sinks) {
+      try {
+        sink.emit(record);
+      } catch (error) {
+        this.onSinkError(error);
+      }
+    }
+  }
+}
