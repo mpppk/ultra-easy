@@ -338,6 +338,16 @@ export class D1ApprovalRuntimeProjectionRepository implements ApprovalRuntimePro
             task.closedAt ?? null,
             task.distinctScopeId ?? null,
           ),
+        // inbox用のcandidate索引（#95）。同じbatchで置き換え、approval_tasksと常に一致させる。
+        this.db
+          .prepare(`DELETE FROM approval_task_candidates WHERE organization_id = ? AND task_id = ?`)
+          .bind(input.organizationId, task.id),
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO approval_task_candidates (organization_id, user_id, task_id)
+             SELECT ?, value, ? FROM json_each(?) WHERE type = 'text'`,
+          )
+          .bind(input.organizationId, task.id, candidates.value),
       );
     }
     for (const event of input.events ?? []) {

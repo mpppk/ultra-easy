@@ -98,6 +98,7 @@ function createRepositories() {
     "0007_action_events.sql",
     "0008_notification_outbox.sql",
     "0016_runtime_projection_version.sql",
+    "0018_approval_task_candidates.sql",
     "0017_notification_delivery_states.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));

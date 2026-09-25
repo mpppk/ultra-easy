@@ -38,6 +38,15 @@ Alert states shown on the dashboard are evaluated by the cron below.
 
 Percentiles use linear interpolation; empty windows return `null`, never zero.
 
+Query budget (#95): a snapshot is a constant number of D1 queries regardless of history
+(one query for the latest 200 ActionRequests' events, one grouped outbox/delivery count).
+The cron evaluates organizations seen in the last 10,000 events plus any organization with a
+non-`ok` alert (so a quiet organization still resolves), sweeps due Decision commands across
+organizations directly from `approval_commands (status, next_attempt_at)`, and runs each task
+independently (`runScheduledTasks`). The inbox reads the normalized `approval_task_candidates`
+index (migration `0018`) instead of `json_each` over every task, and task lists reuse the
+loaded Plan per ActionRequest within a request.
+
 ### Log-backed panels (Workers Logs queries)
 
 OpenFGA latency/errors and Workflow retry/failure exist only as structured

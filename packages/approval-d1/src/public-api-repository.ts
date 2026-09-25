@@ -351,11 +351,17 @@ export class D1PublicApiRepository
     organizationId: OrganizationId;
     row: TaskRow;
     viewerUserId?: UserId;
+    /** 1回の一覧取得の中でPlanのload + checksum再検証を使い回す（#95 N+1）。 */
+    planCache?: Map<string, Awaited<ReturnType<D1MaterializedPlanRepository["load"]>>>;
   }): Result.ResultAsync<ApprovalTaskView, PublicApiRepositoryError> {
-    const loaded = await this.plans.load({
-      organizationId: input.organizationId,
-      actionRequestId: input.row.action_request_id as ActionRequestId,
-    });
+    const cached = input.planCache?.get(input.row.action_request_id);
+    const loaded =
+      cached ??
+      (await this.plans.load({
+        organizationId: input.organizationId,
+        actionRequestId: input.row.action_request_id as ActionRequestId,
+      }));
+    input.planCache?.set(input.row.action_request_id, loaded);
     if (loaded.type !== "found") {
       return Result.fail(
         new PublicApiRepositoryError(
@@ -566,10 +572,12 @@ export class D1PublicApiRepository
     const hasMore = rows.value.length > input.limit;
     const selected = rows.value.slice(0, input.limit);
     const items: ApprovalTaskView[] = [];
+    const planCache = new Map();
     for (const row of selected) {
       const task = await this.taskFromRow({
         organizationId: input.organizationId,
         row,
+        planCache,
         ...(input.viewerUserId !== undefined ? { viewerUserId: input.viewerUserId } : {}),
       });
       if (Result.isFailure(task)) return task;
@@ -598,21 +606,20 @@ export class D1PublicApiRepository
         .prepare(
           `SELECT t.task_id, t.action_request_id, t.materialized_step_id, t.status,
                   t.candidate_user_ids, t.activated_at, t.expires_at, t.closed_at
-             FROM approval_tasks t
+             FROM approval_task_candidates c
+             JOIN approval_tasks t
+               ON t.organization_id = c.organization_id
+              AND t.task_id = c.task_id
              JOIN action_requests a
                ON a.organization_id = t.organization_id
               AND a.id = t.action_request_id
-            WHERE t.organization_id = ?
-              AND EXISTS (
-                SELECT 1
-                  FROM json_each(t.candidate_user_ids)
-                 WHERE value = ?
-              )
+            WHERE c.organization_id = ?
+              AND c.user_id = ?
               AND (? IS NULL OR t.status = ?)
               AND (? IS NULL OR json_extract(a.materialized_plan, '$.action.type') = ?)
               AND (? IS NULL OR json_extract(a.materialized_plan, '$.action.resource.type') = ?)
-              AND (? IS NULL OR t.task_id > ?)
-            ORDER BY t.task_id
+              AND (? IS NULL OR c.task_id > ?)
+            ORDER BY c.task_id
             LIMIT ?`,
         )
         .bind(
@@ -633,11 +640,13 @@ export class D1PublicApiRepository
     const hasMore = rows.value.length > input.limit;
     const selected = rows.value.slice(0, input.limit);
     const items: ApprovalTaskView[] = [];
+    const planCache = new Map();
     for (const row of selected) {
       const task = await this.taskFromRow({
         organizationId: input.organizationId,
         row,
         viewerUserId: input.userId,
+        planCache,
       });
       if (Result.isFailure(task)) return task;
       items.push(task.value);

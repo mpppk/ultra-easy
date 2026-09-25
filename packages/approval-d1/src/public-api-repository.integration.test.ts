@@ -112,6 +112,7 @@ function database(): SqliteD1Database {
     "0014_api_idempotency_lease.sql",
     "0015_approval_command_delivery.sql",
     "0016_runtime_projection_version.sql",
+    "0018_approval_task_candidates.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
   }
@@ -279,6 +280,33 @@ describe("D1PublicApiRepository", () => {
     expect(await participant("user:carol")).toBe(true);
     expect(await participant("user:mallory")).toBe(false);
     expect(await participant(String(alice), "organization:other" as OrganizationId)).toBe(false);
+  });
+
+  it("#95: inboxは正規化したcandidate索引から引き、候補の入れ替えに追従する", async () => {
+    const db = database();
+    const plan = await approvalPlan();
+    expect((await new D1MaterializedPlanRepository(db).save(plan)).type).toBe("created");
+    const projections = new D1ApprovalRuntimeProjectionRepository(db);
+    const state = runtimeState(plan);
+    assert(Result.isSuccess(await projections.replace({ organizationId, state })));
+
+    const repository = new D1PublicApiRepository(db);
+    const inbox = async (userId: string) => {
+      const listed = await repository.listMyApprovalTasks({
+        organizationId,
+        userId: userId as UserId,
+        limit: 50,
+      });
+      assert(Result.isSuccess(listed));
+      return listed.value.items.map((item) => item.id);
+    };
+    expect(await inbox(String(alice))).toEqual([String(taskId)]);
+    expect(await inbox("user:bob")).toEqual([]);
+
+    state.tasks[0]!.candidateUserIds = ["user:bob" as UserId];
+    assert(Result.isSuccess(await projections.replace({ organizationId, state })));
+    expect(await inbox(String(alice))).toEqual([]);
+    expect(await inbox("user:bob")).toEqual([String(taskId)]);
   });
 
   it("Approval commandをpendingからappliedへ更新して再読込できる", async () => {
