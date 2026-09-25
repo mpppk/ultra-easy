@@ -129,7 +129,7 @@ describe("Slack delivery integration (mock webhook)", () => {
       telemetry,
     });
     assert(Result.isSuccess(second));
-    expect(second.value).toEqual({ delivered: 1, skipped: 0 });
+    expect(second.value).toEqual({ delivered: 1, duplicate: 0, skipped: 0 });
 
     // at-least-once再配送は同じnotificationKeyでskipされ、POSTは増えない。
     const redelivery = await consumeNotificationMessage({
@@ -140,7 +140,7 @@ describe("Slack delivery integration (mock webhook)", () => {
       telemetry,
     });
     assert(Result.isSuccess(redelivery));
-    expect(redelivery.value).toEqual({ delivered: 0, skipped: 1 });
+    expect(redelivery.value).toEqual({ delivered: 0, duplicate: 1, skipped: 0 });
     expect(webhook.calls()).toBe(2);
     expect(webhook.bodies).toHaveLength(2);
     // payloadは相関のみで秘密情報を含めない。

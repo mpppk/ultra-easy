@@ -219,6 +219,7 @@ function harness(
     authorizer,
     executor,
     planRepository,
+    eventRepository: new InMemoryActionAuditStore(),
     resultRepository: new InMemoryActionAuditStore(),
     workflowStarter,
     idGenerator: { next: () => actionRequestId },

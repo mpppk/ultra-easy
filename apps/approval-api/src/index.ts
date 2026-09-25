@@ -10,34 +10,25 @@ import {
 } from "@app/approval-application";
 import {
   ConsoleTelemetrySink,
-  evaluateOperatorAlerts,
-  safeLogRecord,
   type ActionRequestId,
-  type NotificationSink,
   type OrganizationId,
-  type PersistedOperatorAlertState,
 } from "@app/approval-core";
 import {
-  D1ActionResultProjectionRepository,
+  createD1ActionRequestPersistence,
   D1FixedWindowRateLimiter,
-  D1MaterializedPlanRepository,
-  D1NotificationOutboxRepository,
-  D1OperatorAlertStateRepository,
   D1PublicApiRepository,
-  D1PublishedActionDefinitionResolver,
-  D1PublishedPolicyBindingResolver,
-  listRecentOrganizations,
-  loadOperatorDashboard,
-  type OperatorDashboardSnapshot,
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
-  consumeNotificationMessage,
-  dispatchNotificationOutbox,
-  emitNotificationSkipped,
+  createSlackNotificationSink,
+  evaluateRecentOrganizationAlerts,
+  handleNotificationQueueBatch,
+  loadOperatorDashboardView,
+  notificationScheduledTasks,
   notifyAlertTransition,
+  readOperatorAlertThresholds,
+  runScheduledTasks,
   ServiceBindingActionAuthorizer,
-  SlackWebhookSink,
   type ActionServiceBinding,
   type ActionWorkflowEnv,
   type ActionWorkflowParams,
@@ -50,7 +41,6 @@ import {
   buildAdminAuthorizationApi,
 } from "./admin-authorization.ts";
 import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-identity.ts";
-import { readOperatorAlertThresholds } from "./operator-alert-thresholds.ts";
 import { handleOperatorDashboard } from "./operator-dashboard.ts";
 import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
 import { createActionExecutorRegistry } from "./executor-registry.ts";
@@ -89,27 +79,6 @@ type ApprovalApiEnv = ActionWorkflowEnv & {
   OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
 };
 
-function operatorAlertThresholds(env: ApprovalApiEnv) {
-  return readOperatorAlertThresholds({
-    OPERATOR_ALERT_OUTBOX_BACKLOG: env.OPERATOR_ALERT_OUTBOX_BACKLOG,
-    OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES: env.OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES,
-    OPERATOR_ALERT_FAILURE_TREND_MINUTES: env.OPERATOR_ALERT_FAILURE_TREND_MINUTES,
-    OPERATOR_ALERT_DWELL_P95_SLA_MS: env.OPERATOR_ALERT_DWELL_P95_SLA_MS,
-  });
-}
-
-class NoopNotificationSink implements NotificationSink {
-  async send() {
-    return Result.succeed(undefined);
-  }
-}
-
-function createNotificationSink(env: ApprovalApiEnv): NotificationSink {
-  const webhookUrl = env.SLACK_WEBHOOK_URL?.trim() ?? "";
-  if (webhookUrl.length === 0) return new NoopNotificationSink();
-  return new SlackWebhookSink({ webhookUrl });
-}
-
 function stagingOrganizationId(env: ApprovalApiEnv): OrganizationId {
   return env.AUTH0_ORGANIZATION_ID as OrganizationId;
 }
@@ -124,25 +93,28 @@ function decisionProcessor(env: ApprovalApiEnv): ApprovalDecisionCommandProcesso
 /**
  * 配送期限が到来したpending Decision commandをorganization横断で再配送する。
  * retriable失敗はprocessorがbackoff付きでpendingへ戻し、上限超過だけをfailedにする。
+ * 1件の失敗で残りを止めず、失敗件数をerrorで返す。
  */
-async function sweepPendingDecisions(env: ApprovalApiEnv, now: string): Promise<void> {
+async function sweepPendingDecisions(
+  env: ApprovalApiEnv,
+  now: string,
+): Result.ResultAsync<{ processed: number }, { code: string }> {
   const repository = new D1PublicApiRepository(env.DB);
   const processor = decisionProcessor(env);
   const pending = await repository.listDuePending({ now, limit: 100 });
-  if (Result.isFailure(pending)) {
-    console.error("decision sweep list failed", { code: pending.error.code });
-    return;
-  }
+  if (Result.isFailure(pending)) return pending;
+  let failedCode: string | undefined;
   for (const record of pending.value) {
     const processed = await processor.process({
       organizationId: record.command.organizationId as OrganizationId,
       commandId: record.command.id,
       now,
     });
-    if (Result.isFailure(processed)) {
-      console.error("decision sweep process failed", { code: processed.error.code });
-    }
+    if (Result.isFailure(processed)) failedCode ??= processed.error.code;
   }
+  return failedCode
+    ? Result.fail({ code: failedCode })
+    : Result.succeed({ processed: pending.value.length });
 }
 
 function buildApi(input: { env: ApprovalApiEnv; authorizerBinding: ActionServiceBinding }): {
@@ -165,13 +137,10 @@ function buildApi(input: { env: ApprovalApiEnv; authorizerBinding: ActionService
   });
   const authorizer = new ServiceBindingActionAuthorizer(input.authorizerBinding, organizationId);
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: new D1PublishedActionDefinitionResolver(env.DB, organizationId),
+    ...createD1ActionRequestPersistence(env.DB, organizationId),
     schemaResolver: new StagingSchemaResolver(),
-    policyBindingResolver: new D1PublishedPolicyBindingResolver(env.DB),
     authorizer,
     executor: createActionExecutorRegistry(env),
-    planRepository: new D1MaterializedPlanRepository(env.DB),
-    resultRepository: new D1ActionResultProjectionRepository(env.DB),
     workflowStarter: new CloudflareActionWorkflowStarter(env.ACTION_WORKFLOW),
     idGenerator: { next: () => `action:${crypto.randomUUID()}` as ActionRequestId },
   });
@@ -230,7 +199,11 @@ function buildApi(input: { env: ApprovalApiEnv; authorizerBinding: ActionService
           request,
           callerResolver: identity,
           accessChecker: adminAccess,
-          load: (organizationId) => loadOperatorDashboardView(env, organizationId),
+          load: (organizationId) =>
+            loadOperatorDashboardView(env.DB, {
+              organizationId,
+              thresholds: readOperatorAlertThresholds(env),
+            }),
           onError: (code) => console.error("operator dashboard failed", { code }),
         });
       }
@@ -239,122 +212,21 @@ function buildApi(input: { env: ApprovalApiEnv; authorizerBinding: ActionService
   };
 }
 
-type OperatorDashboardView = OperatorDashboardSnapshot & {
-  alerts: PersistedOperatorAlertState[];
-  thresholds: ReturnType<typeof operatorAlertThresholds>;
-};
-
-async function loadOperatorDashboardView(
-  env: ApprovalApiEnv,
-  organizationId: OrganizationId,
-): Result.ResultAsync<OperatorDashboardView, { code: string }> {
-  const snapshot = await loadOperatorDashboard(env.DB, { organizationId });
-  if (Result.isFailure(snapshot)) return snapshot;
-  const alerts = await new D1OperatorAlertStateRepository(env.DB).loadAll({ organizationId });
-  if (Result.isFailure(alerts)) return alerts;
-  return Result.succeed({
-    ...snapshot.value,
-    alerts: alerts.value,
-    thresholds: operatorAlertThresholds(env),
-  });
-}
-
 /**
  * Converges console-managed relationships whose mutation is indeterminate or
  * stuck in prepared/applying (crash / lost response) to the latest desired
  * revision. Stale revisions are superseded and never re-sent.
  */
-async function reconcileRelationships(env: ApprovalApiEnv): Promise<void> {
+async function reconcileRelationships(
+  env: ApprovalApiEnv,
+): Result.ResultAsync<{ reconciled: number }, { code: string }> {
   const coordinator = relationshipCoordinator(env);
-  if (!coordinator) return;
+  if (!coordinator) return Result.succeed({ reconciled: 0 });
   const reconciled = await coordinator.reconcilePending({
     organizationId: stagingOrganizationId(env),
   });
-  if (Result.isFailure(reconciled)) {
-    console.error("relationship reconcile failed", { code: reconciled.error.code });
-    return;
-  }
-  if (reconciled.value.reconciled > 0) {
-    console.log(
-      JSON.stringify({
-        event: "authorization.relationship_reconciled",
-        count: reconciled.value.reconciled,
-        statuses: reconciled.value.outcomes.map((outcome) => outcome.status),
-      }),
-    );
-  }
-}
-
-async function evaluateAlerts(env: ApprovalApiEnv, now: string): Promise<void> {
-  const telemetry = new ConsoleTelemetrySink();
-  const organizations = await listRecentOrganizations(env.DB, 50);
-  if (Result.isFailure(organizations)) {
-    console.error("operator dashboard organizations failed", { code: organizations.error.code });
-    return;
-  }
-  const repository = new D1OperatorAlertStateRepository(env.DB);
-  for (const organizationId of organizations.value) {
-    const snapshot = await loadOperatorDashboard(env.DB, { organizationId });
-    if (Result.isFailure(snapshot)) {
-      console.error("operator dashboard snapshot failed", { code: snapshot.error.code });
-      continue;
-    }
-    const previous = await repository.loadAll({ organizationId });
-    if (Result.isFailure(previous)) {
-      console.error("operator alert states failed", { code: previous.error.code });
-      continue;
-    }
-    const dwellSamples = Object.values(snapshot.value.sli.dwellByStepKey);
-    const evaluated = evaluateOperatorAlerts({
-      thresholds: operatorAlertThresholds(env),
-      previous: previous.value,
-      values: {
-        outboxBacklog: snapshot.value.outbox.backlog,
-        outboxFailedTotal:
-          snapshot.value.outbox.failedOutbox + snapshot.value.outbox.failedDeliveries,
-        executorFailureTotal: Object.values(snapshot.value.sli.executorFailuresByCode).reduce(
-          (total, count) => total + count,
-          0,
-        ),
-        dwellP95Ms:
-          dwellSamples.length === 0
-            ? null
-            : Math.max(...dwellSamples.map((sample) => sample.p95Ms ?? 0)),
-      },
-      now,
-    });
-    for (const state of evaluated.states) {
-      const saved = await repository.save({ organizationId, ...state });
-      if (Result.isFailure(saved)) {
-        console.error("operator alert save failed", { code: saved.error.code });
-      }
-    }
-    for (const transition of evaluated.transitions) {
-      const firing = transition.to === "firing";
-      telemetry.emit(
-        safeLogRecord({
-          level: firing ? "warn" : "info",
-          event: firing ? "alert.firing" : "alert.resolved",
-          correlation: {
-            organizationId,
-            actionRequestId: "action:operator-alert" as ActionRequestId,
-            correlationId: `operator-alert:${String(organizationId)}:${transition.key}`,
-            component: "d1",
-            operation: "operator.alert",
-          },
-          attributes: { alertKey: transition.key, status: transition.to },
-        }),
-      );
-      await notifyAlertTransition({
-        webhookUrl: env.SLACK_WEBHOOK_URL ?? "",
-        organizationId,
-        alertKey: transition.key,
-        from: transition.from,
-        to: transition.to,
-        telemetry,
-      });
-    }
-  }
+  if (Result.isFailure(reconciled)) return reconciled;
+  return Result.succeed({ reconciled: reconciled.value.reconciled });
 }
 
 export default {
@@ -389,46 +261,50 @@ export default {
 
   async scheduled(controller, env): Promise<void> {
     const telemetry = new ConsoleTelemetrySink();
-    const now = new Date(controller.scheduledTime).toISOString();
-    const dispatched = await dispatchNotificationOutbox({
-      repository: new D1NotificationOutboxRepository(env.DB),
-      queue: env.NOTIFICATION_QUEUE,
-      now,
+    const webhookUrl = env.SLACK_WEBHOOK_URL?.trim() ?? "";
+    await runScheduledTasks({
+      now: new Date(controller.scheduledTime).toISOString(),
       telemetry,
+      tasks: [
+        ...notificationScheduledTasks({
+          db: env.DB,
+          queue: env.NOTIFICATION_QUEUE,
+          telemetry,
+          sinkConfigured: webhookUrl.length > 0,
+        }),
+        {
+          name: "evaluate_operator_alerts",
+          run: (now) =>
+            evaluateRecentOrganizationAlerts({
+              db: env.DB,
+              thresholds: readOperatorAlertThresholds(env),
+              now,
+              telemetry,
+              onTransition: (transition) =>
+                notifyAlertTransition({
+                  webhookUrl,
+                  organizationId: transition.organizationId,
+                  alertKey: transition.key,
+                  from: transition.from,
+                  to: transition.to,
+                  telemetry,
+                }),
+            }),
+        },
+        { name: "sweep_pending_decisions", run: (now) => sweepPendingDecisions(env, now) },
+        { name: "reconcile_relationships", run: () => reconcileRelationships(env) },
+      ],
     });
-    if (Result.isFailure(dispatched)) {
-      console.error("notification outbox dispatch failed", { code: dispatched.error.code });
-    }
-    await evaluateAlerts(env, now);
-    await sweepPendingDecisions(env, now);
-    await reconcileRelationships(env);
   },
 
   async queue(batch, env): Promise<void> {
-    const repository = new D1NotificationOutboxRepository(env.DB);
-    const sink = createNotificationSink(env);
-    // secret未設定のdegraded動作: 配信skip (ack成功) + warn log/metric。cron/queueは壊さない。
-    const degraded = (env.SLACK_WEBHOOK_URL?.trim() ?? "").length === 0;
-    const telemetry = new ConsoleTelemetrySink();
-    for (const message of batch.messages) {
-      const consumed = await consumeNotificationMessage({
-        repository,
-        sink,
-        message: message.body,
-        now: new Date().toISOString(),
-        telemetry,
-      });
-      if (Result.isFailure(consumed)) {
-        message.retry();
-      } else {
-        if (degraded && consumed.value.delivered > 0) {
-          emitNotificationSkipped(telemetry, {
-            organizationId: message.body.organizationId,
-            actionRequestId: message.body.actionRequestId,
-          });
-        }
-        message.ack();
-      }
-    }
+    await handleNotificationQueueBatch({
+      batch,
+      db: env.DB,
+      // secret未設定のdegraded動作: 配信をskippedとして記録し、設定後にcronで再送する。
+      sink: createSlackNotificationSink(env.SLACK_WEBHOOK_URL),
+      telemetry: new ConsoleTelemetrySink(),
+      now: () => new Date().toISOString(),
+    });
   },
 } satisfies ExportedHandler<ApprovalApiEnv, NotificationQueueMessage>;

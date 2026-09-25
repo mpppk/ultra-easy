@@ -82,6 +82,7 @@ class RetryQueue implements NotificationQueueProducer {
 }
 
 class RetrySink implements NotificationSink {
+  readonly audience = "recipient" as const;
   requests: NotificationRequest[] = [];
 
   async send(request: NotificationRequest) {
@@ -89,7 +90,7 @@ class RetrySink implements NotificationSink {
     if (this.requests.length === 1) {
       return Result.fail(new NotificationSinkError("temporary_provider_outage", true, "retry me"));
     }
-    return Result.succeed(undefined);
+    return Result.succeed("sent" as const);
   }
 }
 
@@ -107,7 +108,7 @@ describe("notification outbox Queue integration", () => {
       telemetry,
     });
     assert(Result.isSuccess(first));
-    expect(first.value).toEqual({ attempted: 1, dispatched: 0, failed: 1 });
+    expect(first.value).toEqual({ attempted: 1, dispatched: 0, failed: 1, dead: 0 });
 
     const afterFailure = await repository.health();
     assert(Result.isSuccess(afterFailure));
@@ -120,7 +121,7 @@ describe("notification outbox Queue integration", () => {
       telemetry,
     });
     assert(Result.isSuccess(second));
-    expect(second.value).toEqual({ attempted: 1, dispatched: 1, failed: 0 });
+    expect(second.value).toEqual({ attempted: 1, dispatched: 1, failed: 0, dead: 0 });
     expect(queue.messages).toHaveLength(1);
     expect(queue.messages[0]).toMatchObject({
       organizationId,
@@ -179,7 +180,7 @@ describe("notification outbox Queue integration", () => {
       telemetry,
     });
     assert(Result.isSuccess(second));
-    expect(second.value).toEqual({ delivered: 1, skipped: 0 });
+    expect(second.value).toEqual({ delivered: 1, duplicate: 0, skipped: 0 });
     expect(sink.requests).toHaveLength(2);
     expect(sink.requests[0]?.notificationKey).toBe(sink.requests[1]?.notificationKey);
 
@@ -191,7 +192,7 @@ describe("notification outbox Queue integration", () => {
       telemetry,
     });
     assert(Result.isSuccess(redelivery));
-    expect(redelivery.value).toEqual({ delivered: 0, skipped: 1 });
+    expect(redelivery.value).toEqual({ delivered: 0, duplicate: 1, skipped: 0 });
     expect(sink.requests).toHaveLength(2);
     expect(telemetry.records).toEqual(
       expect.arrayContaining([

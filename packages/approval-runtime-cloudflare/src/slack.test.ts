@@ -139,8 +139,9 @@ describe("SlackWebhookSink", () => {
       attributes: { errorCode: "slack_webhook_missing" },
     });
     expect(metrics).toHaveLength(1);
+    // skipは失敗ではないためoutbox.failure_totalには数えない（#94）
     expect(metrics[0]).toMatchObject({
-      name: "outbox.failure_total",
+      name: "notification.skipped_total",
       value: 1,
     });
     expect(JSON.stringify(telemetry.records)).not.toContain("hooks.slack.com");
@@ -172,7 +173,9 @@ describe("SlackWebhookSink", () => {
         }),
       }),
     ]);
-    expect(metrics).toEqual([expect.objectContaining({ name: "outbox.failure_total", value: 1 })]);
+    expect(metrics).toEqual([
+      expect.objectContaining({ name: "notification.skipped_total", value: 1 }),
+    ]);
     expect(JSON.stringify(telemetry.records)).not.toContain("hooks.slack.com");
   });
 

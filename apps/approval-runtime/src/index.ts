@@ -29,14 +29,17 @@ import {
   D1ApprovalRuntimeProjectionRepository,
   D1GovernanceRepository,
   D1MaterializedPlanRepository,
-  D1NotificationOutboxRepository,
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
   actionWorkflowInstanceId,
   CloudflareWorkflowCancellationControl,
-  consumeNotificationMessage,
-  dispatchNotificationOutbox,
+  evaluateRecentOrganizationAlerts,
+  handleNotificationQueueBatch,
+  loadOperatorDashboardView,
+  notificationScheduledTasks,
+  readOperatorAlertThresholds,
+  runScheduledTasks,
   serveActionExecutorRegistry,
   type ActionWorkflowEnv,
   type ActionWorkflowParams,
@@ -44,11 +47,6 @@ import {
   type NotificationQueueProducer,
 } from "@app/approval-runtime-cloudflare";
 
-import {
-  evaluateRecentOrganizationAlerts,
-  loadOperatorDashboardView,
-  readOperatorAlertThresholds,
-} from "./operator-dashboard.ts";
 import { parseForceCancelBody } from "./preview-force-cancel.ts";
 import {
   createPreviewPlan,
@@ -62,6 +60,10 @@ export { ActionWorkflow };
 type PreviewRuntimeEnv = ActionWorkflowEnv & {
   ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
   NOTIFICATION_QUEUE: NotificationQueueProducer;
+  OPERATOR_ALERT_OUTBOX_BACKLOG?: string;
+  OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES?: string;
+  OPERATOR_ALERT_FAILURE_TREND_MINUTES?: string;
+  OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
 };
 
 function json(data: unknown, init?: ResponseInit): Response {
@@ -76,9 +78,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/** Preview専用のsink。外部へは送らず、宛先ごとの配信を記録するだけ。 */
 class PreviewNotificationSink implements NotificationSink {
+  readonly audience = "recipient" as const;
+
   async send() {
-    return Result.succeed(undefined);
+    return Result.succeed("sent" as const);
   }
 }
 
@@ -408,7 +413,7 @@ async function getOperatorDashboard(request: Request, env: PreviewRuntimeEnv): P
   const organizationId = (raw ?? PREVIEW_ORGANIZATION_ID) as OrganizationId;
   const view = await loadOperatorDashboardView(env.DB, {
     organizationId,
-    thresholds: readOperatorAlertThresholds(env as unknown as Record<string, string | undefined>),
+    thresholds: readOperatorAlertThresholds(env),
   });
   if (Result.isFailure(view)) {
     return json({ error: view.error.message, code: view.error.code }, { status: 500 });
@@ -468,48 +473,37 @@ export default {
 
   async scheduled(controller, env): Promise<void> {
     const telemetry = new ConsoleTelemetrySink();
-    const now = new Date(controller.scheduledTime).toISOString();
-    const dispatched = await dispatchNotificationOutbox({
-      repository: new D1NotificationOutboxRepository(env.DB),
-      queue: env.NOTIFICATION_QUEUE,
-      now,
+    await runScheduledTasks({
+      now: new Date(controller.scheduledTime).toISOString(),
       telemetry,
+      tasks: [
+        ...notificationScheduledTasks({
+          db: env.DB,
+          queue: env.NOTIFICATION_QUEUE,
+          telemetry,
+          sinkConfigured: true,
+        }),
+        {
+          name: "evaluate_operator_alerts",
+          run: (now) =>
+            evaluateRecentOrganizationAlerts({
+              db: env.DB,
+              thresholds: readOperatorAlertThresholds(env),
+              now,
+              telemetry,
+            }),
+        },
+      ],
     });
-    if (Result.isFailure(dispatched)) {
-      console.error("notification outbox dispatch failed", {
-        code: dispatched.error.code,
-      });
-    }
-    const evaluated = await evaluateRecentOrganizationAlerts({
-      db: env.DB,
-      thresholds: readOperatorAlertThresholds(env as unknown as Record<string, string | undefined>),
-      now,
-      telemetry,
-    });
-    if (Result.isFailure(evaluated)) {
-      console.error("operator alert evaluation failed", {
-        code: evaluated.error.code,
-      });
-    }
   },
 
   async queue(batch, env): Promise<void> {
-    const repository = new D1NotificationOutboxRepository(env.DB);
-    const sink = new PreviewNotificationSink();
-    const telemetry = new ConsoleTelemetrySink();
-    for (const message of batch.messages) {
-      const consumed = await consumeNotificationMessage({
-        repository,
-        sink,
-        message: message.body,
-        now: new Date().toISOString(),
-        telemetry,
-      });
-      if (Result.isFailure(consumed)) {
-        message.retry();
-      } else {
-        message.ack();
-      }
-    }
+    await handleNotificationQueueBatch({
+      batch,
+      db: env.DB,
+      sink: new PreviewNotificationSink(),
+      telemetry: new ConsoleTelemetrySink(),
+      now: () => new Date().toISOString(),
+    });
   },
 } satisfies ExportedHandler<PreviewRuntimeEnv, NotificationQueueMessage>;

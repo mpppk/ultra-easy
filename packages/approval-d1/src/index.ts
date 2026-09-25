@@ -12,3 +12,4 @@ export * from "./notification-outbox-repository.ts";
 export * from "./operator-dashboard.ts";
 export * from "./operator-alert-state-repository.ts";
 export * from "./rate-limit-repository.ts";
+export * from "./action-request-persistence.ts";

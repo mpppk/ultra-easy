@@ -367,6 +367,7 @@ export function createGatewayHarness(
     authorizer,
     executor,
     planRepository: plans,
+    eventRepository: new InMemoryActionAuditStore(),
     resultRepository: new InMemoryActionAuditStore(),
     workflowStarter: workflows,
     idGenerator: {

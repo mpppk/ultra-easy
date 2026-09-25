@@ -97,6 +97,8 @@ function createRepositories() {
     "0003_approval_runtime_projections.sql",
     "0007_action_events.sql",
     "0008_notification_outbox.sql",
+    "0016_runtime_projection_version.sql",
+    "0017_notification_delivery_states.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
   }
@@ -143,7 +145,7 @@ describe("D1NotificationOutboxRepository", () => {
     assert(Result.isSuccess(await events.append(record)));
     assert(Result.isSuccess(await events.append(record)));
 
-    const entries = await outbox.listDispatchable();
+    const entries = await outbox.listDispatchable("2099-01-01T00:00:00.000Z");
     assert(Result.isSuccess(entries));
     expect(entries.value).toHaveLength(1);
     expect(entries.value[0]).toMatchObject({
@@ -190,7 +192,7 @@ describe("D1NotificationOutboxRepository", () => {
     });
     assert(Result.isSuccess(await events.append(record)));
 
-    const entries = await outbox.listDispatchable();
+    const entries = await outbox.listDispatchable("2099-01-01T00:00:00.000Z");
     assert(Result.isSuccess(entries));
     expect(entries.value[0]).toMatchObject({
       recipientMode: "task_candidates",
@@ -226,7 +228,7 @@ describe("D1NotificationOutboxRepository", () => {
     });
     assert(Result.isSuccess(await events.appendMany([received, completed])));
 
-    const entries = await outbox.listDispatchable();
+    const entries = await outbox.listDispatchable("2099-01-01T00:00:00.000Z");
     assert(Result.isSuccess(entries));
     expect(entries.value).toHaveLength(1);
     const entry = entries.value[0]!;
@@ -259,7 +261,9 @@ describe("D1NotificationOutboxRepository", () => {
     expect(health.value).toEqual({
       pendingOutbox: 1,
       failedOutbox: 0,
+      deadOutbox: 0,
       failedDeliveries: 1,
+      skippedDeliveries: 0,
     });
 
     const request = outbox.notificationRequest({

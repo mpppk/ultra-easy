@@ -120,6 +120,7 @@ function harness(
       load: async () => ({ type: "not_found" as const }),
       loadForWorkflow: async () => ({ type: "not_found" as const }),
     } as never,
+    eventRepository: new InMemoryActionAuditStore(),
     resultRepository: new InMemoryActionAuditStore(),
     workflowStarter: { start: async () => Result.succeed({ workflowInstanceId: "unused" }) },
     idGenerator: { next: () => "action:http" as ActionRequestId },

@@ -8,6 +8,7 @@ import {
   safeLogRecord,
   type ActionRequestId,
   type NotificationRequest,
+  type NotificationSendOutcome,
   type NotificationSink,
   type OrganizationId,
   type TelemetrySink,
@@ -161,7 +162,12 @@ async function postText(input: {
   );
 }
 
+/**
+ * Slack Incoming Webhookは単一チャンネルへ投稿するため、audienceはchannel（イベント単位で1回）。
+ * 本文に宛先を含めないので、宛先ごとに投稿すると同じ文面がN回並ぶ（#94）。
+ */
 export class SlackWebhookSink implements NotificationSink {
+  readonly audience = "channel" as const;
   private readonly webhookUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
@@ -172,8 +178,10 @@ export class SlackWebhookSink implements NotificationSink {
     this.timeoutMs = input.timeoutMs ?? DEFAULT_SLACK_TIMEOUT_MS;
   }
 
-  async send(request: NotificationRequest): Result.ResultAsync<void, NotificationSinkError> {
-    return postText({
+  async send(
+    request: NotificationRequest,
+  ): Result.ResultAsync<NotificationSendOutcome, NotificationSinkError> {
+    const posted = await postText({
       webhookUrl: this.webhookUrl,
       text: formatSlackNotificationText({
         organizationId: request.organizationId,
@@ -185,13 +193,34 @@ export class SlackWebhookSink implements NotificationSink {
       fetchImpl: this.fetchImpl,
       timeoutMs: this.timeoutMs,
     });
+    return Result.isFailure(posted) ? posted : Result.succeed("sent");
   }
 }
 
 /**
- * SLACK_WEBHOOK_URL未設定時のdegraded動作: 配信をskip (ack成功) し、
- * warn log + metricを出してcron/queue全体は壊さない。
- * URL・payloadは記録しない。queue consumerから利用する。
+ * SLACK_WEBHOOK_URL未設定時のsink。配信せず`skipped`を返す（sentとして記録しない）。
+ * secret設定後に`requeueSkipped`で再送できる。
+ */
+export class UnconfiguredNotificationSink implements NotificationSink {
+  readonly audience = "channel" as const;
+
+  async send(): Result.ResultAsync<NotificationSendOutcome, NotificationSinkError> {
+    return Result.succeed("skipped");
+  }
+}
+
+/** webhook URLがあればSlack、無ければskipするsinkを返す。 */
+export function createSlackNotificationSink(webhookUrl: string | undefined): NotificationSink {
+  const normalized = webhookUrl?.trim() ?? "";
+  return normalized.length === 0
+    ? new UnconfiguredNotificationSink()
+    : new SlackWebhookSink({ webhookUrl: normalized });
+}
+
+/**
+ * SLACK_WEBHOOK_URL未設定時のdegraded動作: 配信をskip（deliveryはskipped）し、
+ * warn log + `notification.skipped_total`を出す。skipは失敗ではないため
+ * `outbox.failure_total`には数えない（失敗系alertを誤発火させない）。
  */
 export function emitNotificationSkipped(
   telemetry: TelemetrySink,
@@ -213,7 +242,7 @@ export function emitNotificationSkipped(
   );
   telemetry.emit(
     metricRecord({
-      name: "outbox.failure_total",
+      name: "notification.skipped_total",
       value: 1,
       unit: "count",
       correlation,
@@ -261,7 +290,7 @@ export async function notifyAlertTransition(input: {
     );
     telemetry.emit(
       metricRecord({
-        name: "outbox.failure_total",
+        name: "notification.skipped_total",
         value: 1,
         unit: "count",
         correlation,
@@ -296,7 +325,6 @@ export async function notifyAlertTransition(input: {
         attributes: { errorCode: notified.error.code },
       }),
     );
-    console.error("alert slack notify failed", { code: notified.error.code });
   }
 }
 
