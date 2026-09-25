@@ -157,6 +157,29 @@ export type ActionEvent =
       idempotencyKey: string;
     }
   | {
+      /** async executorが実行を受け付けた（#165）。ActionRequestは`executing`に留まる。 */
+      type: "action.execution_accepted";
+      actionRequestId: ActionRequestId;
+      executionRef: string;
+    }
+  | {
+      /** async実行のcancel要求（#165）。終端はexecutorからのcompletionで確定する。 */
+      type: "action.execution_cancel_requested";
+      actionRequestId: ActionRequestId;
+      executionRef: string;
+      reason: string;
+    }
+  | {
+      /**
+       * trusted completion portが拒否した完了通知（binding不一致・終端済みと矛盾する結果等）。
+       * ActionRequestの状態は変えず、監査にだけ残す（fail-closed）。
+       */
+      type: "action.execution_completion_rejected";
+      actionRequestId: ActionRequestId;
+      executionRef: string;
+      code: string;
+    }
+  | {
       type: "action.execution_failed";
       actionRequestId: ActionRequestId;
       code: string;
@@ -209,6 +232,8 @@ function eventDiscriminator(event: ActionEvent): string {
       return String(event.materializedStepId);
     case "workflow.started":
       return event.workflowInstanceId;
+    case "action.execution_completion_rejected":
+      return `${event.executionRef}:${event.code}`;
     default:
       return "action";
   }

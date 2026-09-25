@@ -15,6 +15,7 @@ import type {
   ApprovalRuntimeProjectionWriteResult,
   ApprovalRuntimeState,
   ApproverResolver,
+  AsyncActionExecutionRepository,
   ExecutorKey,
   MaterializedPlanLoadResult,
   OrganizationId,
@@ -97,6 +98,8 @@ export type ActionWorkflowDependencies = {
   projections: WorkflowRuntimeProjectionStore;
   events: ActionEventRepository;
   results: ActionResultRepository;
+  /** async executorの受付記録（#165）。 */
+  asyncExecutions: AsyncActionExecutionRepository;
   commands: WorkflowCommandOutcomeRecorder;
   approverResolver(scope: ActionWorkflowScope): ApproverResolver;
   /** 実行直前の再認可。未設定ならnull（authorization_check_failedで終端する）。 */

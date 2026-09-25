@@ -12,6 +12,7 @@ import {
   actionExecutionOutcomeEvents,
   actionRuntimeTransitionEvents,
   advanceApprovalRuntime,
+  asyncExecutionAcceptedEvents,
   ApproverResolverProviderError,
   expireApprovalRuntime,
   isApprovalDecisionRejection,
@@ -665,6 +666,73 @@ async function emitActionSli(input: {
 const SLI_STEP_CONFIG: WorkflowStepConfig = { retries: { limit: 0, delay: 0 } };
 
 /**
+ * async executorの受付を記録してWorkflowを終える（#165）。ActionRequestは`executing`に留まり、
+ * 最終結果はtrusted completion portがaction_resultsへ確定する（このinstanceはprocessを保持しない）。
+ */
+async function recordAsyncAcceptance(input: {
+  deps: ActionWorkflowDependencies;
+  step: WorkflowStep;
+  params: ActionWorkflowParams;
+  workflowInstanceId: string;
+  execution: Extract<Awaited<ReturnType<typeof runActionExecution>>, { type: "accepted" }>;
+  acceptedAt: string;
+  fail: (
+    operation: string,
+    failure: { code: string; message: string },
+  ) => Promise<ActionWorkflowOutput>;
+}): Promise<ActionWorkflowOutput> {
+  const { deps, params, execution } = input;
+  try {
+    await input.step.do("record async execution acceptance", async () => {
+      const loaded = await deps.plans.loadForWorkflow({
+        organizationId: params.organizationId,
+        actionRequestId: params.actionRequestId,
+        expectedApprovalPlanChecksum: params.approvalPlanChecksum,
+      });
+      if (loaded.type !== "found") {
+        return Promise.reject(new Error(`async acceptance用Planを取得できません: ${loaded.type}`));
+      }
+      const accepted = await deps.asyncExecutions.accept({
+        record: {
+          organizationId: loaded.plan.organizationId,
+          actionRequestId: loaded.plan.actionRequestId,
+          actionFingerprint: loaded.plan.actionFingerprint,
+          executionRef: execution.executionRef,
+          idempotencyKey: execution.idempotencyKey,
+          executorKey: loaded.plan.action.definition.executorKey,
+          guaranteeLevel: execution.guaranteeLevel,
+          workflowInstanceId: input.workflowInstanceId,
+          status: "accepted",
+          acceptedAt: input.acceptedAt,
+        },
+        events: asyncExecutionAcceptedEvents({
+          organizationId: loaded.plan.organizationId,
+          actionRequestId: loaded.plan.actionRequestId,
+          authorizationEvidence: execution.authorizationEvidence,
+          idempotencyKey: execution.idempotencyKey,
+          executionRef: execution.executionRef,
+          acceptedAt: input.acceptedAt,
+        }),
+      });
+      if (Result.isFailure(accepted)) return Promise.reject(accepted.error);
+      return { type: accepted.value.type };
+    });
+  } catch (error) {
+    return input.fail("record_async_acceptance", {
+      code: "async_acceptance_persistence_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return {
+    type: "completed",
+    actionRequestId: params.actionRequestId,
+    status: "executing",
+    guaranteeLevel: execution.guaranteeLevel,
+    idempotencyKey: execution.idempotencyKey,
+  };
+}
+
+/**
  * 汎用のActionWorkflowを依存注入で組み立てる（#106）。Workflowのロジックはportだけに依存し、
  * D1 / OpenFGA / service bindingの具象は`dependencies(env)`が供給する（isolate内でmemo化する想定）。
  */
@@ -811,6 +879,17 @@ export async function runActionWorkflow(
     evaluatedAt: logicalNow,
   });
   if (execution.type === "failed") return fail("action_execution", execution);
+  if (execution.type === "accepted") {
+    return recordAsyncAcceptance({
+      deps,
+      step,
+      params,
+      workflowInstanceId: event.instanceId,
+      execution,
+      acceptedAt: logicalNow,
+      fail,
+    });
+  }
 
   try {
     await step.do("project action result", async () => {

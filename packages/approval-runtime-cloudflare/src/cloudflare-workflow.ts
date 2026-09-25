@@ -2,6 +2,7 @@ import {
   D1ActionEventRepository,
   D1ActionResultProjectionRepository,
   D1ApprovalRuntimeProjectionRepository,
+  D1AsyncActionExecutionRepository,
   D1MaterializedPlanRepository,
   D1PublicApiRepository,
 } from "@app/approval-d1";
@@ -29,6 +30,7 @@ export function cloudflareWorkflowDependencies(env: ActionWorkflowEnv): ActionWo
     projections: new D1ApprovalRuntimeProjectionRepository(env.DB),
     events: new D1ActionEventRepository(env.DB),
     results: new D1ActionResultProjectionRepository(env.DB),
+    asyncExecutions: new D1AsyncActionExecutionRepository(env.DB),
     commands: new D1PublicApiRepository(env.DB),
     approverResolver: (scope) =>
       new OpenFgaApproverResolver(

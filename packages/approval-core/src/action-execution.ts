@@ -30,6 +30,16 @@ export type ActionExecutionResult = {
   output?: JsonValue;
 };
 
+/**
+ * Executorの配送結果（#165）。
+ * - completed: 同期executorが最終結果まで確定した（従来の`execute`と同じ意味）
+ * - accepted: 外部 / durableな実行を開始したが最終結果は未確定。ActionRequestは`executing`に留まり、
+ *   trusted completion port（`ActionExecutionCompletionService`）からの完了だけで終端する
+ */
+export type ActionExecutionDispatch =
+  | { type: "completed"; result: ActionExecutionResult }
+  | { type: "accepted"; executionRef: string };
+
 export type ActionExecutionGuaranteeLevel = "idempotent" | "best_effort_at_most_once";
 
 export type ActionExecutionTerminalStatus =
@@ -85,6 +95,25 @@ export interface ActionExecutor {
   execute(
     request: ActionExecutionRequest,
   ): Result.ResultAsync<ActionExecutionResult, ActionExecutorError>;
+
+  /**
+   * 開始受付と最終完了が分離しうるexecutor（Composite Action / long-running job等, #165）。
+   * 未実装のexecutorは同期executorとして`execute`の結果を`completed`に写像する。
+   */
+  dispatch?(
+    request: ActionExecutionRequest,
+  ): Result.ResultAsync<ActionExecutionDispatch, ActionExecutorError>;
+}
+
+/** executorへ配送する。同期executor（dispatch未実装）は従来通りcompletedになる。 */
+export async function dispatchActionExecution(
+  executor: ActionExecutor,
+  request: ActionExecutionRequest,
+): Result.ResultAsync<ActionExecutionDispatch, ActionExecutorError> {
+  if (executor.dispatch) return executor.dispatch(request);
+  const executed = await executor.execute(request);
+  if (Result.isFailure(executed)) return executed;
+  return Result.succeed({ type: "completed", result: executed.value });
 }
 
 /** registryに無いexecutorKey。成功扱いにせず非retriableなexecution_failedにする。 */
@@ -124,6 +153,15 @@ export class ActionExecutorRegistry implements ActionExecutor {
     const delegate = this.lookup(key);
     if (!delegate) return Result.fail(unknownExecutorKeyError(key));
     return delegate.execute(request);
+  }
+
+  async dispatch(
+    request: ActionExecutionRequest,
+  ): Result.ResultAsync<ActionExecutionDispatch, ActionExecutorError> {
+    const key = String(request.action.definition.executorKey);
+    const delegate = this.lookup(key);
+    if (!delegate) return Result.fail(unknownExecutorKeyError(key));
+    return dispatchActionExecution(delegate, request);
   }
 }
 
@@ -245,7 +283,20 @@ export type ActionExecutionOutcome =
       authorizationEvidence: AuthorizationEvidence;
       result: ActionExecutionResult;
     }
+  | {
+      /** async executorが受け付けた（#165）。最終結果はtrusted completionで確定する。 */
+      type: "accepted";
+      idempotencyKey: string;
+      guaranteeLevel: ActionExecutionGuaranteeLevel;
+      authorizationEvidence: AuthorizationEvidence;
+      executionRef: string;
+    }
   | Extract<ActionReauthorizationOutcome, { type: "authorization_revoked" }>;
+
+export type ActionDispatchOutcome = Extract<
+  ActionExecutionOutcome,
+  { type: "executed" | "accepted" }
+>;
 
 export function createActionExecutionIdempotencyKey(
   organizationId: OrganizationId,
@@ -289,13 +340,13 @@ export async function executeAuthorizedAction(input: {
   action: MaterializedActionSnapshot;
   authorizationEvidence: AuthorizationEvidence;
   actor?: PrincipalRef;
-}): Result.ResultAsync<Extract<ActionExecutionOutcome, { type: "executed" }>, ActionExecutorError> {
+}): Result.ResultAsync<ActionDispatchOutcome, ActionExecutorError> {
   const idempotencyKey = createActionExecutionIdempotencyKey(
     input.organizationId,
     input.actionRequestId,
     input.actionFingerprint,
   );
-  const executed = await input.executor.execute({
+  const executed = await dispatchActionExecution(input.executor, {
     organizationId: input.organizationId,
     actionRequestId: input.actionRequestId,
     actionFingerprint: input.actionFingerprint,
@@ -306,12 +357,22 @@ export async function executeAuthorizedAction(input: {
   });
   if (Result.isFailure(executed)) return Result.fail(executed.error);
 
+  const guaranteeLevel = executorGuaranteeLevel(input.executor, input.action);
+  if (executed.value.type === "accepted") {
+    return Result.succeed({
+      type: "accepted",
+      idempotencyKey,
+      guaranteeLevel,
+      authorizationEvidence: input.authorizationEvidence,
+      executionRef: executed.value.executionRef,
+    });
+  }
   return Result.succeed({
     type: "executed",
     idempotencyKey,
-    guaranteeLevel: executorGuaranteeLevel(input.executor, input.action),
+    guaranteeLevel,
     authorizationEvidence: input.authorizationEvidence,
-    result: executed.value,
+    result: executed.value.result,
   });
 }
 

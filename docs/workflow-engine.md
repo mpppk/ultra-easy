@@ -129,3 +129,45 @@ WorkflowRuntime.advance(run)
 | `workflow_versions`    | publish済みversion。UPDATE / DELETEをtriggerで禁止（immutable）    |
 | `workflow_runs`        | run state（JSON）+ revision + wake_at。親ActionRequestごとに一意   |
 | `workflow_events`      | 監査イベント（append-only trigger）。payloadはID / code / 参照だけ |
+
+## Async Action Execution contract (#165)
+
+Workflow専用ではない、ultra-easy本体のprotocol-agnosticな実行契約。
+
+```ts
+type ActionExecutionDispatch =
+  | { type: "completed"; result: ActionExecutionResult } // 同期executor（従来のexecute）
+  | { type: "accepted"; executionRef: string }; // 開始受付のみ。最終結果は未確定
+```
+
+- `ActionExecutor.dispatch?` を実装したexecutorだけがacceptedを返せる。未実装のexecutorは
+  `dispatchActionExecution` が `execute` の結果を `completed` に写像する（既存semanticsは不変）。
+- Service Binding: `POST /execute/:key` は同期完了を200 `{status:"succeeded"}`、受付を
+  202 `{status:"accepted", executionRef}` で返す。`ServiceBindingActionExecutor.execute` はacceptedを
+  成功扱いにしない（`async_execution_requires_dispatch`）。
+
+### Lifecycle
+
+```text
+approved -> executing -> dispatch() -> accepted(executionRef)
+  action.execution_started + action.execution_accepted を記録（action.completedは記録しない）
+  ActionRequestは executing に留まる（ActionWorkflow instanceは executing を出力して終わり、processを保持しない）
+
+...待機...
+
+ActionExecutionCompletionService.complete(org, actionRequestId, actionFingerprint, executionRef, idempotencyKey, completion)
+  -> action_async_executions: accepted|cancel_requested -> completed をCASで一度だけ確定
+  -> action_results + action.completed（executed / execution_failed / execution_unknown）
+```
+
+- completionは受付記録の `organizationId / actionRequestId / actionFingerprint / executionRef / idempotencyKey`
+  と一致する場合だけ受理する。不一致（別Action・spoof）は `completion_binding_mismatch`、
+  受付の無い実行は `execution_not_accepted`。
+- 同じcompletionの再送は `replayed`（action_results / eventはupsert / eventKeyで冪等）。
+  確定済みと矛盾するcompletionは `completion_conflict` で拒否し、`action.execution_completion_rejected` を監査に残す。
+- cancel要求（`requestCancel`）は `cancel_requested` を記録するだけで、終端はexecutorのcompletionで確定する。
+  cancelとcompletionの競合は同じCASで解決し、最初の終端completionが勝つ。
+- 受付を記録するrepositoryが無い構成でacceptedが返った場合は、外部で開始済みの可能性があるため
+  `execution_unknown` で終端する（fail-closed）。
+- 滞留検知（#109）は、trusted completion待ちのasync実行を滞留として扱わない。
+- D1: migration `0022_async_action_executions.sql`。
