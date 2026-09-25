@@ -3,3 +3,4 @@ export * from "./clock.ts";
 export * from "./fixtures.ts";
 export * from "./id.ts";
 export * from "./audit-store.ts";
+export * from "./async-execution-store.ts";

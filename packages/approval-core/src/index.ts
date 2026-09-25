@@ -5,6 +5,7 @@ export * from "./action-event.ts";
 export * from "./action-execution.ts";
 export * from "./action-execution-record.ts";
 export * from "./action-request-lifecycle.ts";
+export * from "./async-action-execution.ts";
 export * from "./approval-flow-presentation.ts";
 export * from "./approver-resolver.ts";
 export * from "./attachment.ts";

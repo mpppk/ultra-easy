@@ -1,0 +1,23 @@
+{
+  "name": "@app/workflow-platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vp test --passWithNoTests"
+  },
+  "dependencies": {
+    "@app/approval-application": "workspace:*",
+    "@app/approval-core": "workspace:*",
+    "@app/approval-d1": "workspace:*",
+    "@app/expression-core": "workspace:*",
+    "@app/workflow-application": "workspace:*",
+    "@app/workflow-core": "workspace:*",
+    "@app/workflow-d1": "workspace:*",
+    "@app/workflow-sandbox": "workspace:*",
+    "@praha/byethrow": "^0.12.0"
+  }
+}

@@ -2,6 +2,7 @@ import type { OrganizationId } from "@app/approval-core";
 
 import { D1ActionEventRepository } from "./action-event-repository.ts";
 import { D1ActionResultProjectionRepository } from "./action-result-projection-repository.ts";
+import { D1AsyncActionExecutionRepository } from "./async-action-execution-repository.ts";
 import {
   D1PublishedActionDefinitionResolver,
   D1PublishedPolicyBindingResolver,
@@ -25,5 +26,6 @@ export function createD1ActionRequestPersistence(
     planRepository: new D1MaterializedPlanRepository(db),
     eventRepository: new D1ActionEventRepository(db),
     resultRepository: new D1ActionResultProjectionRepository(db),
+    asyncExecutions: new D1AsyncActionExecutionRepository(db),
   };
 }

@@ -1,0 +1,22 @@
+{
+  "name": "@app/workflow-d1",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@app/approval-core": "workspace:*",
+    "@app/workflow-application": "workspace:*",
+    "@app/workflow-core": "workspace:*",
+    "@praha/byethrow": "^0.12.0"
+  },
+  "devDependencies": {
+    "@app/approval-d1": "workspace:*",
+    "@app/expression-core": "workspace:*"
+  }
+}

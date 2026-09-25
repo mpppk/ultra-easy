@@ -1,0 +1,21 @@
+{
+  "name": "@app/workflow-sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts",
+    "./workerd": "./src/workerd.ts"
+  },
+  "scripts": {
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@app/expression-core": "workspace:*",
+    "@app/workflow-core": "workspace:*",
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "@praha/byethrow": "^0.12.0",
+    "quickjs-emscripten-core": "0.32.0"
+  }
+}

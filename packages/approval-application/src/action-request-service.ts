@@ -5,6 +5,7 @@ import {
   actionExecutionOutcomeEvents,
   actionExecutionStartEvents,
   actionPlanAuditEvents,
+  asyncExecutionAcceptedEvents,
   authorizeActionRequest,
   canonicalizeJson,
   createActionExecutionIdempotencyKey,
@@ -27,9 +28,11 @@ import type {
   ApprovalPlanEvaluation,
   ActionDefinition,
   ActionDefinitionResolver,
+  ActionExecutionGuaranteeLevel,
   ActionExecutor,
   ActionRequest,
   ActionRequestId,
+  AsyncActionExecutionRepository,
   ActionRequestStatus,
   ActionResultRecord,
   ActionResultRepository,
@@ -221,6 +224,11 @@ export type ActionRequestApplicationServiceDependencies = {
   eventRepository: ActionEventRepository;
   /** 承認不要の同期実行の結果（Workflow経路のaction_resultsと同じread model）。 */
   resultRepository: ActionResultRepository;
+  /**
+   * async executor（Composite Action等）の受付記録（#165）。acceptedを返すexecutorを使う場合は必須。
+   * 未設定でacceptedが返った場合はexecution_unknownで終端する。
+   */
+  asyncExecutions?: AsyncActionExecutionRepository;
   workflowStarter: ActionWorkflowStarter;
   idGenerator: ActionRequestIdGenerator;
 };
@@ -373,8 +381,13 @@ export class ActionRequestApplicationService {
   async evaluate(input: {
     action: Action;
     trustedContext: TrustedActionRequestContext;
+    /**
+     * 同じtrust boundary内の呼び出し元（Workflow Runtimeのchild Action等）が、冪等な作成のために
+     * 決定的なActionRequest IDを指定する。外部入力から渡してはならない。
+     */
+    actionRequestId?: ActionRequestId;
   }): Result.ResultAsync<ActionRequestEvaluation, ActionRequestApplicationError> {
-    const actionRequestId = this.dependencies.idGenerator.next();
+    const actionRequestId = input.actionRequestId ?? this.dependencies.idGenerator.next();
 
     const definition = await this.dependencies.actionDefinitionResolver.resolve(input.action.type);
     if (Result.isFailure(definition)) {
@@ -542,6 +555,7 @@ export class ActionRequestApplicationService {
     action: Action;
     trustedContext: TrustedActionRequestContext;
     clientReference?: string;
+    actionRequestId?: ActionRequestId;
   }): Result.ResultAsync<ActionRequestPreparation, ActionRequestApplicationError> {
     const evaluated = await this.evaluate(input);
     if (Result.isFailure(evaluated)) return evaluated;
@@ -768,6 +782,19 @@ export class ActionRequestApplicationService {
       );
     }
 
+    if (executed.value.type === "accepted") {
+      return this.recordAccepted({
+        request,
+        plan,
+        now,
+        initialEvents,
+        authorizationEvidence,
+        idempotencyKey,
+        guaranteeLevel: executed.value.guaranteeLevel,
+        executionRef: executed.value.executionRef,
+      });
+    }
+
     const recorded = await this.recordResult({
       ...base,
       status: "executed",
@@ -794,6 +821,89 @@ export class ActionRequestApplicationService {
             : {}),
         },
       }),
+    });
+  }
+
+  /**
+   * async executorが受け付けた実行を記録する（#165）。ActionRequestは`executing`に留まり、
+   * 最終結果はtrusted completion（`ActionExecutionCompletionService`）でだけ確定する。
+   * 受付を記録できるrepositoryが無い構成では、外部で開始済みの可能性があるため
+   * `execution_unknown`で終端して人手のreconcileへ回す（fail-closed）。
+   */
+  private async recordAccepted(input: {
+    request: ActionRequest;
+    plan: MaterializedApprovalPlan;
+    now: string;
+    initialEvents: readonly ActionEventRecord[];
+    authorizationEvidence: AuthorizationEvidence;
+    idempotencyKey: string;
+    guaranteeLevel: ActionExecutionGuaranteeLevel;
+    executionRef: string;
+  }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
+    const { plan, request, now } = input;
+    const actionRequestId = plan.actionRequestId;
+    const repository = this.dependencies.asyncExecutions;
+    if (!repository) {
+      const recorded = await this.recordResult({
+        organizationId: plan.organizationId,
+        actionRequestId,
+        completedAt: now,
+        status: "execution_unknown",
+        authorizationEvidence: input.authorizationEvidence,
+        idempotencyKey: input.idempotencyKey,
+        guaranteeLevel: input.guaranteeLevel,
+        retriable: false,
+        code: "async_execution_not_supported",
+        message: "async executionの受付を記録するrepositoryが設定されていません",
+      });
+      if (Result.isFailure(recorded)) return recorded;
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "execution_failed",
+          false,
+          "async executionの受付を記録できません",
+          undefined,
+          "async_execution_not_supported",
+        ),
+      );
+    }
+    const events = asyncExecutionAcceptedEvents({
+      organizationId: plan.organizationId,
+      actionRequestId,
+      authorizationEvidence: input.authorizationEvidence,
+      idempotencyKey: input.idempotencyKey,
+      executionRef: input.executionRef,
+      acceptedAt: now,
+    });
+    const accepted = await repository.accept({
+      record: {
+        organizationId: plan.organizationId,
+        actionRequestId,
+        actionFingerprint: plan.actionFingerprint,
+        executionRef: input.executionRef,
+        idempotencyKey: input.idempotencyKey,
+        executorKey: plan.action.definition.executorKey,
+        guaranteeLevel: input.guaranteeLevel,
+        status: "accepted",
+        acceptedAt: now,
+      },
+      events,
+    });
+    if (Result.isFailure(accepted)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "audit_persistence_failed",
+          accepted.error.retriable,
+          accepted.error.message,
+        ),
+      );
+    }
+    return Result.succeed({
+      type: "accepted",
+      actionRequestId,
+      request,
+      plan,
+      view: requestView({ request, plan, events: [...input.initialEvents, ...events], now }),
     });
   }
 
