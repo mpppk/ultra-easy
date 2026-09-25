@@ -221,4 +221,49 @@ export class D1RevisionRepository {
       (row) => (row ? toOutcome(row) : null),
     );
   }
+
+  outcomesForPage(pageId: string): Result.ResultAsync<PublicationOutcome[], KnowledgeStoreError> {
+    return mapResult(
+      this.sql.all<OutcomeRow>(
+        `SELECT o.publication_snapshot_id, o.status, o.reason, o.expected_lifecycle_version,
+           o.actual_lifecycle_version, o.recorded_at
+         FROM publication_outcomes o
+         JOIN publication_snapshots ps ON ps.id = o.publication_snapshot_id
+         WHERE ps.page_id = ?`,
+        pageId,
+      ),
+      (rows) => rows.map(toOutcome),
+    );
+  }
+
+  /**
+   * Conflicted publications of an author with no later publication attempt by
+   * the same author on the same page after the conflict was recorded.
+   */
+  unresolvedConflictsBy(
+    principalId: string,
+    limit: number,
+  ): Result.ResultAsync<
+    Array<{ snapshot: PublicationSnapshot; outcome: PublicationOutcome }>,
+    KnowledgeStoreError
+  > {
+    return mapResult(
+      this.sql.all<SnapshotRow & OutcomeRow>(
+        `SELECT ps.id, ps.page_id, ps.revision_id, ps.revision_number, ps.space_id, ps.visibility,
+           ps.sensitivity, ps.expected_lifecycle_version, ps.created_by, ps.created_at,
+           o.publication_snapshot_id, o.status, o.reason, o.actual_lifecycle_version, o.recorded_at
+         FROM publication_snapshots ps
+         JOIN publication_outcomes o ON o.publication_snapshot_id = ps.id
+         WHERE ps.created_by = ? AND o.status = 'conflict'
+           AND NOT EXISTS (
+             SELECT 1 FROM publication_snapshots newer
+             WHERE newer.page_id = ps.page_id AND newer.created_by = ps.created_by
+               AND newer.created_at > o.recorded_at)
+         ORDER BY o.recorded_at DESC LIMIT ?`,
+        principalId,
+        limit,
+      ),
+      (rows) => rows.map((row) => ({ snapshot: toSnapshot(row), outcome: toOutcome(row) })),
+    );
+  }
 }

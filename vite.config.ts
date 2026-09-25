@@ -9,7 +9,7 @@ export default defineConfig({
   fmt: {
     // TanStack Routerが`vp dev`/`vp test`のたびに独自formatで再生成するため、
     // oxfmtの対象から外して差分が出ないようにする。
-    ignorePatterns: ["apps/web/src/routeTree.gen.ts"],
+    ignorePatterns: ["apps/web/src/routeTree.gen.ts", "apps/knowledge/src/routeTree.gen.ts"],
   },
   lint: {
     jsPlugins: [
@@ -53,6 +53,7 @@ export default defineConfig({
           "packages/approval-core/src/domain/brand.ts",
           "packages/approval-core/src/uri.ts",
           "apps/web/src/routeTree.gen.ts",
+          "apps/knowledge/src/routeTree.gen.ts",
         ],
         rules: {
           "eslint-js/no-restricted-syntax": [

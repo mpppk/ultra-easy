@@ -1,5 +1,8 @@
 {
   "include": ["**/*.ts", "**/*.tsx"],
+  // apps/knowledge is a second TanStack Start app: its router module augmentation
+  // (Register / FileRoutesByPath) would clash with apps/web, so it has its own project.
+  "exclude": ["node_modules", "apps/knowledge"],
   "compilerOptions": {
     "target": "ES2022",
     "jsx": "react-jsx",
