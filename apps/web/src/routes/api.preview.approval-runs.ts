@@ -1,18 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { isPreviewScenario } from "../preview/scenarios.ts";
-import {
-  isPreviewHarnessEnabled,
-  json,
-  previewNotFound,
-  startPreviewRun,
-} from "../preview/server.ts";
+import { authorizePreviewRequest, json, startPreviewRun } from "../preview/server.ts";
 
 export const Route = createFileRoute("/api/preview/approval-runs")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        if (!isPreviewHarnessEnabled()) return previewNotFound();
+        const denied = await authorizePreviewRequest(request);
+        if (denied) return denied;
         const body = await request.json().catch(() => null);
         const scenario =
           body && typeof body === "object" && "scenario" in body ? body.scenario : undefined;

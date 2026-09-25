@@ -73,9 +73,27 @@ Both commands are also executed by the repository check workflow so Preview-spec
 
 ## 3. Protect Preview URLs
 
-Worker version Preview URLs are public unless protected. Before using the approval harness with real data, protect Preview URLs with Cloudflare Access.
+Worker version Preview URLs are **public** unless protected. Without protection anyone who
+finds the URL could start runs, send decisions as an arbitrary `userId`, and force-cancel with an
+arbitrary `actor`, which pollutes the force-cancel audit (#97). Two layers apply:
 
-The application also fails closed in production: `/api/preview/approval-runs/*` returns 404 unless `PREVIEW_HARNESS_ENABLED` is exactly `true`.
+1. **Shared token (enforced by the app).** Every `/api/preview/*` handler requires the header
+   `x-preview-harness-token` to match the Worker secret `PREVIEW_HARNESS_TOKEN` (constant-time
+   comparison). Missing / wrong token → 401; secret not set → 403 `preview_harness_locked`, so a
+   fresh preview is locked until the secret exists. Set it once on the `ultra-easy` Worker (preview
+   versions share Worker secrets; production ignores it because the harness is disabled there):
+
+   ```bash
+   op read op://ultra-easy/PREVIEW_HARNESS_TOKEN/password | npx wrangler secret put PREVIEW_HARNESS_TOKEN
+   ```
+
+   The preview pages ask for the token (kept in `sessionStorage` only) and send it with each call.
+
+2. **Cloudflare Access (recommended).** Enable Access on Workers Preview URLs for the `ultra-easy`
+   Worker (Workers & Pages → ultra-easy → Settings → Domains & Routes → Preview URLs → Enable
+   Cloudflare Access) so the pages themselves are not reachable anonymously.
+
+The application also fails closed in production: `/api/preview/*` returns 404 unless `PREVIEW_HARNESS_ENABLED` is exactly `true`.
 
 Do not add `PREVIEW_HARNESS_ENABLED=true` to the production Wrangler configuration.
 

@@ -1,17 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import {
-  isPreviewHarnessEnabled,
-  json,
-  previewNotFound,
-  sendPreviewDecision,
-} from "../preview/server.ts";
+import { authorizePreviewRequest, json, sendPreviewDecision } from "../preview/server.ts";
 
 export const Route = createFileRoute("/api/preview/approval-runs/$id/decisions")({
   server: {
     handlers: {
       POST: async ({ params, request }) => {
-        if (!isPreviewHarnessEnabled()) return previewNotFound();
+        const denied = await authorizePreviewRequest(request);
+        if (denied) return denied;
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== "object") {
           return json({ error: "invalid decision payload" }, { status: 400 });
