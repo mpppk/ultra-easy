@@ -26,6 +26,11 @@ jobs:
         run: vp -C apps/web run build:preview
       - name: Dry-run Approval Runtime Preview
         run: vp -C apps/approval-runtime run deploy:dry-run
+      # #84: stagingとproductionのwrangler環境（non-inheritableなbinding宣言）を検証する。
+      - name: Dry-run Approval API (staging)
+        run: vp -C apps/approval-api run deploy:dry-run
+      - name: Dry-run Approval API (production)
+        run: vp -C apps/approval-api run deploy:dry-run:production
       - name: Start OpenFGA test server
         run: |
           docker run --rm -d --name openfga-test -p 8080:8080 openfga/openfga:v1.18.1 run

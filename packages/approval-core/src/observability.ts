@@ -109,6 +109,8 @@ export type SafeLogAttributes = {
   httpStatus?: number;
   /** edgeのrequest ID（`cf-ray`）。ActionRequest確定前の失敗もこれで相関する。 */
   requestId?: string;
+  /** 欠落・不正な設定の名前（comma区切り。値は含めない）。#84 */
+  configKeys?: string;
 };
 
 export type SafeLogEvent =
