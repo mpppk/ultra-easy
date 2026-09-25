@@ -115,7 +115,14 @@ export type ActionWorkflowEnv = ActionExecutionWorkflowEnv & {
 };
 
 type RuntimeTransition =
-  | { type: "advanced"; state: ApprovalRuntimeState }
+  | {
+      type: "advanced";
+      state: ApprovalRuntimeState;
+      /** projectionのversion（#89 CAS）。旧versionのstep結果から再開した場合は無い。 */
+      version?: number;
+      /** force-cancel等でWorkflow外から終端され、そのstateを採用した。 */
+      superseded?: boolean;
+    }
   | { type: "failed"; code: string; message: string }
   | { type: "retry"; error: Error };
 type RuntimeFailure = Extract<RuntimeTransition, { type: "failed" }>;
@@ -262,27 +269,57 @@ function resolverFor(
   );
 }
 
+/**
+ * runtime projectionをcompare-and-setで保存する（#89）。Workflowとforce-cancelの2つのwriterが
+ * 競合しても状態を巻き戻さない。Workflow外から終端されていれば、そのstateを採用して終了する。
+ */
 async function persistProjection(input: {
   env: ActionWorkflowEnv;
   plan: MaterializedApprovalPlan;
   previousState: ApprovalRuntimeState | null;
   state: ApprovalRuntimeState;
   workflowInstanceId?: string;
+  /** null = 新規作成。undefined = versionを持たない旧step結果からの再開（現在値を読む）。 */
+  expectedVersion: number | null | undefined;
+  writer: string;
 }): Promise<RuntimeTransition> {
+  const repository = new D1ApprovalRuntimeProjectionRepository(input.env.DB);
+  let expectedVersion = input.expectedVersion;
+  if (expectedVersion === undefined) {
+    const current = await repository.loadVersioned({
+      organizationId: input.plan.organizationId,
+      actionRequestId: input.plan.actionRequestId,
+    });
+    if (Result.isFailure(current)) return retry(current.error);
+    expectedVersion = current.value?.version ?? null;
+  }
   const events = actionRuntimeTransitionEvents({
     plan: input.plan,
     previousState: input.previousState,
     nextState: input.state,
     ...(input.workflowInstanceId ? { workflowInstanceId: input.workflowInstanceId } : {}),
   });
-  const stored = await new D1ApprovalRuntimeProjectionRepository(input.env.DB).replace({
+  const stored = await repository.compareAndReplace({
     organizationId: input.plan.organizationId,
     state: input.state,
     events,
+    expectedVersion,
+    writer: input.writer,
   });
   if (Result.isFailure(stored)) return retry(stored.error);
+  if (stored.value.type === "conflict") {
+    const current = stored.value.current;
+    if (current && current.state.status !== "pending") {
+      return { type: "advanced", state: current.state, version: current.version, superseded: true };
+    }
+    return {
+      type: "failed",
+      code: "approval_runtime_projection_conflict",
+      message: "runtime projectionが別のwriterによって更新されました",
+    };
+  }
   emitDomainEventTelemetry(new ConsoleTelemetrySink(), events);
-  return { type: "advanced", state: input.state };
+  return { type: "advanced", state: stored.value.state, version: stored.value.version };
 }
 
 async function initializeRuntime(
@@ -311,6 +348,8 @@ async function initializeRuntime(
     previousState: null,
     state: started.value,
     workflowInstanceId,
+    expectedVersion: null,
+    writer: "initialize approval runtime",
   });
 }
 
@@ -362,12 +401,15 @@ async function rejectDecision(
   return { type: "decision_rejected", code: error.code };
 }
 
+type RuntimeCursor = { state: ApprovalRuntimeState; version: number | undefined; writer: string };
+
 async function recordDecision(
   env: ActionWorkflowEnv,
   params: ActionWorkflowParams,
-  state: ApprovalRuntimeState,
+  cursor: RuntimeCursor,
   event: ApprovalDecisionEvent,
 ): Promise<DecisionTransition> {
+  const { state } = cursor;
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
     organizationId: params.organizationId,
@@ -392,15 +434,29 @@ async function recordDecision(
     plan: loaded.plan,
     previousState: state,
     state: recorded.value.state,
+    expectedVersion: cursor.version,
+    writer: cursor.writer,
   });
   if (persisted.type !== "advanced") return persisted;
 
   // commandの「applied」はWorkflowがDecisionを受理した時点で確定する（配送済みとは区別する）。
+  // Workflow外で終端されていた（force-cancel）場合、Decisionは適用されていない。
   const resolved = await new D1PublicApiRepository(env.DB).resolveOutcome({
     organizationId: loaded.plan.organizationId,
     commandId: event.idempotencyKey,
-    status: "applied",
+    status: persisted.superseded ? "rejected" : "applied",
     resolvedAt: event.decidedAt,
+    ...(persisted.superseded
+      ? {
+          error: {
+            type: "urn:ultra-easy:problem:action_request_not_pending",
+            title: "Decisionは受理されませんでした",
+            status: 409,
+            code: "action_request_not_pending",
+            detail: `ActionRequestは既に${persisted.state.status}です`,
+          },
+        }
+      : {}),
   });
   if (Result.isFailure(resolved)) return retryOnCommandFailure(resolved.error);
   return persisted;
@@ -409,9 +465,10 @@ async function recordDecision(
 async function advanceRuntime(
   env: ActionWorkflowEnv,
   params: ActionWorkflowParams,
-  state: ApprovalRuntimeState,
+  cursor: RuntimeCursor,
   now: string,
 ): Promise<RuntimeTransition> {
+  const { state } = cursor;
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
     organizationId: params.organizationId,
@@ -432,15 +489,18 @@ async function advanceRuntime(
     plan: loaded.plan,
     previousState: state,
     state: advanced.value,
+    expectedVersion: cursor.version,
+    writer: cursor.writer,
   });
 }
 
 async function expireRuntime(
   env: ActionWorkflowEnv,
   params: ActionWorkflowParams,
-  state: ApprovalRuntimeState,
+  cursor: RuntimeCursor,
   now: string,
 ): Promise<RuntimeTransition> {
+  const { state } = cursor;
   const repository = new D1MaterializedPlanRepository(env.DB);
   const loaded = await repository.loadForWorkflow({
     organizationId: params.organizationId,
@@ -461,6 +521,8 @@ async function expireRuntime(
     plan: loaded.plan,
     previousState: state,
     state: expired.value,
+    expectedVersion: cursor.version,
+    writer: cursor.writer,
   });
 }
 
@@ -631,18 +693,19 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
     if (initialized.type === "failed") return outputFromTransition(params, initialized);
 
     let state = initialized.state;
+    let version = initialized.version;
+    const cursor = (writer: string): RuntimeCursor => ({ state, version, writer });
     let iteration = 0;
     while (state.status === "pending") {
       const nextExpiry = nextApprovalRuntimeExpiry(state);
       if (nextExpiry && Date.parse(nextExpiry) <= Date.parse(logicalNow)) {
-        const expired = await runRuntimeStep(
-          step,
-          `expire approval runtime ${iteration}`,
-          params,
-          () => expireRuntime(this.env, params, state, nextExpiry),
+        const name = `expire approval runtime ${iteration}`;
+        const expired = await runRuntimeStep(step, name, params, () =>
+          expireRuntime(this.env, params, cursor(name), nextExpiry),
         );
         if (expired.type === "failed") return outputFromTransition(params, expired);
         state = expired.state;
+        version = expired.version;
         logicalNow = nextExpiry;
         iteration += 1;
         continue;
@@ -666,14 +729,13 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
       }
       if (decision.type === "timeout") {
         if (nextExpiry) {
-          const expired = await runRuntimeStep(
-            step,
-            `expire approval runtime ${iteration}`,
-            params,
-            () => expireRuntime(this.env, params, state, nextExpiry),
+          const name = `expire approval runtime ${iteration}`;
+          const expired = await runRuntimeStep(step, name, params, () =>
+            expireRuntime(this.env, params, cursor(name), nextExpiry),
           );
           if (expired.type === "failed") return outputFromTransition(params, expired);
           state = expired.state;
+          version = expired.version;
           logicalNow = nextExpiry;
         } else {
           logicalNow = addSeconds(logicalNow, timeout.seconds);
@@ -682,11 +744,9 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         continue;
       }
 
-      const recorded = await runRuntimeStep(
-        step,
-        `record approval decision ${iteration}`,
-        params,
-        () => recordDecision(this.env, params, state, decision.event),
+      const recordName = `record approval decision ${iteration}`;
+      const recorded = await runRuntimeStep(step, recordName, params, () =>
+        recordDecision(this.env, params, cursor(recordName), decision.event),
       );
       if (recorded.type === "failed") return outputFromTransition(params, recorded);
       if (recorded.type === "decision_rejected") {
@@ -698,16 +758,17 @@ export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, Action
         continue;
       }
       state = recorded.state;
+      version = recorded.version;
       logicalNow = decision.event.decidedAt;
+      if (state.status !== "pending" && recorded.superseded) break;
 
-      const advanced = await runRuntimeStep(
-        step,
-        `activate approval runtime ${iteration}`,
-        params,
-        () => advanceRuntime(this.env, params, state, logicalNow),
+      const activateName = `activate approval runtime ${iteration}`;
+      const advanced = await runRuntimeStep(step, activateName, params, () =>
+        advanceRuntime(this.env, params, cursor(activateName), logicalNow),
       );
       if (advanced.type === "failed") return outputFromTransition(params, advanced);
       state = advanced.state;
+      version = advanced.version;
       iteration += 1;
     }
 

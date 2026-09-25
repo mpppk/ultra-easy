@@ -135,6 +135,12 @@ function createRepository() {
   sqlite.exec(
     readFileSync(new URL("../migrations/0007_action_events.sql", import.meta.url), "utf8"),
   );
+  sqlite.exec(
+    readFileSync(
+      new URL("../migrations/0016_runtime_projection_version.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const database = new SqliteD1Database(sqlite);
   return { repository: new D1ApprovalRuntimeProjectionRepository(database), sqlite };
 }
@@ -214,5 +220,75 @@ describe("D1ApprovalRuntimeProjectionRepository", () => {
       )
       .get(organizationId, actionRequestId) as { status: string; updated_at: string } | undefined;
     expect(runtime).toEqual({ status: "approved", updated_at: "2026-09-13T00:02:00.000Z" });
+  });
+
+  it("#89: compareAndReplaceはversion不一致で何も書かず、同じwriterのretryは冪等に扱う", async () => {
+    const { repository, sqlite } = createRepository();
+    const created = await repository.compareAndReplace({
+      organizationId,
+      state: state(),
+      expectedVersion: null,
+      writer: "workflow:initialize",
+    });
+    assert(Result.isSuccess(created));
+    expect(created.value).toMatchObject({ type: "written", version: 1 });
+
+    const cancelled = { ...state(), status: "cancelled" as const };
+    const cancel = await repository.compareAndReplace({
+      organizationId,
+      state: cancelled,
+      expectedVersion: 1,
+      writer: "force-cancel",
+    });
+    assert(Result.isSuccess(cancel));
+    expect(cancel.value).toMatchObject({ type: "written", version: 2 });
+
+    // 古いversionを前提にしたWorkflowの承認は、projection / task / eventのどれも書かない
+    const approved = await repository.compareAndReplace({
+      organizationId,
+      state: state("approved"),
+      events: [
+        actionEventRecord({
+          organizationId,
+          occurredAt: "2026-09-13T00:02:00.000Z",
+          event: { type: "workflow.started", actionRequestId, workflowInstanceId: "wf-1" },
+        }),
+      ],
+      expectedVersion: 1,
+      writer: "workflow:record 0",
+    });
+    assert(Result.isSuccess(approved));
+    expect(approved.value).toMatchObject({
+      type: "conflict",
+      current: { version: 2, writer: "force-cancel", state: { status: "cancelled" } },
+    });
+    const loaded = await repository.loadVersioned({ organizationId, actionRequestId });
+    assert(Result.isSuccess(loaded));
+    expect(loaded.value).toMatchObject({ version: 2, state: { status: "cancelled" } });
+    expect(sqlite.prepare("SELECT status FROM approval_tasks").all()).toEqual([
+      { status: "pending" },
+    ]);
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM action_events").get()).toEqual({
+      count: 0,
+    });
+
+    // 同じwriterの再実行（step retry）は自分の書き込みとして成功扱い
+    const retried = await repository.compareAndReplace({
+      organizationId,
+      state: cancelled,
+      expectedVersion: 1,
+      writer: "force-cancel",
+    });
+    assert(Result.isSuccess(retried));
+    expect(retried.value).toMatchObject({ type: "written", version: 2 });
+
+    const duplicateCreate = await repository.compareAndReplace({
+      organizationId,
+      state: state(),
+      expectedVersion: null,
+      writer: "workflow:other-initialize",
+    });
+    assert(Result.isSuccess(duplicateCreate));
+    expect(duplicateCreate.value.type).toBe("conflict");
   });
 });

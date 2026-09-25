@@ -111,6 +111,7 @@ function database(): SqliteD1Database {
     "0006_public_api.sql",
     "0014_api_idempotency_lease.sql",
     "0015_approval_command_delivery.sql",
+    "0016_runtime_projection_version.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
   }

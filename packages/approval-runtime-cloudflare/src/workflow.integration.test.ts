@@ -901,4 +901,114 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       postReviewRequired: true,
     });
   });
+
+  async function waitForPendingProjection(plan: MaterializedApprovalPlan) {
+    const runtimeRepository = new D1ApprovalRuntimeProjectionRepository(testEnv.DB);
+    await vi.waitFor(
+      async () => {
+        const projection = await runtimeRepository.load({
+          organizationId,
+          actionRequestId: plan.actionRequestId,
+        });
+        assert(Result.isSuccess(projection));
+        expect(projection.value?.status).toBe("pending");
+        expect(projection.value?.tasks).toHaveLength(1);
+      },
+      { timeout: 1_500 },
+    );
+  }
+
+  it("#89: terminateできずWorkflowが生きていても、force-cancel後のDecisionでprojectionは後退しない", async () => {
+    const approval = await directStep("race", bob, "root");
+    const plan = await validPlan("cf-cancel-race", approval);
+    await savePlan(plan);
+    const id = await actionWorkflowInstanceId(plan);
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    const instance = await createInstance(plan, id);
+    await waitForPendingProjection(plan);
+
+    // control planeの障害でterminateが失敗しても、cancelはD1のCASで確定する
+    const cancelled = await new CloudflareWorkflowCancellationControl(testEnv.DB, {
+      get: async () => ({
+        status: async () => ({ status: "waiting" as const }),
+        terminate: () => Promise.reject(new Error("control plane unavailable")),
+      }),
+    }).cancel({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+      cancelledAt: "2026-09-13T00:05:00.000Z",
+    });
+    assert(Result.isSuccess(cancelled));
+    expect(cancelled.value).toEqual({ duplicate: false });
+
+    await instance.sendEvent({
+      type: "approval-decision",
+      payload: decision(plan, approval, bob, "late-approve"),
+    });
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({
+      type: "completed",
+      status: "cancelled",
+    });
+    await introspector.dispose();
+
+    const projection = await new D1ApprovalRuntimeProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(projection));
+    expect(projection.value?.status).toBe("cancelled");
+    expect(projection.value?.tasks[0]).toMatchObject({ status: "cancelled", decisions: [] });
+    const actionResult = await new D1ActionResultProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(actionResult));
+    expect(actionResult.value).toBeNull();
+    const audit = await new D1ActionEventRepository(testEnv.DB).listForAction({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(audit));
+    const types = audit.value.map((record) => record.event.type);
+    expect(types).not.toContain("step.approved");
+    expect(types.filter((type) => type === "action.completed")).toHaveLength(1);
+  });
+
+  it("#89: approved以降（実行済み）のActionRequestはforce-cancelできず、cancelledとして記録されない", async () => {
+    const approval = await directStep("executed", bob, "root");
+    const plan = await validPlan("cf-cancel-after-execute", approval);
+    await savePlan(plan);
+    const id = await actionWorkflowInstanceId(plan);
+    const instance = await createInstance(plan, id);
+    await instance.sendEvent({
+      type: "approval-decision",
+      payload: decision(plan, approval, bob, "approve-before-cancel"),
+    });
+    await expectCompleted(id, "executed");
+
+    const cancelled = await new CloudflareWorkflowCancellationControl(
+      testEnv.DB,
+      testEnv.ACTION_WORKFLOW,
+    ).cancel({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+      cancelledAt: new Date().toISOString(),
+    });
+    assert(Result.isFailure(cancelled));
+    expect(cancelled.error.code).toBe("force_cancel_target_not_pending");
+
+    const projection = await new D1ApprovalRuntimeProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(projection));
+    expect(projection.value?.status).toBe("approved");
+    const actionResult = await new D1ActionResultProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(actionResult));
+    expect(actionResult.value?.status).toBe("executed");
+  });
 });
