@@ -37,7 +37,7 @@ Use `main` as the production branch and disable non-production branch builds for
 vp -C apps/approval-runtime run deploy:preview
 ```
 
-The runtime Wrangler configuration declares a draft D1 binding (`DB`) without an account-specific resource ID. Wrangler automatic provisioning creates and links the D1 database on the first deploy. The deploy script then applies `packages/approval-d1/migrations` to the remote database.
+The runtime Wrangler configuration declares a draft D1 binding (`DB`) without an account-specific resource ID. Wrangler automatic provisioning creates and links the D1 database on the first deploy, so the very first deploy must use `vp -C apps/approval-runtime run bootstrap:preview` (deploy → migrate). After that, `deploy:preview` applies `packages/approval-d1/migrations` first and then deploys (migrate → deploy, #100; migrations must be expand / contract compatible, see `docs/runbooks/migration-rollback.md`).
 
 The Worker has `workers_dev=false`, so it is not intended to expose a public `workers.dev` endpoint. It is consumed by the Web Worker through a Service Binding.
 

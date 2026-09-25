@@ -1,0 +1,50 @@
+name: deploy
+
+# #100: reproducible CD for approval-api. Run manually from the Actions tab.
+# - The GitHub environment (`staging` / `production`) holds CLOUDFLARE_API_TOKEN (secret) and
+#   CLOUDFLARE_ACCOUNT_ID (variable). Configure required reviewers on `production` so every
+#   production deploy is approved by a human (environment protection).
+# - Order is migrate -> deploy. Migrations must stay backward compatible with the running
+#   revision (expand / contract, docs/runbooks/migration-rollback.md).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-approval-api-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  deploy:
+    needs: check
+    # Production deploys only from main.
+    if: inputs.environment == 'staging' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: voidzero-dev/setup-vp@49c3e4e92c52e7f8392712a9267bbe71c5ab30e5 # v1.19.0
+        with:
+          node-version: "24"
+          cache: true
+      - name: Install dependencies
+        run: vp install
+      - name: Migrate then deploy
+        run: vp -C apps/approval-api run "deploy:${TARGET_ENVIRONMENT}"
+      - name: Record deployed revision
+        run: echo "Deployed ${GITHUB_SHA} to ${TARGET_ENVIRONMENT}" >> "$GITHUB_STEP_SUMMARY"
