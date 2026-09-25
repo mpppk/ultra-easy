@@ -56,6 +56,20 @@ export function markdownExcerpt(markdown: string, maxLength = 180): string {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1).trimEnd()}…` : text;
 }
 
+/**
+ * Strips Markdown syntax from an FTS snippet while keeping the highlight
+ * markers (\u0002 / \u0003) intact: link targets, heading marks, emphasis.
+ */
+export function plainSnippet(snippet: string): string {
+  return snippet
+    .replace(/\]\([^)]*\)?/g, "")
+    .replace(/[[\]]/g, "")
+    .replace(/(^|\s)#{1,6}\s+/g, "$1")
+    .replace(/[*_`>|~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function wordCount(markdown: string): number {
   return markdown.split(/\s+/u).filter((word) => /[\p{L}\p{N}]/u.test(word)).length;
 }

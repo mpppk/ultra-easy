@@ -58,7 +58,8 @@ export type HomeView = {
     state: "draft" | "unpublished_changes";
   }>;
   attention: AttentionItem[];
-  canCreatePage: boolean;
+  /** Spaces where the caller may create pages. */
+  creatableSpaces: Array<{ key: string; name: string }>;
   /** Sections that could not be loaded (the rest still renders). */
   failedSections: Array<"recentlyPublished" | "recentlyEdited" | "attention">;
 };

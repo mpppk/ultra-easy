@@ -14,3 +14,5 @@ todos.json
 .dev.vars
 .dev.vars.*
 tests/staging/.last-*.json
+test-results
+playwright-report

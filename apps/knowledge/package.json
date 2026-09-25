@@ -12,10 +12,13 @@
   "scripts": {
     "dev": "vp dev --port 3001",
     "test": "vp test",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "build": "vp build",
     "preview": "vp preview",
     "generate-routes": "tsr generate",
     "db:migrate:local": "wrangler d1 migrations apply KNOWLEDGE_DB --local && wrangler d1 migrations apply ULTRA_EASY_MOCK_DB --local",
+    "deploy:dry-run": "vp build && wrangler deploy --dry-run",
+    "bootstrap": "vp build && wrangler deploy && wrangler d1 migrations apply KNOWLEDGE_DB --remote && wrangler d1 migrations apply ULTRA_EASY_MOCK_DB --remote",
     "deploy": "vp build && wrangler d1 migrations apply KNOWLEDGE_DB --remote && wrangler d1 migrations apply ULTRA_EASY_MOCK_DB --remote && wrangler deploy"
   },
   "dependencies": {
@@ -42,6 +45,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.26.0",
     "@cloudflare/workers-types": "^5.20260911.1",
+    "@playwright/test": "^1.55.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/router-cli": "^1.132.0",
     "@types/react": "^19.2.0",

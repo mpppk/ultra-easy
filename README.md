@@ -8,7 +8,10 @@ bun workspaceのmonorepoです。workspace rootには実装を置かず、アプ
 
 ```text
 apps/web/                 TanStack Start + Cloudflare Workers アプリ
+apps/knowledge/           Knowledge Workspace サンプルアプリ (#167, apps/knowledge/README.md)
 packages/approval-core/   承認ワークフローのdomain core (@app/approval-core)
+packages/knowledge-core/  Knowledge Workspaceのdomain (@app/knowledge-core)
+packages/knowledge-d1/    Knowledge WorkspaceのD1 migration / repository (@app/knowledge-d1)
 tests/                    milestone横断のacceptance suite
 ```
 

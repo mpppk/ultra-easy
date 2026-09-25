@@ -10,6 +10,7 @@ import {
   hasUnpublishedChanges,
   isStale,
   pageAccess,
+  plainSnippet,
   readScope,
   saveDraftInputSchema,
   validatePublicationSnapshot,
@@ -218,5 +219,15 @@ describe("text helpers", () => {
         expectedVersion: 0,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("snippets", () => {
+  it("drops Markdown syntax but keeps highlight markers", () => {
+    expect(
+      plainSnippet(
+        "# \u0002Deploying\u0003 see [guide](/spaces/eng/pages/pg_\u0002deploy\u0003) and **bold**",
+      ),
+    ).toBe("\u0002Deploying\u0003 see guide and bold");
   });
 });

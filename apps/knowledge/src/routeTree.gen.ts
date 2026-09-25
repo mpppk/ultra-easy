@@ -9,54 +9,230 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as AppAutomationRouteImport } from './routes/_app.automation'
+import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
+import { Route as AppSpacesIndexRouteImport } from './routes/_app.spaces.index'
+import { Route as AppSpacesSpaceKeyIndexRouteImport } from './routes/_app.spaces.$spaceKey.index'
+import { Route as AppSpacesSpaceKeySettingsRouteImport } from './routes/_app.spaces.$spaceKey.settings'
+import { Route as MockUltraEasyApprovalsTaskIdRouteImport } from './routes/mock.ultra-easy.approvals.$taskId'
+import { Route as AppSpacesSpaceKeyPagesPageIdIndexRouteImport } from './routes/_app.spaces.$spaceKey.pages.$pageId.index'
+import { Route as AppSpacesSpaceKeyPagesPageIdEditRouteImport } from './routes/_app.spaces.$spaceKey.pages.$pageId.edit'
 
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAutomationRoute = AppAutomationRouteImport.update({
+  id: '/automation',
+  path: '/automation',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSearchRoute = AppSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => AppRoute,
 } as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppSpacesIndexRoute = AppSpacesIndexRouteImport.update({
+  id: '/spaces/',
+  path: '/spaces/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSpacesSpaceKeyIndexRoute = AppSpacesSpaceKeyIndexRouteImport.update({
+  id: '/spaces/$spaceKey/',
+  path: '/spaces/$spaceKey/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSpacesSpaceKeySettingsRoute =
+  AppSpacesSpaceKeySettingsRouteImport.update({
+    id: '/spaces/$spaceKey/settings',
+    path: '/spaces/$spaceKey/settings',
+    getParentRoute: () => AppRoute,
+  } as any)
+const MockUltraEasyApprovalsTaskIdRoute =
+  MockUltraEasyApprovalsTaskIdRouteImport.update({
+    id: '/mock/ultra-easy/approvals/$taskId',
+    path: '/mock/ultra-easy/approvals/$taskId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const AppSpacesSpaceKeyPagesPageIdIndexRoute =
+  AppSpacesSpaceKeyPagesPageIdIndexRouteImport.update({
+    id: '/spaces/$spaceKey/pages/$pageId/',
+    path: '/spaces/$spaceKey/pages/$pageId/',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppSpacesSpaceKeyPagesPageIdEditRoute =
+  AppSpacesSpaceKeyPagesPageIdEditRouteImport.update({
+    id: '/spaces/$spaceKey/pages/$pageId/edit',
+    path: '/spaces/$spaceKey/pages/$pageId/edit',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
+  '/': typeof AppIndexRoute
+  '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/automation': typeof AppAutomationRoute
+  '/search': typeof AppSearchRoute
   '/api/$': typeof ApiSplatRoute
+  '/spaces/': typeof AppSpacesIndexRoute
+  '/spaces/$spaceKey/settings': typeof AppSpacesSpaceKeySettingsRoute
+  '/mock/ultra-easy/approvals/$taskId': typeof MockUltraEasyApprovalsTaskIdRoute
+  '/spaces/$spaceKey/': typeof AppSpacesSpaceKeyIndexRoute
+  '/spaces/$spaceKey/pages/$pageId/edit': typeof AppSpacesSpaceKeyPagesPageIdEditRoute
+  '/spaces/$spaceKey/pages/$pageId/': typeof AppSpacesSpaceKeyPagesPageIdIndexRoute
 }
 export interface FileRoutesByTo {
+  '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/automation': typeof AppAutomationRoute
+  '/search': typeof AppSearchRoute
   '/api/$': typeof ApiSplatRoute
+  '/': typeof AppIndexRoute
+  '/spaces': typeof AppSpacesIndexRoute
+  '/spaces/$spaceKey/settings': typeof AppSpacesSpaceKeySettingsRoute
+  '/mock/ultra-easy/approvals/$taskId': typeof MockUltraEasyApprovalsTaskIdRoute
+  '/spaces/$spaceKey': typeof AppSpacesSpaceKeyIndexRoute
+  '/spaces/$spaceKey/pages/$pageId/edit': typeof AppSpacesSpaceKeyPagesPageIdEditRoute
+  '/spaces/$spaceKey/pages/$pageId': typeof AppSpacesSpaceKeyPagesPageIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/_app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
+  '/_app/automation': typeof AppAutomationRoute
+  '/_app/search': typeof AppSearchRoute
   '/api/$': typeof ApiSplatRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/spaces/': typeof AppSpacesIndexRoute
+  '/_app/spaces/$spaceKey/settings': typeof AppSpacesSpaceKeySettingsRoute
+  '/mock/ultra-easy/approvals/$taskId': typeof MockUltraEasyApprovalsTaskIdRoute
+  '/_app/spaces/$spaceKey/': typeof AppSpacesSpaceKeyIndexRoute
+  '/_app/spaces/$spaceKey/pages/$pageId/edit': typeof AppSpacesSpaceKeyPagesPageIdEditRoute
+  '/_app/spaces/$spaceKey/pages/$pageId/': typeof AppSpacesSpaceKeyPagesPageIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/mcp' | '/api/$'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/mcp'
+    | '/automation'
+    | '/search'
+    | '/api/$'
+    | '/spaces/'
+    | '/spaces/$spaceKey/settings'
+    | '/mock/ultra-easy/approvals/$taskId'
+    | '/spaces/$spaceKey/'
+    | '/spaces/$spaceKey/pages/$pageId/edit'
+    | '/spaces/$spaceKey/pages/$pageId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/mcp' | '/api/$'
-  id: '__root__' | '/mcp' | '/api/$'
+  to:
+    | '/login'
+    | '/mcp'
+    | '/automation'
+    | '/search'
+    | '/api/$'
+    | '/'
+    | '/spaces'
+    | '/spaces/$spaceKey/settings'
+    | '/mock/ultra-easy/approvals/$taskId'
+    | '/spaces/$spaceKey'
+    | '/spaces/$spaceKey/pages/$pageId/edit'
+    | '/spaces/$spaceKey/pages/$pageId'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/login'
+    | '/mcp'
+    | '/_app/automation'
+    | '/_app/search'
+    | '/api/$'
+    | '/_app/'
+    | '/_app/spaces/'
+    | '/_app/spaces/$spaceKey/settings'
+    | '/mock/ultra-easy/approvals/$taskId'
+    | '/_app/spaces/$spaceKey/'
+    | '/_app/spaces/$spaceKey/pages/$pageId/edit'
+    | '/_app/spaces/$spaceKey/pages/$pageId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
+  AppRoute: typeof AppRouteWithChildren
+  LoginRoute: typeof LoginRoute
   McpRoute: typeof McpRoute
   ApiSplatRoute: typeof ApiSplatRoute
+  MockUltraEasyApprovalsTaskIdRoute: typeof MockUltraEasyApprovalsTaskIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/mcp': {
       id: '/mcp'
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/automation': {
+      id: '/_app/automation'
+      path: '/automation'
+      fullPath: '/automation'
+      preLoaderRoute: typeof AppAutomationRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/search': {
+      id: '/_app/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof AppSearchRouteImport
+      parentRoute: typeof AppRoute
     }
     '/api/$': {
       id: '/api/$'
@@ -65,12 +241,82 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/spaces/': {
+      id: '/_app/spaces/'
+      path: '/spaces'
+      fullPath: '/spaces/'
+      preLoaderRoute: typeof AppSpacesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/spaces/$spaceKey/': {
+      id: '/_app/spaces/$spaceKey/'
+      path: '/spaces/$spaceKey'
+      fullPath: '/spaces/$spaceKey/'
+      preLoaderRoute: typeof AppSpacesSpaceKeyIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/spaces/$spaceKey/settings': {
+      id: '/_app/spaces/$spaceKey/settings'
+      path: '/spaces/$spaceKey/settings'
+      fullPath: '/spaces/$spaceKey/settings'
+      preLoaderRoute: typeof AppSpacesSpaceKeySettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/mock/ultra-easy/approvals/$taskId': {
+      id: '/mock/ultra-easy/approvals/$taskId'
+      path: '/mock/ultra-easy/approvals/$taskId'
+      fullPath: '/mock/ultra-easy/approvals/$taskId'
+      preLoaderRoute: typeof MockUltraEasyApprovalsTaskIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/spaces/$spaceKey/pages/$pageId/': {
+      id: '/_app/spaces/$spaceKey/pages/$pageId/'
+      path: '/spaces/$spaceKey/pages/$pageId'
+      fullPath: '/spaces/$spaceKey/pages/$pageId/'
+      preLoaderRoute: typeof AppSpacesSpaceKeyPagesPageIdIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/spaces/$spaceKey/pages/$pageId/edit': {
+      id: '/_app/spaces/$spaceKey/pages/$pageId/edit'
+      path: '/spaces/$spaceKey/pages/$pageId/edit'
+      fullPath: '/spaces/$spaceKey/pages/$pageId/edit'
+      preLoaderRoute: typeof AppSpacesSpaceKeyPagesPageIdEditRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
+interface AppRouteChildren {
+  AppAutomationRoute: typeof AppAutomationRoute
+  AppSearchRoute: typeof AppSearchRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppSpacesIndexRoute: typeof AppSpacesIndexRoute
+  AppSpacesSpaceKeySettingsRoute: typeof AppSpacesSpaceKeySettingsRoute
+  AppSpacesSpaceKeyIndexRoute: typeof AppSpacesSpaceKeyIndexRoute
+  AppSpacesSpaceKeyPagesPageIdEditRoute: typeof AppSpacesSpaceKeyPagesPageIdEditRoute
+  AppSpacesSpaceKeyPagesPageIdIndexRoute: typeof AppSpacesSpaceKeyPagesPageIdIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppAutomationRoute: AppAutomationRoute,
+  AppSearchRoute: AppSearchRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppSpacesIndexRoute: AppSpacesIndexRoute,
+  AppSpacesSpaceKeySettingsRoute: AppSpacesSpaceKeySettingsRoute,
+  AppSpacesSpaceKeyIndexRoute: AppSpacesSpaceKeyIndexRoute,
+  AppSpacesSpaceKeyPagesPageIdEditRoute: AppSpacesSpaceKeyPagesPageIdEditRoute,
+  AppSpacesSpaceKeyPagesPageIdIndexRoute:
+    AppSpacesSpaceKeyPagesPageIdIndexRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
+  AppRoute: AppRouteWithChildren,
+  LoginRoute: LoginRoute,
   McpRoute: McpRoute,
   ApiSplatRoute: ApiSplatRoute,
+  MockUltraEasyApprovalsTaskIdRoute: MockUltraEasyApprovalsTaskIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

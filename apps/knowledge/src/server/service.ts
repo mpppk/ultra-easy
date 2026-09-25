@@ -11,6 +11,7 @@ import {
   HUMAN_REVIEW_DECISIONS,
   newId,
   pageAccess,
+  plainSnippet,
   publishInputSchema,
   readScope,
   roleIn,
@@ -330,7 +331,7 @@ export class KnowledgeService {
       })),
       recentlyEdited,
       attention: Result.isSuccess(attention) ? attention.value : [],
-      canCreatePage: [...this.context.spaceRoles.values()].some((role) => role !== "viewer"),
+      creatableSpaces: await this.creatableSpaces(),
       failedSections,
     });
   }
@@ -441,6 +442,16 @@ export class KnowledgeService {
       });
     }
     return Result.succeed(items);
+  }
+
+  private async creatableSpaces(): Promise<Array<{ key: string; name: string }>> {
+    const ids = [...this.context.spaceRoles.keys()].filter((id) =>
+      hasSpaceCapability(this.context, id, "knowledge.page.create"),
+    );
+    const spaces = await this.repos.spaces.listByIds(this.organizationId, ids);
+    return Result.isSuccess(spaces)
+      ? spaces.value.map((space) => ({ key: space.key, name: space.name }))
+      : [];
   }
 
   private async spaceKeys(): Promise<Map<string, string>> {
@@ -817,7 +828,22 @@ export class KnowledgeService {
     else state = "failed_before_publish";
 
     const effectByKind = new Map(effects.map((effect) => [effect.effect, effect]));
-    const steps = (run?.nodes ?? []).map((node) => {
+    // Without a run (e.g. imported history) the domain ledger alone tells the story.
+    const nodes: RunNode[] =
+      run?.nodes ??
+      (outcome
+        ? [
+            {
+              key: "publish",
+              label: "Publish",
+              status: outcome.status === "published" ? "succeeded" : "failed",
+              ...(outcome.status === "conflict" ? { errorCode: "publication_conflict" } : {}),
+            },
+            { key: "reindex", label: "Search index", status: "pending" },
+            { key: "notify", label: "Notify watchers", status: "pending" },
+          ]
+        : []);
+    const steps = nodes.map((node) => {
       const effect = EFFECT_NODE[node.key]
         ? effectByKind.get(EFFECT_NODE[node.key] ?? "search_reindex")
         : undefined;
@@ -1321,7 +1347,7 @@ export class KnowledgeService {
       spaceKey: hit.spaceKey,
       spaceName: hit.spaceName,
       title: hit.title,
-      snippet: hit.snippet,
+      snippet: plainSnippet(hit.snippet),
       tags: hit.tags,
       badge: authoringBadge(hit),
       timestamp: hit.updatedAt,
@@ -1336,7 +1362,7 @@ export class KnowledgeService {
         spaceKey: hit.spaceKey,
         spaceName: hit.spaceName,
         title: hit.title,
-        snippet: hit.snippet,
+        snippet: plainSnippet(hit.snippet),
         tags: hit.tags,
         badge: "published",
         timestamp: hit.publishedAt,
