@@ -32,6 +32,32 @@ authorization mechanism.
 Sinks are fanned out by `CompositeTelemetrySink`, which isolates a failing sink so telemetry
 never breaks a request or Workflow step.
 
+Production code must not call `console.*` directly (`no-console` lint in `vite.config.ts`,
+#110); `ConsoleTelemetrySink` is the only console exit. Failures of telemetry itself are
+reported as `telemetry.failed` with a safe error code (e.g. `sli_source_unavailable` when the
+Workflow cannot read `action_events` to derive SLIs).
+
+### HTTP access log
+
+Both Workers wrap `fetch` in `withHttpAccessLog` (`packages/approval-application`), which emits
+for **every** response (including 4xx/5xx and unhandled exceptions):
+
+- `request.completed` log (`info` < 400, `warn` 4xx, `error` 5xx) with `method`, `route`
+  (route template such as `/v1/organizations/{organizationId}/action-requests/{actionRequestId}`,
+  never the raw path; unknown paths are `unmatched`), `httpStatus`, `durationMs`, `errorCode`
+  (the problem+json `code` only) and `requestId` (`cf-ray`).
+- `http.request_duration_ms` metric with the same attributes.
+
+Correlation: requests that address an ActionRequest correlate by `actionRequestId`; everything
+else (auth failures, parse errors, rate limits, Decision submissions before the ActionRequest is
+resolved) correlates by `request:<cf-ray>`.
+
+### Workflow SLI emission
+
+Terminal-Action SLIs are derived once in a dedicated non-retrying `emit action SLI` step after
+`project action result`. The step result is cached, so neither step retries nor Workflow replays
+emit duplicate SLI metrics.
+
 Allowed log attributes are deliberately small: status/result/error code/event type/step IDs,
 retry flags/counts, duration and queue depth. Do **not** add arbitrary objects to this contract.
 

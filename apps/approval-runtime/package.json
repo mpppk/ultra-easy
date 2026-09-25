@@ -9,6 +9,7 @@
     "deploy:dry-run": "wrangler deploy --dry-run"
   },
   "dependencies": {
+    "@app/approval-application": "workspace:*",
     "@app/approval-core": "workspace:*",
     "@app/approval-d1": "workspace:*",
     "@app/approval-runtime-cloudflare": "workspace:*",

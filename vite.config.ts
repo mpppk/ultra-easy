@@ -76,6 +76,21 @@ export default defineConfig({
         },
       },
       {
+        // #110: production codeのlogはTelemetrySink（JSON契約）へ統一する。consoleへの出口は
+        // ConsoleTelemetrySinkだけ（inlineでdisable）。test / testing / 運用scriptは対象外。
+        files: ["apps/*/src/**/*.{ts,tsx}", "packages/*/src/**/*.ts"],
+        excludeFiles: [
+          "**/*.test.ts",
+          "**/*.test.tsx",
+          "**/*.type-test.ts",
+          "**/testing/**",
+          "**/test-support.ts",
+        ],
+        rules: {
+          "no-console": "error",
+        },
+      },
+      {
         // 例外を投げるdecodeURIComponentをResultで包む唯一の場所。
         files: ["packages/approval-core/src/uri.ts"],
         rules: {

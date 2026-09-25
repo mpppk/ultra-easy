@@ -1,6 +1,10 @@
 import { Result } from "@praha/byethrow";
 
 import {
+  actionCorrelation,
+  ConsoleTelemetrySink,
+  safeLogRecord,
+  type TelemetrySink,
   actionRuntimeTransitionEvents,
   cancelApprovalRuntimeState,
   WorkflowCancellationError,
@@ -55,6 +59,7 @@ export class CloudflareWorkflowCancellationControl implements WorkflowCancellati
   constructor(
     private readonly db: D1DatabaseLike,
     private readonly workflow: WorkflowBindingControl,
+    private readonly telemetry: TelemetrySink = new ConsoleTelemetrySink(),
   ) {}
 
   async cancel(input: {
@@ -178,11 +183,21 @@ export class CloudflareWorkflowCancellationControl implements WorkflowCancellati
       ) {
         await instance.terminate();
       }
-    } catch (error) {
-      console.warn("force cancel workflow terminate failed", {
-        code: "force_cancel_workflow_control_failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
+    } catch {
+      // 例外messageはlogへ出さない（provider応答を含みうる）。safe error codeだけを残す（#110）。
+      this.telemetry.emit(
+        safeLogRecord({
+          level: "warn",
+          event: "workflow.failed",
+          correlation: actionCorrelation({
+            organizationId: input.organizationId,
+            actionRequestId: input.actionRequestId,
+            component: "workflow",
+            operation: "force_cancel.terminate",
+          }),
+          attributes: { errorCode: "force_cancel_workflow_control_failed" },
+        }),
+      );
     }
   }
 }

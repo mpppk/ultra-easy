@@ -103,6 +103,12 @@ export type SafeLogAttributes = {
   retryCount?: number;
   durationMs?: number;
   queueDepth?: number;
+  /** HTTP access log（#110）。routeはpathではなくroute template（IDを含めない）。 */
+  method?: string;
+  route?: string;
+  httpStatus?: number;
+  /** edgeのrequest ID（`cf-ray`）。ActionRequest確定前の失敗もこれで相関する。 */
+  requestId?: string;
 };
 
 export type SafeLogEvent =
@@ -110,6 +116,10 @@ export type SafeLogEvent =
   | "request.replayed"
   | "request.denied"
   | "request.failed"
+  /** 全HTTP応答のaccess log（route / status / latency）。 */
+  | "request.completed"
+  /** telemetry自体の失敗（SLIの元データを読めない等）。 */
+  | "telemetry.failed"
   | "workflow.retry"
   | "workflow.failed"
   | "executor.completed"
@@ -148,7 +158,9 @@ export type SliMetricName =
   /** retry上限・DLQでdeadになったoutbox。人手の確認が必要。 */
   | "outbox.dead_total"
   /** sink未設定等で配信をskipした（失敗ではない）。 */
-  | "notification.skipped_total";
+  | "notification.skipped_total"
+  /** HTTP応答の処理時間（#110）。attributes.httpStatus / routeで集計する。 */
+  | "http.request_duration_ms";
 
 export type MetricRecord = {
   kind: "metric";
@@ -349,6 +361,8 @@ export class MemoryTelemetrySink implements TelemetrySink {
  */
 export class ConsoleTelemetrySink implements TelemetrySink {
   emit(record: TelemetryRecord): void {
+    // telemetryの唯一のconsole出口（#110: それ以外のconsole.*はlintで禁止）。
+    // oxlint-disable-next-line no-console
     console.log(JSON.stringify(record));
   }
 }

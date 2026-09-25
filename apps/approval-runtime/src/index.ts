@@ -1,6 +1,8 @@
 import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
+import { withHttpAccessLog } from "@app/approval-application";
+
 import {
   ActionExecutorRegistry,
   decodeUriComponent,
@@ -342,7 +344,11 @@ async function forceCancelRun(
   }
   const executor = new GovernanceActionExecutor(
     new D1GovernanceRepository(env.DB),
-    new CloudflareWorkflowCancellationControl(env.DB, env.ACTION_WORKFLOW),
+    new CloudflareWorkflowCancellationControl(
+      env.DB,
+      env.ACTION_WORKFLOW,
+      telemetrySinkFromEnv(env),
+    ),
   );
   const executed = await executor.execute({
     organizationId: PREVIEW_ORGANIZATION_ID,
@@ -474,13 +480,31 @@ async function route(request: Request, env: PreviewRuntimeEnv): Promise<Response
   return new Response("Not Found", { status: 404 });
 }
 
+/** access log（#110）の対象route。 */
+const PREVIEW_RUNTIME_ROUTES = [
+  "/preview/approval-runs",
+  "/preview/approval-runs/{actionRequestId}",
+  "/preview/approval-runs/{actionRequestId}/decisions",
+  "/preview/approval-runs/{actionRequestId}/force-cancel",
+  "/operator/dashboard",
+];
+
 export default {
   async fetch(request: Request, env: PreviewRuntimeEnv): Promise<Response> {
-    try {
-      return await route(request, env);
-    } catch (error) {
-      return json({ error: errorMessage(error) }, { status: 500 });
-    }
+    return withHttpAccessLog(
+      async (logged) => {
+        try {
+          return await route(logged, env);
+        } catch (error) {
+          return json({ error: errorMessage(error) }, { status: 500 });
+        }
+      },
+      {
+        telemetry: telemetrySinkFromEnv(env),
+        routes: PREVIEW_RUNTIME_ROUTES,
+        defaultOrganizationId: PREVIEW_ORGANIZATION_ID,
+      },
+    )(request);
   },
 
   async scheduled(controller, env): Promise<void> {
