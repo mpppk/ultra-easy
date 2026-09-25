@@ -9,6 +9,7 @@ import type {
 } from "@app/workflow-core";
 
 import type { CompositeActionPublisher } from "./composite/lifecycle.ts";
+import type { CapabilityBroker } from "./governance/capability.ts";
 import type { WorkflowActionBinding } from "./composite/ports.ts";
 import type { WorkflowDraftRepository, WorkflowVersionRepository } from "./ports.ts";
 
@@ -40,6 +41,8 @@ export class WorkflowPublishingService {
       versions: WorkflowVersionRepository;
       drafts: WorkflowDraftRepository;
       composites: CompositeActionPublisher;
+      /** Program / LLM Nodeのcapability grantをpublish前にreviewする（#161）。 */
+      capabilities?: CapabilityBroker;
     },
   ) {}
 
@@ -92,6 +95,36 @@ export class WorkflowPublishingService {
           latest.error.message,
         ),
       );
+    }
+    if (this.deps.capabilities) {
+      const reviewed = await this.deps.capabilities.review({
+        organizationId: input.organizationId,
+        definition: input.definition,
+      });
+      if (Result.isFailure(reviewed)) {
+        return Result.fail(
+          new WorkflowPublishingError(
+            reviewed.error.code,
+            reviewed.error.retriable,
+            reviewed.error.message,
+          ),
+        );
+      }
+      const issues = reviewed.value.flatMap((review) => review.issues);
+      if (issues.length > 0) {
+        return Result.fail(
+          new WorkflowPublishingError(
+            "capability_review_failed",
+            false,
+            `capability grantが要求または組織policyを超えています（${issues.length}件）`,
+            issues.map((issue) => ({
+              code: issue.code,
+              location: `node[${issue.nodeId}]`,
+              message: issue.message,
+            })),
+          ),
+        );
+      }
     }
     const published = await publishWorkflowVersion({
       definition: input.definition,
