@@ -101,13 +101,19 @@ responses:
         schema:
           $ref: ./schemas-07.yaml#/Problem
   Forbidden:
-    description: 認証済みだが、このAPI操作自体を行う権限がない。
+    description: |-
+      認証済みだが、このAPI操作自体を行う権限がない。organization所属が確認できない
+      (organization_membership_required / organization_membership_unverified)、操作に必要なscope
+      （read:action-requests / write:action-requests）が無い (insufficient_scope)、user以外の
+      principalがuser限定操作を行った (machine_principal_not_allowed) 場合を含む。
     content:
       application/problem+json:
         schema:
           $ref: ./schemas-07.yaml#/Problem
   NotFound:
-    description: 対象resourceが存在しない、またはtenant boundary上公開しない。
+    description: |-
+      対象resourceが存在しない、またはtenant boundary上公開しない。読み取り権限の無いresource
+      （ActionRequestの関係者・operator以外、他人のDecision command）も存在を秘匿して404にする。
     content:
       application/problem+json:
         schema:

@@ -10,8 +10,10 @@ import {
 import type { Auth0IdentityProvider } from "./auth0-identity.ts";
 
 /**
- * Staging用のtrusted context。検証済みJWTのsubをactor/authorityの両方に使う
+ * Staging用のtrusted context。検証済みJWTのprincipal（user login → user、
+ * client credentials → agent）をactor/authorityの両方に使う
  * （委任なしのdirect実行前提。DelegationはM8スコープ外）。
+ * M2M clientの背後に居るuserは不明なため、origin.callerは設定しない。
  */
 export class StagingTrustedContextProvider implements HttpTrustedContextProvider {
   constructor(private readonly identity: Auth0IdentityProvider) {}
@@ -31,12 +33,13 @@ export class StagingTrustedContextProvider implements HttpTrustedContextProvider
         ),
       );
     }
-    const user = await this.identity.resolveUser({
+    const authenticated = await this.identity.authenticate({
       request: input.request,
       organizationId: input.organizationId,
+      operation: "action_request.submit",
     });
-    if (Result.isFailure(user)) return user;
-    const principal = { type: "user", id: user.value } as const;
+    if (Result.isFailure(authenticated)) return authenticated;
+    const principal = authenticated.value;
     return Result.succeed({
       actor: principal,
       authority: { principal },

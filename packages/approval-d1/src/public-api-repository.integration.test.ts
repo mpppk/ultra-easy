@@ -244,6 +244,42 @@ describe("D1PublicApiRepository", () => {
     expect(inbox.value.items.map((item) => item.id)).toEqual([String(taskId)]);
   });
 
+  it("#83: Task候補者とDecision済みuserだけをActionRequestの関係者として判定する", async () => {
+    const db = database();
+    const plan = await approvalPlan();
+    expect((await new D1MaterializedPlanRepository(db).save(plan)).type).toBe("created");
+    const state = runtimeState(plan);
+    state.tasks[0]!.decisions = [
+      {
+        idempotencyKey: "decided",
+        taskId,
+        userId: "user:carol" as UserId,
+        decision: "reject",
+        decidedAt: "2026-09-19T00:00:02.000Z",
+      },
+    ];
+    const projected = await new D1ApprovalRuntimeProjectionRepository(db).replace({
+      organizationId,
+      state,
+    });
+    assert(Result.isSuccess(projected));
+
+    const repository = new D1PublicApiRepository(db);
+    const participant = async (userId: string, org: OrganizationId = organizationId) => {
+      const result = await repository.isActionRequestParticipant({
+        organizationId: org,
+        actionRequestId: plan.actionRequestId,
+        userId: userId as UserId,
+      });
+      assert(Result.isSuccess(result));
+      return result.value;
+    };
+    expect(await participant(String(alice))).toBe(true);
+    expect(await participant("user:carol")).toBe(true);
+    expect(await participant("user:mallory")).toBe(false);
+    expect(await participant(String(alice), "organization:other" as OrganizationId)).toBe(false);
+  });
+
   it("Approval commandをpendingからappliedへ更新して再読込できる", async () => {
     const db = database();
     const repository = new D1PublicApiRepository(db);

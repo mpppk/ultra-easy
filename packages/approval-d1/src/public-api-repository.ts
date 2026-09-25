@@ -437,6 +437,32 @@ export class D1PublicApiRepository
     });
   }
 
+  async isActionRequestParticipant(input: {
+    organizationId: OrganizationId;
+    actionRequestId: ActionRequestId;
+    userId: UserId;
+  }): Result.ResultAsync<boolean, PublicApiRepositoryError> {
+    const row = await firstRow<{ found: number }>(
+      this.db
+        .prepare(
+          `SELECT 1 AS found
+             FROM approval_tasks t
+            WHERE t.organization_id = ? AND t.action_request_id = ?
+              AND (
+                EXISTS (SELECT 1 FROM json_each(t.candidate_user_ids) WHERE value = ?)
+                OR EXISTS (
+                  SELECT 1 FROM json_each(t.decisions)
+                   WHERE json_extract(value, '$.userId') = ?
+                )
+              )
+            LIMIT 1`,
+        )
+        .bind(input.organizationId, input.actionRequestId, input.userId, input.userId),
+    );
+    if (Result.isFailure(row)) return row;
+    return Result.succeed(row.value !== null);
+  }
+
   async getApprovalTaskDecisionContext(input: {
     organizationId: OrganizationId;
     taskId: ApprovalTaskId;

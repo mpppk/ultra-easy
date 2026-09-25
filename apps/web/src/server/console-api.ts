@@ -177,7 +177,8 @@ export async function login(
       client_id: env.AUTH0_WEB_CLIENT_ID,
       client_secret: env.AUTH0_WEB_CLIENT_SECRET,
       audience: env.AUTH0_API_AUDIENCE,
-      scope: "openid",
+      // approval-apiは操作ごとにscopeを検証する（#82）。consoleはsubmit / readを行う。
+      scope: "openid read:action-requests write:action-requests",
     }),
   }).catch(() => null);
   if (!response?.ok) return problem(401, "login_failed", "Sign in failed");

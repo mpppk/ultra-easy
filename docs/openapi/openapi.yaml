@@ -94,3 +94,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: |-
+        Auth0 access token (RS256)。org_id等のclaimでorganization所属を検証し、操作ごとに
+        read:action-requests / write:action-requests scope（またはRBAC permissions）を要求する。
+        client credentials tokenはagent principalとして扱われ、Decisionは送信できない。

@@ -14,6 +14,11 @@
     "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
     "AUTH0_API_AUDIENCE": "https://ultra-easy/approval-api",
     "AUTH0_ORGANIZATION_ID": "organization:staging",
+    // #82: staging tenantはAuth0 Organizationsを使わない単一組織tenantのため、tenant全体を
+    // organization:stagingのmemberとして明示的に信頼する。前提: DB connectionの
+    // public signupは無効（docs/runbooks/production-api.md）。本番はAUTH0_ORGANIZATION_CLAIM_VALUE
+    // （Auth0 Organization ID）を設定し、org_id claimの一致を必須にする。
+    "AUTH0_TENANT_IS_ORGANIZATION": "true",
     "ACTION_EXECUTION_MODE": "execute",
     "OPENFGA_API_URL": "https://api.us1.fga.dev",
     "OPENFGA_STORE_ID": "01M31PMZ0DRBWZQ9D6TZ64E87W",
