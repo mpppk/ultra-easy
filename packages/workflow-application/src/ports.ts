@@ -55,6 +55,13 @@ export type WorkflowInvocation = {
   parentAction?: ParentActionBinding;
   parentRunId?: WorkflowRunId;
   parentNodeRunId?: NodeRunId;
+  /** 祖先runのWorkflow Definition（root → 親）。Composite recursionの検出に使う。 */
+  ancestry?: WorkflowDefinitionId[];
+  /**
+   * Composite ActionRequestの委任chainから引き継ぐ時間境界（最も厳しいnotBefore / expiresAt）。
+   * Workflow Agentへのhopへ付与し、親の委任が失効したら内部のchild Actionも拒否される。
+   */
+  delegationTimeBounds?: { notBefore?: string; expiresAt?: string };
 };
 
 export type WorkflowRunRecord = {

@@ -1,23 +1,22 @@
 {
-  "name": "@app/tests",
+  "name": "@app/workflow-platform",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "test": "vp test"
+  "exports": {
+    ".": "./src/index.ts"
   },
-  "devDependencies": {
+  "scripts": {
+    "test": "vp test --passWithNoTests"
+  },
+  "dependencies": {
     "@app/approval-application": "workspace:*",
     "@app/approval-core": "workspace:*",
     "@app/approval-d1": "workspace:*",
-    "@app/approval-fga": "workspace:*",
-    "@app/approval-mcp": "workspace:*",
-    "@app/approval-runtime-memory": "workspace:*",
     "@app/expression-core": "workspace:*",
     "@app/workflow-application": "workspace:*",
     "@app/workflow-core": "workspace:*",
-    "@app/workflow-platform": "workspace:*",
-    "@praha/byethrow": "^0.12.0",
-    "@standard-schema/spec": "^1.1.0"
+    "@app/workflow-d1": "workspace:*",
+    "@praha/byethrow": "^0.12.0"
   }
 }

@@ -16,6 +16,7 @@ packages/
   workflow-runtime-memory/     # #157 in-memory repositories（tests / local）
   workflow-d1/                 # #157 D1 persistence（workflow_* tables, migration 0021）
   workflow-runtime-cloudflare/ # #157 Cloudflare Workflows runner + cron sweeper
+  workflow-platform/           # #158 composition root（ActionRequest pipeline + Workflow Runtime on D1）
 ```
 
 依存方向:
@@ -171,3 +172,69 @@ ActionExecutionCompletionService.complete(org, actionRequestId, actionFingerprin
   `execution_unknown` で終端する（fail-closed）。
 - 滞留検知（#109）は、trusted completion待ちのasync実行を滞留として扱わない。
 - D1: migration `0022_async_action_executions.sql`。
+
+## Composite Action (#158)
+
+```text
+employee.onboard  (ActionDefinition, executorKey = workflow)
+  └─ WorkflowActionBinding (key, version) -> (workflowDefinitionId, workflowVersion, checksum)  [immutable]
+       └─ WorkflowRun  --Action Node-->  child ActionRequest (primitive / composite)  --> ...
+```
+
+### Publish
+
+`WorkflowPublishingService.publish({ definition, actionType })`:
+
+1. `publishWorkflowVersion` → `workflow_versions`（insert-only）
+2. `CompositeActionPublisher`: 新しいActionDefinition version
+   （`key = workflow:<definitionId>`, `inputSchema = workflow-input:<definitionId>@<workflowVersion>`,
+   `executorKey = workflow`）を採番し、**bindingをinsert-onlyで保存してから** Action Catalog
+   （`published_action_definitions`）へ公開する。primitive / compositeは同じcatalog・resolverから解決される。
+3. `WorkflowInputSchemaResolver` がWorkflowの `inputFields` からinput schemaを作る。
+
+### Version pinning
+
+- ActionRequestのMaterialized Planは `action.definition (key, version)` をsnapshotし、fingerprintにも含む。
+- `WorkflowActionExecutor` は **snapshotの (key, version) にbindされたWorkflowVersion / checksumだけ** を実行し、
+  checksumを再検証する。latest versionは再解決しない。
+- 新しいWorkflowVersionのpublishは新しいActionDefinition versionを作る。承認待ちのActionRequestは旧version、
+  新規requestは新versionを実行する。bindingはrepositoryでinsert-only、D1ではtriggerでUPDATE / DELETEを禁止する。
+
+### Execution
+
+- `WorkflowActionExecutor.dispatch` はActionRequest IDから決定的なrun IDでWorkflowRunを一意に作成し、
+  `accepted(executionRef = runId)` を返す（#165）。runの開始は親Actionの完了ではない。
+- 親の終端は `CompositeActionCompletionListener` がtrusted completion portへ届ける
+  （Output Node → `ActionExecutionResult.output`、失敗 → `execution_failed` + run error code、
+  cancel → `execution_failed` / `workflow_cancelled`）。acceptedの記録より先にrunが終わった場合は
+  retriableとして再試行する。
+- Action Nodeは `ActionRequestEffectHandler` で **必ずActionRequest boundary** を通る。
+  child ActionRequest IDはrun / effectから決定的（sha256）に導出し、評価時刻は作用の予約時刻へ固定する
+  （再配送でも同じPlanへ収束）。Authorization / Policy / Approval / Re-Authorizationは通常pipelineが行う。
+- child ActionRequestの状態（`pending_approval → waiting_approval`, `executing → waiting_action`,
+  終端失敗 → Node失敗）をpollで取り込み、v1 fail-fastで親run / 親Actionへ伝播する。
+- cancel: 親runのcancelはcomposite childのasync実行へcancelを要求し、そのrunをcancelする。
+
+### Principals / delegation
+
+| 役割           | principal                                               |
+| -------------- | ------------------------------------------------------- |
+| Workflow Agent | `agent:workflow:<definitionId>`（stable）               |
+| Node Agent     | `agent:workflow:<definitionId>/node:<nodeId>`（stable） |
+
+child ActionRequest: `actor = Node Agent`、`authority.principal = run のauthority principal`、
+`delegation = [..., principal -> Workflow Agent (scope: 定義内のAction types + 時間境界), Workflow Agent -> Node Agent (scope: Nodeのaction type / resource type)]`、
+`origin = { type: system, caller: Workflow Agent, agentRunId: runId }`。
+
+Composite Actionの境界では委任を **再root** する: Composite Actionへの委任（とその認可・承認）は、
+publish済みWorkflowの内部Actionの実行を含む。内部のchildは改めてauthority principalに対して
+認可・承認されるため、内部で権限が拡張されることはない。親chainの時間境界（notBefore / expiresAt）は
+Workflow Agentへのhopへ引き継ぐ。
+
+### Nesting / audit
+
+- nest深さ（`MAX_WORKFLOW_DEPTH = 5`、設定可）と、祖先runと同じWorkflowの再帰呼び出し
+  （`workflow_recursion_detected`）を拒否する。
+- `workflow_child_actions` がchild ActionRequest ↔ run / NodeRun / effect / 親ActionRequestを相関し、
+  `traceAction` が `Composite ActionRequest -> WorkflowRun -> NodeRun -> child ActionRequest -> ...` を返す。
+- D1: migration `0023_workflow_composite_actions.sql`。

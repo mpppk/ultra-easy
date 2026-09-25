@@ -381,8 +381,13 @@ export class ActionRequestApplicationService {
   async evaluate(input: {
     action: Action;
     trustedContext: TrustedActionRequestContext;
+    /**
+     * 同じtrust boundary内の呼び出し元（Workflow Runtimeのchild Action等）が、冪等な作成のために
+     * 決定的なActionRequest IDを指定する。外部入力から渡してはならない。
+     */
+    actionRequestId?: ActionRequestId;
   }): Result.ResultAsync<ActionRequestEvaluation, ActionRequestApplicationError> {
-    const actionRequestId = this.dependencies.idGenerator.next();
+    const actionRequestId = input.actionRequestId ?? this.dependencies.idGenerator.next();
 
     const definition = await this.dependencies.actionDefinitionResolver.resolve(input.action.type);
     if (Result.isFailure(definition)) {
@@ -550,6 +555,7 @@ export class ActionRequestApplicationService {
     action: Action;
     trustedContext: TrustedActionRequestContext;
     clientReference?: string;
+    actionRequestId?: ActionRequestId;
   }): Result.ResultAsync<ActionRequestPreparation, ActionRequestApplicationError> {
     const evaluated = await this.evaluate(input);
     if (Result.isFailure(evaluated)) return evaluated;
