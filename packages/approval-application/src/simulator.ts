@@ -14,6 +14,7 @@ import {
   type HttpTrustedContextProvider,
   parseActionRequestCreateBody,
 } from "./http.ts";
+import { pathParameters } from "./path-parameters.ts";
 
 export type AuthorizationSimulation = {
   outcome: "allow" | "deny" | "error";
@@ -119,7 +120,11 @@ export function createActionRequestSimulationHttpApi(input: {
   return {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
-      const match = /^\/v1\/organizations\/([^/]+)\/action-requests\/simulate$/.exec(url.pathname);
+      const match = pathParameters(
+        /^\/v1\/organizations\/([^/]+)\/action-requests\/simulate$/,
+        url.pathname,
+      );
+      if (match instanceof Response) return match;
       if (request.method !== "POST" || !match?.[1]) {
         return new Response("Not Found", { status: 404 });
       }
@@ -134,7 +139,7 @@ export function createActionRequestSimulationHttpApi(input: {
         });
       }
 
-      const organizationId = decodeURIComponent(match[1]) as OrganizationId;
+      const organizationId = match[1] as OrganizationId;
       const trusted = await input.trustedContextProvider.resolve({
         request,
         organizationId,

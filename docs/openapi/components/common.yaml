@@ -89,7 +89,9 @@ parameters:
       type: string
 responses:
   BadRequest:
-    description: Request syntax または形式が不正。
+    description: |-
+      Request syntax または形式が不正。path parameterのpercent-encodingが不正な場合は
+      invalid_path_parameter。
     content:
       application/problem+json:
         schema:
@@ -131,7 +133,10 @@ responses:
         schema:
           $ref: ./schemas-07.yaml#/Problem
   UnprocessableEntity:
-    description: Schema / semantic validation error。
+    description: |-
+      Schema / semantic validation error。publishされていないaction typeはaction_type_not_found。
+      承認不要の同期実行が失敗した場合（execution_failed）はActionRequestが終端済みのため、
+      結果はGETで確認する。
     content:
       application/problem+json:
         schema:

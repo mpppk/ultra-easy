@@ -361,8 +361,8 @@ export function createGatewayHarness(
   });
   let actionRequestCounter = 0;
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: { resolve: (type) => definition(type) },
-    schemaResolver: { resolve: () => schema },
+    actionDefinitionResolver: { resolve: async (type) => Result.succeed(definition(type)) },
+    schemaResolver: { resolve: async () => Result.succeed(schema) },
     policyBindingResolver: policies,
     authorizer,
     executor,

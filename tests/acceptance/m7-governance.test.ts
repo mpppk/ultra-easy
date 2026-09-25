@@ -299,13 +299,13 @@ function createHarness() {
 
   const service = new ActionRequestApplicationService({
     actionDefinitionResolver: {
-      resolve(actionType) {
+      async resolve(actionType) {
         const definition = definitions.get(String(actionType));
         expect(definition).toBeDefined();
-        return definition as ActionDefinition;
+        return Result.succeed(definition as ActionDefinition);
       },
     },
-    schemaResolver: { resolve: () => schema },
+    schemaResolver: { resolve: async () => Result.succeed(schema) },
     policyBindingResolver: new MetaPolicyResolver(),
     authorizer,
     executor,

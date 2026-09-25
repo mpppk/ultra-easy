@@ -1,3 +1,5 @@
+import type { Result } from "@praha/byethrow";
+
 import type { ActionDefinitionKey, ActionType, ExecutorKey } from "./domain/brand.ts";
 import type { PolicyFieldDefinition } from "./domain/evaluation.ts";
 import type { SchemaReference } from "./schema.ts";
@@ -18,7 +20,24 @@ export type ActionDefinition = {
   derivedAttributeCatalog?: PolicyFieldDefinition[];
 };
 
+export class ActionDefinitionResolverError extends Error {
+  readonly name = "ActionDefinitionResolverError";
+
+  constructor(
+    readonly code: string,
+    readonly retriable: boolean,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 /** Action typeからpublish済みAction Definitionを解決するPort。 */
 export interface ActionDefinitionResolver {
-  resolve(actionType: ActionType): ActionDefinition | Promise<ActionDefinition>;
+  /**
+   * 未publishのaction typeはnull（利用者の入力誤り）。依存障害・保存データ破損だけをerrorで返す。
+   */
+  resolve(
+    actionType: ActionType,
+  ): Result.ResultAsync<ActionDefinition | null, ActionDefinitionResolverError>;
 }

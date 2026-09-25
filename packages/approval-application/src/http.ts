@@ -21,6 +21,7 @@ import {
   type ActionRequestApplicationService,
   type TrustedActionRequestContext,
 } from "./action-request-service.ts";
+import { pathParameters } from "./path-parameters.ts";
 
 export class HttpTrustedContextError extends Error {
   readonly name = "HttpTrustedContextError";
@@ -144,37 +145,68 @@ export function parseActionRequestCreateBody(value: unknown): ActionRequestCreat
   };
 }
 
+/**
+ * ActionRequestApplicationErrorCodeからHTTP statusへの対応表（#93）。
+ * - 利用者の入力誤り: 4xx（未知のaction type・input不正は422、重複は409）
+ * - 依存サービス障害: retriableなら503、それ以外（設定不備等）は500
+ * - 契約違反・設定不備（schema未登録、prepared改変）: 500
+ * immediate executionの失敗はActionRequestが終端済みのため422（再試行しても結果は変わらない）。
+ */
+export function actionRequestErrorStatus(error: ActionRequestApplicationError): number {
+  switch (error.code) {
+    case "action_type_not_found":
+    case "action_input_validation_failed":
+    case "action_input_not_object":
+    case "policy_evaluation_failed":
+    case "materialization_failed":
+    case "execution_failed":
+      return 422;
+    case "action_request_already_exists":
+      return 409;
+    case "schema_not_found":
+    case "prepared_action_request_invalid":
+      return 500;
+    case "action_definition_resolution_failed":
+    case "schema_resolution_failed":
+    case "authorization_provider_failed":
+    case "policy_binding_resolution_failed":
+    case "plan_persistence_failed":
+    case "audit_persistence_failed":
+    case "workflow_start_failed":
+      return error.retriable ? 503 : 500;
+  }
+}
+
+/** 利用者へ返してよいdetail。依存サービスや例外のmessageは返さない（error codeで識別する）。 */
+function safeActionRequestErrorDetail(error: ActionRequestApplicationError): string | undefined {
+  switch (error.code) {
+    case "action_input_validation_failed":
+    case "action_type_not_found":
+      return error.message;
+    case "execution_failed":
+      return "Actionの実行に失敗しました。結果はActionRequestを取得して確認してください";
+    default:
+      return undefined;
+  }
+}
+
 export function actionRequestApplicationErrorResponse(
   error: ActionRequestApplicationError,
 ): Response {
-  if (
-    error.code === "action_input_validation_failed" ||
-    error.code === "action_input_not_object" ||
-    error.code === "policy_evaluation_failed" ||
-    error.code === "materialization_failed"
-  ) {
-    return actionRequestProblem({
-      status: 422,
-      code: error.code,
-      title: "ActionRequestを処理できません",
-      detail: error.message,
-    });
-  }
-
-  if (error.retriable) {
-    return actionRequestProblem({
-      status: 503,
-      code: error.code,
-      title: "依存サービスを利用できません",
-      detail: error.message,
-    });
-  }
-
+  const status = actionRequestErrorStatus(error);
+  const detail = safeActionRequestErrorDetail(error);
   return actionRequestProblem({
-    status: 409,
+    status,
     code: error.code,
-    title: "ActionRequestの状態が競合しました",
-    detail: error.message,
+    title:
+      status === 503
+        ? "依存サービスを利用できません"
+        : status >= 500
+          ? "ActionRequestを処理できません（内部エラー）"
+          : status === 409
+            ? "ActionRequestの状態が競合しました"
+            : "ActionRequestを処理できません",
+    ...(detail !== undefined ? { detail } : {}),
   });
 }
 
@@ -188,7 +220,8 @@ export function createActionRequestHttpApi(input: {
   return {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
-      const match = /^\/v1\/organizations\/([^/]+)\/action-requests$/.exec(url.pathname);
+      const match = pathParameters(/^\/v1\/organizations\/([^/]+)\/action-requests$/, url.pathname);
+      if (match instanceof Response) return match;
       if (request.method !== "POST" || !match?.[1]) {
         return new Response("Not Found", { status: 404 });
       }
@@ -212,7 +245,7 @@ export function createActionRequestHttpApi(input: {
         });
       }
 
-      const organizationId = decodeURIComponent(match[1]) as OrganizationId;
+      const organizationId = match[1] as OrganizationId;
       const trusted = await input.trustedContextProvider.resolve({
         request,
         organizationId,

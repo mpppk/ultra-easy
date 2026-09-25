@@ -149,12 +149,10 @@ function service(input: {
 }) {
   return new ActionRequestApplicationService({
     actionDefinitionResolver: {
-      resolve: (type) =>
-        String(type) === String(definition.actionType)
-          ? definition
-          : Promise.reject(new Error(`Published Action Definitionが見つかりません: ${type}`)),
+      resolve: async (type) =>
+        Result.succeed(String(type) === String(definition.actionType) ? definition : null),
     },
-    schemaResolver: { resolve: () => ticketSchema },
+    schemaResolver: { resolve: async () => Result.succeed(ticketSchema) },
     policyBindingResolver: {
       resolve: async () => Result.succeed(input.bindings ?? [binding(none())]),
     },
@@ -526,7 +524,7 @@ describe("Explorer explain (AC-M9-002 / AC-M9-002a)", () => {
     });
     expect(result).toMatchObject({
       effectiveOutcome: "evaluation_error",
-      error: { code: "action_definition_resolution_failed" },
+      error: { code: "action_type_not_found" },
     });
   });
 

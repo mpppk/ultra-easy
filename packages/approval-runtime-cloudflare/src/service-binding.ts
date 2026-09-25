@@ -3,6 +3,7 @@ import { Result } from "@praha/byethrow";
 import {
   ActionExecutorError,
   AuthorizationProviderError,
+  decodeUriComponent,
   unknownExecutorKeyError,
   type ActionAuthorizer,
   type ActionExecutorRegistry,
@@ -350,15 +351,18 @@ function executorErrorJson(error: ActionExecutorError): Response {
   );
 }
 
-const decodeExecutorKey = Result.fn({
-  try: (value: string): string => decodeURIComponent(value),
-  catch: (): ActionExecutorError =>
-    new ActionExecutorError({
-      code: "invalid_executor_key",
-      retriable: false,
-      detail: "executorKeyをdecodeできません",
-    }),
-});
+function decodeExecutorKey(value: string): Result.Result<string, ActionExecutorError> {
+  const decoded = decodeUriComponent(value);
+  return Result.isFailure(decoded)
+    ? Result.fail(
+        new ActionExecutorError({
+          code: "invalid_executor_key",
+          retriable: false,
+          detail: "executorKeyをdecodeできません",
+        }),
+      )
+    : decoded;
+}
 
 /**
  * `ServiceBindingActionExecutor`のdownstream側。executor registryをService Binding越しに公開する。

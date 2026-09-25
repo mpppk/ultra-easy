@@ -302,8 +302,8 @@ function createHarness() {
   };
   let counter = 0;
   const service = new ActionRequestApplicationService({
-    actionDefinitionResolver: { resolve: () => definition },
-    schemaResolver: { resolve: () => schema },
+    actionDefinitionResolver: { resolve: async () => Result.succeed(definition) },
+    schemaResolver: { resolve: async () => Result.succeed(schema) },
     policyBindingResolver: new Policies(),
     authorizer,
     executor,
