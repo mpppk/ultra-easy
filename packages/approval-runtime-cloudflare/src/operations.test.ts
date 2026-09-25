@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_OPERATOR_ALERT_THRESHOLDS } from "@app/approval-core";
 
-import { readOperatorAlertThresholds } from "./operator-alert-thresholds.ts";
+import { readOperatorAlertThresholds } from "./operations.ts";
 
 describe("readOperatorAlertThresholds", () => {
   it("未設定時はspec baselineを返す", () => {

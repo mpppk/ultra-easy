@@ -223,7 +223,8 @@ export type ActionRequestApplicationServiceDependencies = {
   authorizer: ActionAuthorizer;
   executor: ActionExecutor;
   planRepository: MaterializedPlanRepository;
-  eventRepository?: ActionEventRepository;
+  /** 受付・認可・Plan確定・実行の監査イベント。未配線はcompile errorにする（#85）。 */
+  eventRepository: ActionEventRepository;
   /** 承認不要の同期実行の結果（Workflow経路のaction_resultsと同じread model）。 */
   resultRepository: ActionResultRepository;
   workflowStarter: ActionWorkflowStarter;
@@ -270,10 +271,10 @@ function planPersistenceError(
 }
 
 async function appendAudit(
-  repository: ActionEventRepository | undefined,
+  repository: ActionEventRepository,
   records: readonly ActionEventRecord[],
 ): Result.ResultAsync<void, ActionRequestApplicationError> {
-  if (!repository || records.length === 0) return Result.succeed(undefined);
+  if (records.length === 0) return Result.succeed(undefined);
   const appended = await repository.appendMany(records);
   if (Result.isFailure(appended)) {
     return Result.fail(

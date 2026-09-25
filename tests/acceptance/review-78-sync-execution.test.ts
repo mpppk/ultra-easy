@@ -31,9 +31,9 @@ import {
   type TrustedActionRequestContext,
 } from "@app/approval-application";
 import {
+  createD1ActionRequestPersistence,
   D1ActionEventRepository,
-  D1ActionResultProjectionRepository,
-  D1MaterializedPlanRepository,
+  D1NotificationOutboxRepository,
   D1PublicApiRepository,
 } from "@app/approval-d1";
 import { migratedSqliteD1 } from "@app/approval-d1/testing";
@@ -105,7 +105,9 @@ class ScenarioExecutor implements ActionExecutor {
 function harness(input: { reauthorization?: "allow" | "deny"; executor?: ScenarioExecutor }) {
   const db = migratedSqliteD1();
   const executor = input.executor ?? new ScenarioExecutor("idempotent", "succeed");
+  // #85: 本番と同じfactoryでD1依存（plan / event / result）を組み立て、resolverだけ差し替える。
   const service = new ActionRequestApplicationService({
+    ...createD1ActionRequestPersistence(db, org),
     actionDefinitionResolver: { resolve: async () => Result.succeed(definition) },
     schemaResolver: { resolve: async () => Result.succeed(schema) },
     policyBindingResolver: {
@@ -130,9 +132,6 @@ function harness(input: { reauthorization?: "allow" | "deny"; executor?: Scenari
     },
     authorizer: new ScenarioAuthorizer(input.reauthorization ?? "allow"),
     executor: new ActionExecutorRegistry({ [String(definition.executorKey)]: executor }),
-    planRepository: new D1MaterializedPlanRepository(db),
-    eventRepository: new D1ActionEventRepository(db),
-    resultRepository: new D1ActionResultProjectionRepository(db),
     workflowStarter: { start: async () => Result.succeed({ workflowInstanceId: "unused" }) },
     idGenerator: { next: () => "action:sync-1" as ActionRequestId },
   });
@@ -183,6 +182,15 @@ function harness(input: { reauthorization?: "allow" | "deny"; executor?: Scenari
       expect(response.status).toBe(200);
       return (await response.json()) as { status: string; result?: Record<string, unknown> };
     },
+    async requesterRecipients() {
+      const outbox = new D1NotificationOutboxRepository(db);
+      const entries = await outbox.listDispatchable("2099-01-01T00:00:00.000Z");
+      if (Result.isFailure(entries)) return [];
+      const completed = entries.value.find((entry) => entry.eventType === "action.completed");
+      if (!completed) return [];
+      const recipients = await outbox.resolveRecipients(completed);
+      return Result.isSuccess(recipients) ? recipients.value.map(String) : [];
+    },
     async events() {
       const listed = await new D1ActionEventRepository(db).listForAction({
         organizationId: org,
@@ -215,6 +223,8 @@ describe("#86 承認不要（同期実行）経路のread model", () => {
       "action.execution_started",
       "action.completed",
     ]);
+    // #85: action.receivedが永続化され、requester宛て通知の宛先が解決できる
+    expect(await h.requesterRecipients()).toEqual([String(alice)]);
   });
 
   it("authorization_revoked: 201応答とGETが一致し、Executorは呼ばれない", async () => {

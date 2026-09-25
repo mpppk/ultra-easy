@@ -5,3 +5,4 @@ export * from "./notifications.ts";
 export * from "./slack.ts";
 export * from "./workflow-cancellation.ts";
 export * from "./telemetry.ts";
+export * from "./operations.ts";

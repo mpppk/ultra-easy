@@ -164,6 +164,7 @@ function service(input: {
         return Result.succeed({ status: "succeeded" as const });
       },
     },
+    eventRepository: new InMemoryActionAuditStore(),
     resultRepository: new InMemoryActionAuditStore(),
     planRepository: {
       save: async () => {

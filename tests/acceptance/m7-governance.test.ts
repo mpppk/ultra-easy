@@ -310,6 +310,7 @@ function createHarness() {
     authorizer,
     executor,
     planRepository: plans,
+    eventRepository: new InMemoryActionAuditStore(),
     resultRepository: new InMemoryActionAuditStore(),
     workflowStarter,
     idGenerator: {

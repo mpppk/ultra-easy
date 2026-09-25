@@ -27,6 +27,23 @@ export type CorrelationContext = {
   principal?: PrincipalRef;
 };
 
+/** 特定organizationに属さないsystem処理（cron task等）のcorrelationに使うorganization ID。 */
+export const SYSTEM_ORGANIZATION_ID = "organization:_system" as OrganizationId;
+
+/** ActionRequestに紐づかないsystem処理のcorrelation。 */
+export function systemCorrelation(input: {
+  component: TelemetryComponent;
+  operation: string;
+  organizationId?: OrganizationId;
+}): CorrelationContext {
+  return {
+    organizationId: input.organizationId ?? SYSTEM_ORGANIZATION_ID,
+    correlationId: `system:${input.operation}`,
+    component: input.component,
+    operation: input.operation,
+  };
+}
+
 export function actionCorrelation(input: {
   organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
@@ -98,6 +115,8 @@ export type SafeLogEvent =
   | "executor.failed"
   | "notification.failed"
   | "notification.skipped"
+  | "notification.dead"
+  | "scheduled.task_failed"
   | "domain.event"
   | "alert.firing"
   | "alert.resolved";
@@ -124,7 +143,11 @@ export type SliMetricName =
   | "workflow.failure_total"
   | "action_executor.failure_total"
   | "outbox.backlog"
-  | "outbox.failure_total";
+  | "outbox.failure_total"
+  /** retry上限・DLQでdeadになったoutbox。人手の確認が必要。 */
+  | "outbox.dead_total"
+  /** sink未設定等で配信をskipした（失敗ではない）。 */
+  | "notification.skipped_total";
 
 export type MetricRecord = {
   kind: "metric";

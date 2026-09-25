@@ -60,6 +60,12 @@
         "max_retries": 5,
         "dead_letter_queue": "ultra-easy-notifications-staging-dlq",
       },
+      {
+        // #94: DLQに入った通知をoutbox deadへreconcileする（handleNotificationQueueBatch）。
+        "queue": "ultra-easy-notifications-staging-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+      },
     ],
   },
   "env": {
@@ -81,6 +87,11 @@
             "max_batch_timeout": 5,
             "max_retries": 5,
             "dead_letter_queue": "ultra-easy-notifications-dlq",
+          },
+          {
+            "queue": "ultra-easy-notifications-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
           },
         ],
       },

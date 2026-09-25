@@ -181,12 +181,24 @@ POSTs `firing`/`resolved` transitions to Slack (`SLACK_WEBHOOK_URL` secret).
 - Slack payload is correlation-only (event type, action/org IDs,
   notification key, timestamp). No Action input, Decision comments,
   attachment contents, or credentials — in payload, logs, or dashboard.
-- `SlackWebhookSink` classifies `429`/`5xx`/`408` as retriable (queue retry →
-  DLQ after `max_retries: 5`) and other `4xx` as non-retriable; timeouts
-  (8s) and network errors are retriable.
-- When `SLACK_WEBHOOK_URL` is unset the queue consumer succeeds no-op
-  (pre-provisioning staging behavior) and alert Slack delivery is skipped;
-  both emit the normal structured logs.
+- `SlackWebhookSink` classifies `429`/`5xx`/`408` as retriable and other `4xx`
+  as non-retriable; timeouts (8s) and network errors are retriable. The queue
+  consumer (`handleNotificationQueueBatch`, shared by approval-api and the
+  preview runtime) retries only retriable failures, with backoff
+  (`delaySeconds` 10s doubling, max 600s, DLQ after `max_retries: 5`).
+  Non-retriable failures record the delivery as `failed` and are acked (#94).
+- Slack Incoming Webhook posts to one channel, so the sink's audience is
+  `channel`: one post per outbox event (delivery recipient `channel`), not
+  one identical post per candidate.
+- When `SLACK_WEBHOOK_URL` is unset, deliveries are recorded as `skipped`
+  (never `sent`) and the outbox entry becomes `skipped`; the metric is
+  `notification.skipped_total` (not `outbox.failure_total`). Once the secret
+  is set, the cron re-queues skipped entries (`requeue_skipped_notifications`).
+- Outbox dispatch (queue send) failures back off via `next_attempt_at`
+  (1 min doubling, max 1 h) and become `dead` after 8 attempts. Messages that
+  land in the DLQ are consumed and mark their outbox entry `dead`
+  (`outbox.dead_total`, `notification.dead`). Dead entries count towards
+  `outbox_failures_increasing`. Migration `0017_notification_delivery_states.sql`.
 - Queues: staging `ultra-easy-notifications-staging` (+ `-dlq`) is the
   default in `wrangler.jsonc`; production `ultra-easy-notifications`
   (+ `-dlq`) lives in the `env.production` block (same `NOTIFICATION_QUEUE`
@@ -198,7 +210,5 @@ POSTs `firing`/`resolved` transitions to Slack (`SLACK_WEBHOOK_URL` secret).
 ## Known gaps (follow-ups, not M8-1)
 
 - Browser login UI + session management (M2M + password-realm only).
-- `action.received` is not emitted on the v1 submit path, so lead-time SLI
-  stays null on production data (completed/dwell work).
 - Custom domain + ultra-easy-web callback URLs.
 - Staging executor is a success-echo sink (no external side effects by design).

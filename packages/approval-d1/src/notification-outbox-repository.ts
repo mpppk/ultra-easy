@@ -17,8 +17,26 @@ import type {
 } from "./materialized-plan-repository.ts";
 
 export type NotificationRecipientMode = "direct_user" | "task_candidates" | "action_requester";
-export type NotificationOutboxStatus = "pending" | "dispatched" | "failed";
-export type NotificationDeliveryStatus = "pending" | "sent" | "failed";
+/**
+ * - failed: queue送信に失敗し、next_attempt_at以降に再送する
+ * - dead: 再送上限超過、またはqueue consumerが諦めてDLQに入った。人手で確認する
+ * - skipped: sink未設定で配信しなかった。sink設定後に`requeueSkipped`でpendingへ戻す
+ */
+export type NotificationOutboxStatus = "pending" | "dispatched" | "failed" | "dead" | "skipped";
+export type NotificationDeliveryStatus = "pending" | "sent" | "failed" | "skipped";
+
+/** outbox dispatch（queue送信）のretry方針。 */
+export type OutboxDispatchRetryPolicy = {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+};
+
+export const DEFAULT_OUTBOX_DISPATCH_RETRY_POLICY: OutboxDispatchRetryPolicy = {
+  maxAttempts: 8,
+  baseDelayMs: 60_000,
+  maxDelayMs: 60 * 60_000,
+};
 
 export type NotificationOutboxEntry = {
   organizationId: OrganizationId;
@@ -53,7 +71,9 @@ export type NotificationDelivery = {
 export type NotificationOutboxHealth = {
   pendingOutbox: number;
   failedOutbox: number;
+  deadOutbox: number;
   failedDeliveries: number;
+  skippedDeliveries: number;
 };
 
 type StoredOutboxRow = {
@@ -92,10 +112,6 @@ type StoredEventRow = {
 
 type StoredCandidatesRow = {
   candidate_user_ids: string;
-};
-
-type StoredCountRow = {
-  count: number;
 };
 
 export class D1NotificationOutboxRepositoryError extends Error {
@@ -261,6 +277,7 @@ export class D1NotificationOutboxRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
   async listDispatchable(
+    now: string,
     limit = 100,
   ): Result.ResultAsync<NotificationOutboxEntry[], D1NotificationOutboxRepositoryError> {
     const rows = await allRows<StoredOutboxRow>(
@@ -272,10 +289,11 @@ export class D1NotificationOutboxRepository {
                   created_at, dispatched_at
              FROM outbox_events
             WHERE status IN ('pending', 'failed')
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
             ORDER BY sequence ASC
             LIMIT ?`,
         )
-        .bind(limit),
+        .bind(now, limit),
     );
     return Result.isFailure(rows) ? rows : Result.succeed(rows.value.map(mapOutbox));
   }
@@ -322,26 +340,103 @@ export class D1NotificationOutboxRepository {
       : Result.fail(repositoryError(result.value.error, "outbox dispatched更新に失敗しました"));
   }
 
+  /**
+   * queue送信の失敗を記録する。上限未満はbackoff付きでfailed（再送待ち）、上限到達でdeadにする。
+   */
   async markDispatchFailed(input: {
     organizationId: OrganizationId;
     outboxKey: string;
     error: string;
-  }): Result.ResultAsync<void, D1NotificationOutboxRepositoryError> {
+    now: string;
+    policy?: OutboxDispatchRetryPolicy;
+  }): Result.ResultAsync<{ status: "failed" | "dead" }, D1NotificationOutboxRepositoryError> {
+    const policy = input.policy ?? DEFAULT_OUTBOX_DISPATCH_RETRY_POLICY;
+    const current = await this.load(input);
+    if (Result.isFailure(current)) return current;
+    const attempts = (current.value?.attemptCount ?? 0) + 1;
+    const status = attempts >= policy.maxAttempts ? "dead" : "failed";
+    const delay = Math.min(policy.baseDelayMs * 2 ** (attempts - 1), policy.maxDelayMs);
     const result = await runStatement(
       this.db
         .prepare(
           `UPDATE outbox_events
-              SET status = 'failed',
+              SET status = ?,
                   attempt_count = attempt_count + 1,
-                  last_error = ?
+                  last_error = ?,
+                  next_attempt_at = ?
             WHERE organization_id = ? AND outbox_key = ?`,
         )
-        .bind(input.error, input.organizationId, input.outboxKey),
+        .bind(
+          status,
+          input.error,
+          status === "dead" ? null : new Date(Date.parse(input.now) + delay).toISOString(),
+          input.organizationId,
+          input.outboxKey,
+        ),
+    );
+    if (Result.isFailure(result)) return result;
+    return result.value.success
+      ? Result.succeed({ status })
+      : Result.fail(repositoryError(result.value.error, "outbox failure更新に失敗しました"));
+  }
+
+  /** queue consumerが諦めてDLQに入ったoutboxをdeadにする（dispatch済みからのreconcile）。 */
+  async markDead(input: {
+    organizationId: OrganizationId;
+    outboxKey: string;
+    error: string;
+  }): Result.ResultAsync<void, D1NotificationOutboxRepositoryError> {
+    return this.setStatus(input, "dead", input.error);
+  }
+
+  /** sink未設定で配信しなかったoutbox。sink設定後に`requeueSkipped`で再送できる。 */
+  async markSkipped(input: {
+    organizationId: OrganizationId;
+    outboxKey: string;
+  }): Result.ResultAsync<void, D1NotificationOutboxRepositoryError> {
+    return this.setStatus(input, "skipped", null);
+  }
+
+  /** skippedのoutboxをpendingへ戻す（sinkが設定済みのときにcronから呼ぶ）。 */
+  async requeueSkipped(
+    limit = 100,
+  ): Result.ResultAsync<number, D1NotificationOutboxRepositoryError> {
+    const result = await runStatement(
+      this.db
+        .prepare(
+          `UPDATE outbox_events
+              SET status = 'pending', next_attempt_at = NULL
+            WHERE sequence IN (
+              SELECT sequence FROM outbox_events WHERE status = 'skipped'
+               ORDER BY sequence ASC LIMIT ?
+            )`,
+        )
+        .bind(limit),
+    );
+    if (Result.isFailure(result)) return result;
+    return result.value.success
+      ? Result.succeed(result.value.meta?.changes ?? 0)
+      : Result.fail(repositoryError(result.value.error, "skipped outboxの再送準備に失敗しました"));
+  }
+
+  private async setStatus(
+    input: { organizationId: OrganizationId; outboxKey: string },
+    status: NotificationOutboxStatus,
+    error: string | null,
+  ): Result.ResultAsync<void, D1NotificationOutboxRepositoryError> {
+    const result = await runStatement(
+      this.db
+        .prepare(
+          `UPDATE outbox_events
+              SET status = ?, last_error = COALESCE(?, last_error), next_attempt_at = NULL
+            WHERE organization_id = ? AND outbox_key = ?`,
+        )
+        .bind(status, error, input.organizationId, input.outboxKey),
     );
     if (Result.isFailure(result)) return result;
     return result.value.success
       ? Result.succeed(undefined)
-      : Result.fail(repositoryError(result.value.error, "outbox failure更新に失敗しました"));
+      : Result.fail(repositoryError(result.value.error, "outbox status更新に失敗しました"));
   }
 
   async loadSourceEvent(
@@ -511,6 +606,29 @@ export class D1NotificationOutboxRepository {
       : Result.fail(repositoryError(result.value.error, "notification sent更新に失敗しました"));
   }
 
+  async markDeliverySkipped(input: {
+    organizationId: OrganizationId;
+    notificationKey: string;
+    recipientUserId: UserId;
+    skippedAt: string;
+  }): Result.ResultAsync<void, D1NotificationOutboxRepositoryError> {
+    const result = await runStatement(
+      this.db
+        .prepare(
+          `UPDATE notification_deliveries
+              SET status = 'skipped', updated_at = ?
+            WHERE organization_id = ?
+              AND notification_key = ?
+              AND recipient_user_id = ?`,
+        )
+        .bind(input.skippedAt, input.organizationId, input.notificationKey, input.recipientUserId),
+    );
+    if (Result.isFailure(result)) return result;
+    return result.value.success
+      ? Result.succeed(undefined)
+      : Result.fail(repositoryError(result.value.error, "notification skipped更新に失敗しました"));
+  }
+
   async markDeliveryFailed(input: {
     organizationId: OrganizationId;
     notificationKey: string;
@@ -548,58 +666,50 @@ export class D1NotificationOutboxRepository {
     NotificationOutboxHealth,
     D1NotificationOutboxRepositoryError
   > {
-    const pending = await firstRow<StoredCountRow>(
-      this.db.prepare("SELECT COUNT(*) AS count FROM outbox_events WHERE status = 'pending'"),
-    );
-    if (Result.isFailure(pending)) return pending;
-    const failedOutbox = await firstRow<StoredCountRow>(
-      this.db.prepare("SELECT COUNT(*) AS count FROM outbox_events WHERE status = 'failed'"),
-    );
-    if (Result.isFailure(failedOutbox)) return failedOutbox;
-    const failedDeliveries = await firstRow<StoredCountRow>(
-      this.db.prepare(
-        "SELECT COUNT(*) AS count FROM notification_deliveries WHERE status = 'failed'",
-      ),
-    );
-    if (Result.isFailure(failedDeliveries)) return failedDeliveries;
-    return Result.succeed({
-      pendingOutbox: pending.value?.count ?? 0,
-      failedOutbox: failedOutbox.value?.count ?? 0,
-      failedDeliveries: failedDeliveries.value?.count ?? 0,
-    });
+    return this.countByStatus(null);
   }
 
   async healthForOrganization(input: {
     organizationId: OrganizationId;
   }): Result.ResultAsync<NotificationOutboxHealth, D1NotificationOutboxRepositoryError> {
-    const pending = await firstRow<StoredCountRow>(
+    return this.countByStatus(input.organizationId);
+  }
+
+  private async countByStatus(
+    organizationId: OrganizationId | null,
+  ): Result.ResultAsync<NotificationOutboxHealth, D1NotificationOutboxRepositoryError> {
+    const outbox = await allRows<{ status: NotificationOutboxStatus; count: number }>(
       this.db
         .prepare(
-          "SELECT COUNT(*) AS count FROM outbox_events WHERE organization_id = ? AND status = 'pending'",
+          `SELECT status, COUNT(*) AS count FROM outbox_events
+            WHERE (? IS NULL OR organization_id = ?)
+              AND status IN ('pending', 'failed', 'dead')
+            GROUP BY status`,
         )
-        .bind(input.organizationId),
+        .bind(organizationId, organizationId),
     );
-    if (Result.isFailure(pending)) return pending;
-    const failedOutbox = await firstRow<StoredCountRow>(
+    if (Result.isFailure(outbox)) return outbox;
+    const deliveries = await allRows<{ status: NotificationDeliveryStatus; count: number }>(
       this.db
         .prepare(
-          "SELECT COUNT(*) AS count FROM outbox_events WHERE organization_id = ? AND status = 'failed'",
+          `SELECT status, COUNT(*) AS count FROM notification_deliveries
+            WHERE (? IS NULL OR organization_id = ?)
+              AND status IN ('failed', 'skipped')
+            GROUP BY status`,
         )
-        .bind(input.organizationId),
+        .bind(organizationId, organizationId),
     );
-    if (Result.isFailure(failedOutbox)) return failedOutbox;
-    const failedDeliveries = await firstRow<StoredCountRow>(
-      this.db
-        .prepare(
-          "SELECT COUNT(*) AS count FROM notification_deliveries WHERE organization_id = ? AND status = 'failed'",
-        )
-        .bind(input.organizationId),
-    );
-    if (Result.isFailure(failedDeliveries)) return failedDeliveries;
+    if (Result.isFailure(deliveries)) return deliveries;
+    const outboxCount = (status: NotificationOutboxStatus) =>
+      outbox.value.find((row) => row.status === status)?.count ?? 0;
+    const deliveryCount = (status: NotificationDeliveryStatus) =>
+      deliveries.value.find((row) => row.status === status)?.count ?? 0;
     return Result.succeed({
-      pendingOutbox: pending.value?.count ?? 0,
-      failedOutbox: failedOutbox.value?.count ?? 0,
-      failedDeliveries: failedDeliveries.value?.count ?? 0,
+      pendingOutbox: outboxCount("pending"),
+      failedOutbox: outboxCount("failed"),
+      deadOutbox: outboxCount("dead"),
+      failedDeliveries: deliveryCount("failed"),
+      skippedDeliveries: deliveryCount("skipped"),
     });
   }
 
