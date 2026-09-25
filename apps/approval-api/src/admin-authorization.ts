@@ -28,7 +28,8 @@ import {
   AUTHORIZATION_MODEL_SOURCE_PATH,
   AUTHORIZATION_MODEL_TESTS_PATH,
   authorizationModelChecksum,
-  ClientCredentialsTokenProvider,
+  DEFAULT_FGA_API_URL,
+  fgaTokenSupplierFromEnv,
   normalizeAuthorizationModel,
   OpenFgaClient,
   tenantScopedOpenFgaObject,
@@ -46,25 +47,15 @@ export type AdminAuthorizationEnv = {
   OPENFGA_AUTHORIZATION_MODEL_ID?: string;
   FGA_CLIENT_ID?: string;
   FGA_CLIENT_SECRET?: string;
+  FGA_API_TOKEN_ISSUER?: string;
+  FGA_API_AUDIENCE?: string;
   /** Git revision the deployed model was published from (optional, non-secret). */
   AUTHORIZATION_MODEL_SOURCE_REVISION?: string;
 };
 
-// One token cache per isolate: avoids a client-credentials exchange per request.
-const tokenProviders = new Map<string, ClientCredentialsTokenProvider>();
-
+// One token cache per isolate: avoids a client-credentials exchange per request (#90).
 function tokenSupplier(env: AdminAuthorizationEnv): FgaAccessTokenSupplier | null {
-  if (!env.FGA_CLIENT_ID || !env.FGA_CLIENT_SECRET) return null;
-  const cached = tokenProviders.get(env.FGA_CLIENT_ID);
-  if (cached) return cached;
-  const created = new ClientCredentialsTokenProvider({
-    tokenUrl: "https://auth.fga.dev/oauth/token",
-    audience: "https://api.us1.fga.dev/",
-    clientId: env.FGA_CLIENT_ID,
-    clientSecret: env.FGA_CLIENT_SECRET,
-  });
-  tokenProviders.set(env.FGA_CLIENT_ID, created);
-  return created;
+  return fgaTokenSupplierFromEnv(env);
 }
 
 /**
@@ -76,7 +67,7 @@ function readClient(env: AdminAuthorizationEnv, organizationId: OrganizationId) 
   const supplier = tokenSupplier(env);
   if (!env.OPENFGA_STORE_ID || !env.OPENFGA_AUTHORIZATION_MODEL_ID || !supplier) return null;
   return new OpenFgaClient({
-    apiUrl: env.OPENFGA_API_URL ?? "https://api.us1.fga.dev",
+    apiUrl: env.OPENFGA_API_URL ?? DEFAULT_FGA_API_URL,
     storeId: env.OPENFGA_STORE_ID,
     authorizationModelId: env.OPENFGA_AUTHORIZATION_MODEL_ID,
     organizationId,
@@ -267,7 +258,7 @@ export function buildAdminAuthorizationApi(input: {
     observer,
     actionCatalog,
     provider: {
-      apiHost: new URL(env.OPENFGA_API_URL ?? "https://api.us1.fga.dev").host,
+      apiHost: new URL(env.OPENFGA_API_URL ?? DEFAULT_FGA_API_URL).host,
       storeId: env.OPENFGA_STORE_ID ?? "",
       authorizationModelId: modelId,
     },

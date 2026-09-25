@@ -6,10 +6,9 @@ import {
   D1MaterializedPlanRepository,
   D1PublicApiRepository,
 } from "@app/approval-d1";
-import { OpenFgaApproverResolver, OpenFgaClient } from "@app/approval-fga";
+import { fgaTokenSupplierFromEnv, OpenFgaApproverResolver, OpenFgaClient } from "@app/approval-fga";
 
 import { ServiceBindingActionAuthorizer, ServiceBindingActionExecutor } from "./service-binding.ts";
-import { fgaTokenSupplier } from "./fga-token.ts";
 import { createActionWorkflow } from "./workflow.ts";
 import type { ActionWorkflowDependencies, ActionWorkflowEnv } from "./workflow-dependencies.ts";
 
@@ -24,7 +23,7 @@ export function cloudflareWorkflowDependencies(env: ActionWorkflowEnv): ActionWo
   if (cached) return cached;
 
   const telemetry = new ConsoleTelemetrySink();
-  const tokenSupplier = fgaTokenSupplier(env);
+  const tokenSupplier = fgaTokenSupplierFromEnv(env);
   const dependencies: ActionWorkflowDependencies = {
     plans: new D1MaterializedPlanRepository(env.DB),
     projections: new D1ApprovalRuntimeProjectionRepository(env.DB),
