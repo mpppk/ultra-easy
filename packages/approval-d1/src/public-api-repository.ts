@@ -293,7 +293,8 @@ export class D1PublicApiRepository
       status === "expired" ||
       status === "authorization_revoked" ||
       status === "authorization_check_failed" ||
-      status === "execution_failed";
+      status === "execution_failed" ||
+      status === "execution_unknown";
 
     const resultView = actionResult.value
       ? {

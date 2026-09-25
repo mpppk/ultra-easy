@@ -22,6 +22,8 @@ import type {
   UserId,
 } from "@app/approval-core";
 
+export const PREVIEW_EXECUTOR_KEY = "executor:preview";
+
 export const previewScenarios = [
   "no-approval",
   "serial-two-users",
@@ -129,7 +131,7 @@ export async function createPreviewPlan(
       actionType: "preview" as MaterializedApprovalPlan["action"]["definition"]["actionType"],
       inputSchema: { key: "schema:preview" as SchemaKey, version: 1 },
       executorKey:
-        "executor:preview" as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
+        PREVIEW_EXECUTOR_KEY as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
     },
     type: "preview" as MaterializedApprovalPlan["action"]["type"],
     resource: {

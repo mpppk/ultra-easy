@@ -2,15 +2,18 @@ import { Result } from "@praha/byethrow";
 
 import {
   actionEventRecord,
+  actionExecutionOutcomeEvents,
+  actionExecutionStartEvents,
   actionPlanAuditEvents,
-  ActionAuthorizationCheckFailedError,
-  ActionExecutorError,
   authorizeActionRequest,
   canonicalizeJson,
   createActionExecutionIdempotencyKey,
   evaluateApprovalPlan,
-  executeActionRequest,
+  executeAuthorizedAction,
+  executorFailureStatus,
+  executorGuaranteeLevel,
   materializeApprovalPlan,
+  reauthorizeActionForExecution,
   validateActionInput,
   verifyMaterializedApprovalPlan,
 } from "@app/approval-core";
@@ -25,6 +28,8 @@ import type {
   ActionExecutor,
   ActionRequest,
   ActionRequestId,
+  ActionResultRecord,
+  ActionResultRepository,
   AuthorizationEvidence,
   JsonValue,
   MaterializedApprovalPlan,
@@ -64,7 +69,8 @@ export type ActionRequestPublicStatus =
   | "expired"
   | "authorization_revoked"
   | "authorization_check_failed"
-  | "execution_failed";
+  | "execution_failed"
+  | "execution_unknown";
 
 export type ActionRequestView = {
   id: string;
@@ -85,7 +91,8 @@ export type ActionRequestView = {
       | "executed"
       | "authorization_revoked"
       | "authorization_check_failed"
-      | "execution_failed";
+      | "execution_failed"
+      | "execution_unknown";
     output?: JsonValue;
     code?: string;
     message?: string;
@@ -214,6 +221,8 @@ export type ActionRequestApplicationServiceDependencies = {
   executor: ActionExecutor;
   planRepository: MaterializedPlanRepository;
   eventRepository?: ActionEventRepository;
+  /** 承認不要の同期実行の結果（Workflow経路のaction_resultsと同じread model）。 */
+  resultRepository: ActionResultRepository;
   workflowStarter: ActionWorkflowStarter;
   idGenerator: ActionRequestIdGenerator;
 };
@@ -642,6 +651,10 @@ export class ActionRequestApplicationService {
     return this.commit({ preparation: prepared.value, now: input.trustedContext.now });
   }
 
+  /**
+   * 承認不要のActionRequestを同期実行する。再認可 → 実行開始の記録 → 実行 → 結果と監査の
+   * 原子的保存の順で進め、Workflow経路と同じaction_resultsへ記録する（GETと201応答を一致させる）。
+   */
   private async executeImmediately(input: {
     actionRequestId: ActionRequestId;
     request: ActionRequest;
@@ -649,116 +662,38 @@ export class ActionRequestApplicationService {
     now: string;
   }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
     const { actionRequestId, request, plan, now } = input;
-    const execution = await executeActionRequest({
+    const base = { organizationId: plan.organizationId, actionRequestId, completedAt: now };
+
+    const reauthorized = await reauthorizeActionForExecution({
       authorizer: this.dependencies.authorizer,
-      executor: this.dependencies.executor,
-      organizationId: plan.organizationId,
-      actionRequestId,
       request,
-      actionFingerprint: plan.actionFingerprint,
-      action: plan.action,
       evaluatedAt: now,
     });
-    if (Result.isFailure(execution)) {
-      const failedEvents: ActionEventRecord[] = [];
-      if (execution.error instanceof ActionAuthorizationCheckFailedError) {
-        failedEvents.push(
-          actionEventRecord({
-            organizationId: plan.organizationId,
-            occurredAt: now,
-            event: {
-              type: "action.reauthorization_check_failed",
-              actionRequestId,
-              code: execution.error.providerCode,
-            },
-          }),
-        );
-        failedEvents.push(
-          actionEventRecord({
-            organizationId: plan.organizationId,
-            occurredAt: now,
-            event: {
-              type: "action.completed",
-              actionRequestId,
-              result: "authorization_check_failed",
-            },
-          }),
-        );
-      } else if (execution.error instanceof ActionExecutorError) {
-        const idempotencyKey = createActionExecutionIdempotencyKey(
-          plan.organizationId,
-          actionRequestId,
-          plan.actionFingerprint,
-        );
-        failedEvents.push(
-          actionEventRecord({
-            organizationId: plan.organizationId,
-            occurredAt: now,
-            event: {
-              type: "action.execution_started",
-              actionRequestId,
-              idempotencyKey,
-            },
-          }),
-          actionEventRecord({
-            organizationId: plan.organizationId,
-            occurredAt: now,
-            event: {
-              type: "action.execution_failed",
-              actionRequestId,
-              code: execution.error.code,
-              retriable: execution.error.retriable,
-            },
-          }),
-          actionEventRecord({
-            organizationId: plan.organizationId,
-            occurredAt: now,
-            event: {
-              type: "action.completed",
-              actionRequestId,
-              result: "execution_failed",
-            },
-          }),
-        );
-      }
-      const audited = await appendAudit(this.dependencies.eventRepository, failedEvents);
-      if (Result.isFailure(audited)) return audited;
-
+    if (Result.isFailure(reauthorized)) {
+      const recorded = await this.recordResult({
+        ...base,
+        status: "authorization_check_failed",
+        code: reauthorized.error.providerCode,
+        message: reauthorized.error.message,
+      });
+      if (Result.isFailure(recorded)) return recorded;
       return Result.fail(
         new ActionRequestApplicationError(
           "execution_failed",
-          execution.error.retriable,
-          execution.error.message,
-          undefined,
-          execution.error instanceof ActionExecutorError ? execution.error.code : undefined,
+          reauthorized.error.retriable,
+          reauthorized.error.message,
         ),
       );
     }
-
-    if (execution.value.type === "authorization_revoked") {
-      const audited = await appendAudit(this.dependencies.eventRepository, [
-        actionEventRecord({
-          organizationId: plan.organizationId,
-          occurredAt: now,
-          event: {
-            type: "action.reauthorization_denied",
-            actionRequestId,
-            code: execution.value.code,
-            reason: execution.value.reason,
-          },
-        }),
-        actionEventRecord({
-          organizationId: plan.organizationId,
-          occurredAt: now,
-          event: {
-            type: "action.completed",
-            actionRequestId,
-            result: "authorization_revoked",
-          },
-        }),
-      ]);
-      if (Result.isFailure(audited)) return audited;
-
+    if (reauthorized.value.type === "authorization_revoked") {
+      const { code, reason } = reauthorized.value;
+      const recorded = await this.recordResult({
+        ...base,
+        status: "authorization_revoked",
+        code,
+        message: reason,
+      });
+      if (Result.isFailure(recorded)) return recorded;
       return Result.succeed({
         type: "accepted",
         actionRequestId,
@@ -769,46 +704,66 @@ export class ActionRequestApplicationService {
           plan,
           status: "authorization_revoked",
           now,
-          result: {
-            status: "authorization_revoked",
-            code: execution.value.code,
-            message: execution.value.reason,
-          },
+          result: { status: "authorization_revoked", code, message: reason },
         }),
       });
     }
 
-    const executionAudit = await appendAudit(this.dependencies.eventRepository, [
-      actionEventRecord({
-        organizationId: plan.organizationId,
-        occurredAt: execution.value.authorizationEvidence.evaluatedAt,
-        event: {
-          type: "action.reauthorized",
-          actionRequestId,
-          evidence: execution.value.authorizationEvidence,
-        },
-      }),
-      actionEventRecord({
-        organizationId: plan.organizationId,
-        occurredAt: now,
-        event: {
-          type: "action.execution_started",
-          actionRequestId,
-          idempotencyKey: execution.value.idempotencyKey,
-        },
-      }),
-      actionEventRecord({
-        organizationId: plan.organizationId,
-        occurredAt: now,
-        event: {
-          type: "action.completed",
-          actionRequestId,
-          result: "executed",
-        },
-      }),
-    ]);
-    if (Result.isFailure(executionAudit)) return executionAudit;
+    const authorizationEvidence = reauthorized.value.authorizationEvidence;
+    const idempotencyKey = createActionExecutionIdempotencyKey(
+      plan.organizationId,
+      actionRequestId,
+      plan.actionFingerprint,
+    );
+    const guaranteeLevel = executorGuaranteeLevel(this.dependencies.executor, plan.action);
+    // 結果の保存前にcrashしても、実行を開始したことを監査に残す。
+    const started = await appendAudit(
+      this.dependencies.eventRepository,
+      actionExecutionStartEvents({ ...base, authorizationEvidence, idempotencyKey }),
+    );
+    if (Result.isFailure(started)) return started;
 
+    const executed = await executeAuthorizedAction({
+      executor: this.dependencies.executor,
+      organizationId: plan.organizationId,
+      actionRequestId,
+      actionFingerprint: plan.actionFingerprint,
+      action: plan.action,
+      authorizationEvidence,
+      actor: request.actor,
+    });
+    if (Result.isFailure(executed)) {
+      const recorded = await this.recordResult({
+        ...base,
+        status: executorFailureStatus({ retriable: executed.error.retriable, guaranteeLevel }),
+        authorizationEvidence,
+        idempotencyKey,
+        guaranteeLevel,
+        retriable: executed.error.retriable,
+        code: executed.error.code,
+        message: executed.error.message,
+      });
+      if (Result.isFailure(recorded)) return recorded;
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "execution_failed",
+          executed.error.retriable,
+          executed.error.message,
+          undefined,
+          executed.error.code,
+        ),
+      );
+    }
+
+    const recorded = await this.recordResult({
+      ...base,
+      status: "executed",
+      authorizationEvidence,
+      idempotencyKey,
+      guaranteeLevel: executed.value.guaranteeLevel,
+      result: executed.value.result,
+    });
+    if (Result.isFailure(recorded)) return recorded;
     return Result.succeed({
       type: "accepted",
       actionRequestId,
@@ -821,11 +776,38 @@ export class ActionRequestApplicationService {
         now,
         result: {
           status: "executed",
-          ...(execution.value.result.output !== undefined
-            ? { output: execution.value.result.output }
+          ...(executed.value.result.output !== undefined
+            ? { output: executed.value.result.output }
             : {}),
         },
       }),
     });
+  }
+
+  private async recordResult(
+    outcome: Omit<ActionResultRecord, "workflowInstanceId"> & {
+      authorizationEvidence?: AuthorizationEvidence;
+      retriable?: boolean;
+    },
+  ): Result.ResultAsync<void, ActionRequestApplicationError> {
+    const { authorizationEvidence, retriable, ...record } = outcome;
+    const saved = await this.dependencies.resultRepository.save(
+      record,
+      actionExecutionOutcomeEvents({
+        ...record,
+        ...(authorizationEvidence ? { authorizationEvidence } : {}),
+        ...(retriable !== undefined ? { retriable } : {}),
+      }),
+    );
+    if (Result.isFailure(saved)) {
+      return Result.fail(
+        new ActionRequestApplicationError(
+          "audit_persistence_failed",
+          saved.error.retriable,
+          saved.error.message,
+        ),
+      );
+    }
+    return Result.succeed(undefined);
   }
 }

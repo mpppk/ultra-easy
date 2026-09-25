@@ -25,7 +25,19 @@ After provider recovery:
 
 ## ActionExecutor/provider outage
 
-For retriable executor failures, allow Workflow retry to reuse the same execution idempotency key. For non-retriable failures, keep the terminal `execution_failed` result; do not replay manually unless the external system's idempotency guarantee is understood.
+Retry behaviour follows the executor's registered guarantee level (#104), resolved from the
+downstream executor registry (`GET /executors/:key`, `serveActionExecutorRegistry`) before the
+`execute action` step:
+
+- `idempotent`: retriable failures are retried by the Workflow (`retries.limit=5`, exponential
+  backoff from 10s, 5 min step timeout) with the same execution idempotency key. Exhausted retries
+  end in `execution_failed`.
+- `best_effort_at_most_once`: never retried. A retriable failure or a step timeout ends in
+  `execution_unknown` (`action.execution_failed` with `retriable: true`): the side effect may or may
+  not have happened, so reconcile against the external system before any manual replay.
+- Unregistered `executorKey` → `execution_failed` / `unknown_executor_key` (never a silent success).
+
+For non-retriable failures, keep the terminal `execution_failed` result; do not replay manually unless the external system's idempotency guarantee is understood.
 
 Before retrying an ambiguous external failure, determine whether the side effect may already have happened.
 

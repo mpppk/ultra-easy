@@ -1,13 +1,15 @@
 import { Result } from "@praha/byethrow";
-import type { WorkflowStep } from "cloudflare:workers";
+import type { WorkflowStep, WorkflowStepConfig } from "cloudflare:workers";
 import type { D1Database } from "@cloudflare/workers-types";
 
 import {
   createActionExecutionIdempotencyKey,
   executeAuthorizedAction,
+  executorFailureStatus,
   reauthorizeActionForExecution,
   validateApprovalBindingForExecution,
   type ActionExecutionGuaranteeLevel,
+  type ActionExecutionTerminalStatus,
   type ActionRequest,
   type ActionRequestId,
   type ApprovalPlanChecksum,
@@ -29,11 +31,32 @@ import {
   type ActionServiceBinding,
 } from "./service-binding.ts";
 
-export type ActionExecutionTerminalStatus =
-  | "executed"
-  | "authorization_revoked"
-  | "authorization_check_failed"
-  | "execution_failed";
+export type { ActionExecutionTerminalStatus };
+
+/**
+ * 保証レベルごとの「execute action」stepのretry方針。
+ * - idempotent: 同じidempotency keyでの再実行が安全なため、retriableな失敗をbackoff付きでretryする。
+ * - best_effort_at_most_once: 再実行しない。一時障害は副作用の有無が不明なため
+ *   `execution_unknown`で終端し、人手でreconcileする。
+ */
+export const ACTION_EXECUTION_STEP_CONFIG: Record<
+  ActionExecutionGuaranteeLevel,
+  WorkflowStepConfig
+> = {
+  idempotent: {
+    retries: { limit: 5, delay: "10 seconds", backoff: "exponential" },
+    timeout: "5 minutes",
+  },
+  best_effort_at_most_once: {
+    retries: { limit: 0, delay: 0 },
+    timeout: "5 minutes",
+  },
+};
+
+const DESCRIBE_EXECUTOR_STEP_CONFIG: WorkflowStepConfig = {
+  retries: { limit: 5, delay: "5 seconds", backoff: "exponential" },
+  timeout: "1 minute",
+};
 
 export type ActionExecutionWorkflowResult =
   | {
@@ -116,6 +139,14 @@ type ExecutionTransition =
   | RetryTransition;
 
 type ExecutionStepResult = Exclude<ExecutionTransition, RetryTransition>;
+
+type ExecutorDescriptionTransition =
+  | { type: "registered"; guaranteeLevel: ActionExecutionGuaranteeLevel }
+  | TerminalTransition
+  | FailedTransition
+  | RetryTransition;
+
+type ExecutorDescriptionStepResult = Exclude<ExecutorDescriptionTransition, RetryTransition>;
 
 function errorCode(error: unknown): string {
   if (typeof error === "object" && error !== null && "code" in error) {
@@ -326,10 +357,81 @@ async function runReauthorizationStep(input: {
   }
 }
 
+/** downstreamのexecutor registryに問い合わせ、executorKeyの登録と実行保証を確定する。 */
+async function describeExecutorStep(input: {
+  env: ActionExecutionWorkflowEnv;
+  params: ActionExecutionWorkflowParams;
+}): Promise<ExecutorDescriptionTransition> {
+  const loaded = await loadPlan(input.env, input.params);
+  if (loaded.type !== "found") return loaded;
+  if (!input.env.ACTION_EXECUTOR) {
+    return {
+      type: "terminal",
+      status: "execution_failed",
+      retriable: false,
+      code: "action_executor_not_configured",
+      message: "Action Executor service bindingが設定されていません",
+    };
+  }
+  const executorKey = loaded.plan.action.definition.executorKey;
+  const described = await new ServiceBindingActionExecutor(
+    input.env.ACTION_EXECUTOR,
+    executorKey,
+  ).describe();
+  if (Result.isFailure(described)) {
+    return described.error.retriable
+      ? { type: "retry", error: described.error }
+      : {
+          type: "terminal",
+          status: "execution_failed",
+          retriable: false,
+          code: described.error.code,
+          message: described.error.message,
+        };
+  }
+  if (described.value.type === "not_registered") {
+    return {
+      type: "terminal",
+      status: "execution_failed",
+      retriable: false,
+      code: "unknown_executor_key",
+      message: `未対応のexecutorKeyです: ${String(executorKey)}`,
+    };
+  }
+  return described.value;
+}
+
+async function runDescribeExecutorStep(input: {
+  env: ActionExecutionWorkflowEnv;
+  params: ActionExecutionWorkflowParams;
+  step: WorkflowStep;
+}): Promise<ExecutorDescriptionStepResult> {
+  try {
+    return await input.step.do<ExecutorDescriptionStepResult>(
+      "describe action executor",
+      DESCRIBE_EXECUTOR_STEP_CONFIG,
+      async () => {
+        const transition = await describeExecutorStep(input);
+        if (transition.type === "retry") return Promise.reject(transition.error);
+        return transition;
+      },
+    );
+  } catch (error) {
+    // 実行前の失敗なので副作用は起きていない。
+    return {
+      type: "terminal",
+      status: "execution_failed",
+      code: errorCode(error),
+      message: errorMessage(error),
+    };
+  }
+}
+
 async function executeStep(input: {
   env: ActionExecutionWorkflowEnv;
   params: ActionExecutionWorkflowParams;
   authorizationEvidence: AuthorizationEvidence;
+  guaranteeLevel: ActionExecutionGuaranteeLevel;
 }): Promise<ExecutionTransition> {
   const loaded = await loadPlan(input.env, input.params);
   if (loaded.type !== "found") return loaded;
@@ -348,6 +450,7 @@ async function executeStep(input: {
   const executor = new ServiceBindingActionExecutor(
     input.env.ACTION_EXECUTOR,
     loaded.plan.action.definition.executorKey,
+    input.guaranteeLevel,
   );
   const idempotencyKey = createActionExecutionIdempotencyKey(
     loaded.plan.organizationId,
@@ -364,17 +467,22 @@ async function executeStep(input: {
     actor: loaded.plan.evaluationSnapshot.actor,
   });
   if (Result.isFailure(result)) {
-    return result.error.retriable
-      ? { type: "retry", error: result.error }
-      : {
-          type: "terminal",
-          status: "execution_failed",
-          guaranteeLevel: executor.guaranteeLevel,
-          idempotencyKey,
-          retriable: false,
-          code: result.error.code,
-          message: result.error.message,
-        };
+    // idempotentだけがstep.doのretryに委ねる。at-most-onceの一時障害はexecution_unknownで終端する。
+    if (result.error.retriable && input.guaranteeLevel === "idempotent") {
+      return { type: "retry", error: result.error };
+    }
+    return {
+      type: "terminal",
+      status: executorFailureStatus({
+        retriable: result.error.retriable,
+        guaranteeLevel: input.guaranteeLevel,
+      }),
+      guaranteeLevel: input.guaranteeLevel,
+      idempotencyKey,
+      retriable: result.error.retriable,
+      code: result.error.code,
+      message: result.error.message,
+    };
   }
   return {
     type: "executed",
@@ -389,21 +497,33 @@ async function runExecutionStep(input: {
   params: ActionExecutionWorkflowParams;
   step: WorkflowStep;
   authorizationEvidence: PersistedAuthorizationEvidence;
+  guaranteeLevel: ActionExecutionGuaranteeLevel;
 }): Promise<ExecutionStepResult> {
   try {
-    return await input.step.do<ExecutionStepResult>("execute action", async () => {
-      const transition = await executeStep({
-        env: input.env,
-        params: input.params,
-        authorizationEvidence: restoreAuthorizationEvidence(input.authorizationEvidence),
-      });
-      if (transition.type === "retry") return Promise.reject(transition.error);
-      return transition;
-    });
+    return await input.step.do<ExecutionStepResult>(
+      "execute action",
+      ACTION_EXECUTION_STEP_CONFIG[input.guaranteeLevel],
+      async () => {
+        const transition = await executeStep({
+          env: input.env,
+          params: input.params,
+          authorizationEvidence: restoreAuthorizationEvidence(input.authorizationEvidence),
+          guaranteeLevel: input.guaranteeLevel,
+        });
+        if (transition.type === "retry") return Promise.reject(transition.error);
+        return transition;
+      },
+    );
   } catch (error) {
+    // retry枯渇・timeout。at-most-onceでは副作用の有無が分からないためexecution_unknownにする。
     return {
       type: "terminal",
-      status: "execution_failed",
+      status:
+        input.guaranteeLevel === "best_effort_at_most_once"
+          ? "execution_unknown"
+          : "execution_failed",
+      guaranteeLevel: input.guaranteeLevel,
+      retriable: true,
       code: errorCode(error),
       message: errorMessage(error),
     };
@@ -446,11 +566,20 @@ export async function runActionExecution(input: {
   }
   if (reauthorization.type === "terminal") return terminalResult(reauthorization);
 
+  const described = await runDescribeExecutorStep(input);
+  if (described.type === "failed") {
+    return { type: "failed", code: described.code, message: described.message };
+  }
+  if (described.type === "terminal") {
+    return terminalResult(described, restoreAuthorizationEvidence(reauthorization.evidence));
+  }
+
   const execution = await runExecutionStep({
     env: input.env,
     params: input.params,
     step: input.step,
     authorizationEvidence: reauthorization.evidence,
+    guaranteeLevel: described.guaranteeLevel,
   });
   if (execution.type === "failed") {
     return {

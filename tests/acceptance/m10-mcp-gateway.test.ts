@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { InMemoryActionAuditStore } from "@app/approval-core/testing";
 import { assert, describe, expect, it } from "vite-plus/test";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
@@ -307,6 +308,7 @@ function createHarness() {
     authorizer,
     executor,
     planRepository: plans,
+    resultRepository: new InMemoryActionAuditStore(),
     eventRepository: events,
     workflowStarter,
     idGenerator: { next: () => branded<ActionRequestId>(`action-request:m10-${++counter}`) },

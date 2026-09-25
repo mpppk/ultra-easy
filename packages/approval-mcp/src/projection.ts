@@ -175,6 +175,17 @@ export function projectActionRequest(view: ActionRequestView): McpTerminalProjec
           provenance: "execution",
         }),
       };
+    case "execution_unknown":
+      return {
+        status: "failed",
+        statusMessage: "Tool execution outcome is unknown and requires reconciliation",
+        error: executionProtocolError({
+          actionRequestId: view.id,
+          code: view.result?.code,
+          message: view.result?.message,
+          provenance: "execution",
+        }),
+      };
     case "cancelled":
       return { status: "cancelled", statusMessage: "ActionRequest was cancelled" };
   }

@@ -33,7 +33,8 @@ export type ActionCompletedResult =
   | "expired"
   | "authorization_revoked"
   | "authorization_check_failed"
-  | "execution_failed";
+  | "execution_failed"
+  | "execution_unknown";
 
 export type ActionEvent =
   | {
