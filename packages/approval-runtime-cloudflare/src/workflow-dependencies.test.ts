@@ -22,7 +22,7 @@ import type {
 } from "@app/approval-core";
 
 import { cloudflareWorkflowDependencies } from "./cloudflare-workflow.ts";
-import { fgaTokenSupplier } from "./fga-token.ts";
+import { fgaTokenSupplierFromEnv as fgaTokenSupplier } from "@app/approval-fga";
 import type { ActionWorkflowDependencies, ActionWorkflowEnv } from "./workflow-dependencies.ts";
 import {
   actionWorkflowInstanceId,

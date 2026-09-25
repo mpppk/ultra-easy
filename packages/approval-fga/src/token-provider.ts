@@ -32,12 +32,19 @@ function fail(
   return Result.fail(new FgaTokenProviderError(code, retriable, message));
 }
 
-function decodeExp(token: string): number | null {
+/** base64url → UTF-8。Workers標準の`atob`だけを使う（nodejs_compat無しでは`Buffer`が無い）。 */
+function decodeBase64Url(value: string): string {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+  const binary = atob(padded);
+  return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+}
+
+export function decodeJwtExp(token: string): number | null {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   try {
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const payload = JSON.parse(Buffer.from(base64, "base64").toString("utf8")) as unknown;
+    const payload = JSON.parse(decodeBase64Url(parts[1])) as unknown;
     if (typeof payload !== "object" || payload === null) return null;
     const exp = (payload as Record<string, unknown>).exp;
     return typeof exp === "number" && Number.isFinite(exp) ? exp : null;
@@ -46,11 +53,13 @@ function decodeExp(token: string): number | null {
   }
 }
 
+type ExchangedToken = { token: string; expiresIn: number | null };
+
 async function exchangeToken(input: {
   fetchImplementation: typeof globalThis.fetch;
   url: string;
   body: string;
-}): Result.ResultAsync<string, FgaTokenProviderError> {
+}): Result.ResultAsync<ExchangedToken, FgaTokenProviderError> {
   let response: Response;
   try {
     response = await input.fetchImplementation(input.url, {
@@ -68,24 +77,32 @@ async function exchangeToken(input: {
       `FGA token exchange failed: HTTP ${response.status}`,
     );
   }
-  let parsed: { access_token?: unknown };
+  let parsed: { access_token?: unknown; expires_in?: unknown };
   try {
-    parsed = (await response.json()) as { access_token?: unknown };
+    parsed = (await response.json()) as { access_token?: unknown; expires_in?: unknown };
   } catch (error) {
     return fail("fga_token_malformed", false, String(error));
   }
   if (typeof parsed.access_token !== "string" || parsed.access_token.length === 0) {
     return fail("fga_token_malformed", false, "FGA token responseにaccess_tokenがありません");
   }
-  return Result.succeed(parsed.access_token);
+  return Result.succeed({
+    token: parsed.access_token,
+    expiresIn:
+      typeof parsed.expires_in === "number" && Number.isFinite(parsed.expires_in)
+        ? parsed.expires_in
+        : null,
+  });
 }
 
 /**
  * Auth0 FGA client-credentials token provider with in-memory cache.
- * Workers isolate内で有効期限60秒前までtokenを使い回す。
+ * Workers isolate内で有効期限60秒前までtokenを使い回し、同時に来たrefreshは1回のexchangeへまとめる。
+ * isolate内で共有するには`sharedFgaTokenProvider`を使う（#90）。
  */
 export class ClientCredentialsTokenProvider implements FgaAccessTokenSupplier {
   private cached: { token: string; exp: number } | null = null;
+  private inflight: Result.ResultAsync<string, FgaTokenProviderError> | null = null;
   private readonly fetchImplementation: typeof globalThis.fetch;
 
   constructor(private readonly options: FgaTokenProviderOptions) {
@@ -97,6 +114,14 @@ export class ClientCredentialsTokenProvider implements FgaAccessTokenSupplier {
   ): Result.ResultAsync<string, FgaTokenProviderError> {
     const cached = this.cached;
     if (cached && cached.exp - 60 > nowSeconds) return Result.succeed(cached.token);
+    if (this.inflight) return this.inflight;
+    this.inflight = this.refresh(nowSeconds).finally(() => {
+      this.inflight = null;
+    });
+    return this.inflight;
+  }
+
+  private async refresh(nowSeconds: number): Result.ResultAsync<string, FgaTokenProviderError> {
     const exchanged = await exchangeToken({
       fetchImplementation: this.fetchImplementation,
       url: this.options.tokenUrl,
@@ -108,8 +133,79 @@ export class ClientCredentialsTokenProvider implements FgaAccessTokenSupplier {
       }),
     });
     if (Result.isFailure(exchanged)) return exchanged;
-    const exp = decodeExp(exchanged.value) ?? nowSeconds + 300;
-    this.cached = { token: exchanged.value, exp };
-    return Result.succeed(exchanged.value);
+    const { token, expiresIn } = exchanged.value;
+    const exp = decodeJwtExp(token) ?? (expiresIn !== null ? nowSeconds + expiresIn : null);
+    this.cached = { token, exp: exp ?? nowSeconds + 300 };
+    return Result.succeed(token);
   }
+}
+
+/** OpenFGA Cloud（Auth0 FGA）の既定値。self-host / 別regionはenvで上書きする。 */
+export const DEFAULT_FGA_API_URL = "https://api.us1.fga.dev";
+export const DEFAULT_FGA_TOKEN_ISSUER = "auth.fga.dev";
+
+/** FGA client credentialsの設定（Workers env / process.envの共通部分）。 */
+export type FgaClientCredentialsEnv = {
+  OPENFGA_API_URL?: string;
+  /** token issuer。host（`auth.fga.dev`）またはtoken endpointのURL。 */
+  FGA_API_TOKEN_ISSUER?: string;
+  /** token audience。未設定は`OPENFGA_API_URL`のoriginから導く。 */
+  FGA_API_AUDIENCE?: string;
+};
+
+/** envからtoken endpointとaudienceを決める。audienceはOPENFGA_API_URLに連動させる（#90）。 */
+export function fgaTokenEndpoint(env: FgaClientCredentialsEnv): {
+  tokenUrl: string;
+  audience: string;
+} {
+  const issuer = env.FGA_API_TOKEN_ISSUER?.trim() || DEFAULT_FGA_TOKEN_ISSUER;
+  const tokenUrl = /^https?:\/\//.test(issuer)
+    ? issuer
+    : `https://${issuer.replace(/\/+$/, "")}/oauth/token`;
+  const explicitAudience = env.FGA_API_AUDIENCE?.trim();
+  if (explicitAudience) return { tokenUrl, audience: explicitAudience };
+  const apiUrl = env.OPENFGA_API_URL?.trim() || DEFAULT_FGA_API_URL;
+  return { tokenUrl, audience: `${new URL(apiUrl).origin}/` };
+}
+
+const sharedProviders = new Map<string, ClientCredentialsTokenProvider>();
+
+/**
+ * isolate（module scope）で共有するtoken provider（#90）。client / secret / endpoint / audienceが
+ * 同じ限り、リクエストやWorkflow stepをまたいで同じinstanceを返し、token exchangeを1回にする。
+ * secretのrotation後は別keyになるため、新しいsecretで取り直す。
+ */
+export function sharedFgaTokenProvider(
+  input: { clientId: string; clientSecret: string } & FgaClientCredentialsEnv,
+  fetchImplementation?: typeof globalThis.fetch,
+): ClientCredentialsTokenProvider {
+  const endpoint = fgaTokenEndpoint(input);
+  const key = JSON.stringify([
+    input.clientId,
+    input.clientSecret,
+    endpoint.tokenUrl,
+    endpoint.audience,
+  ]);
+  const cached = sharedProviders.get(key);
+  if (cached) return cached;
+  const created = new ClientCredentialsTokenProvider({
+    ...endpoint,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    ...(fetchImplementation ? { fetch: fetchImplementation } : {}),
+  });
+  sharedProviders.set(key, created);
+  return created;
+}
+
+/** `FGA_CLIENT_ID` / `FGA_CLIENT_SECRET`からの共有token provider。未設定ならnull。 */
+export function fgaTokenSupplierFromEnv(
+  env: FgaClientCredentialsEnv & { FGA_CLIENT_ID?: string; FGA_CLIENT_SECRET?: string },
+): ClientCredentialsTokenProvider | null {
+  if (!env.FGA_CLIENT_ID || !env.FGA_CLIENT_SECRET) return null;
+  return sharedFgaTokenProvider({
+    ...env,
+    clientId: env.FGA_CLIENT_ID,
+    clientSecret: env.FGA_CLIENT_SECRET,
+  });
 }

@@ -6,9 +6,10 @@ import {
 } from "@app/approval-core";
 import { D1AuthorizationRelationshipStore, type D1DatabaseLike } from "@app/approval-d1";
 import {
-  ClientCredentialsTokenProvider,
+  DEFAULT_FGA_API_URL,
   OpenFgaClient,
   OpenFgaRelationshipTupleGateway,
+  sharedFgaTokenProvider,
 } from "@app/approval-fga";
 
 export type RelationshipMutationEnv = {
@@ -25,9 +26,9 @@ export type RelationshipMutationEnv = {
   FGA_TUPLE_WRITER_CLIENT_SECRET?: string;
   FGA_CLIENT_ID?: string;
   FGA_CLIENT_SECRET?: string;
+  FGA_API_TOKEN_ISSUER?: string;
+  FGA_API_AUDIENCE?: string;
 };
-
-const writerTokens = new Map<string, ClientCredentialsTokenProvider>();
 
 function writerCredentials(env: RelationshipMutationEnv) {
   const clientId = env.FGA_TUPLE_WRITER_CLIENT_ID ?? env.FGA_CLIENT_ID;
@@ -47,23 +48,15 @@ export function relationshipCoordinator(
   const storeId = env.OPENFGA_STORE_ID;
   const modelId = env.OPENFGA_AUTHORIZATION_MODEL_ID;
   if (!credentials || !storeId || !modelId) return null;
-  let tokens = writerTokens.get(credentials.clientId);
-  if (!tokens) {
-    tokens = new ClientCredentialsTokenProvider({
-      tokenUrl: "https://auth.fga.dev/oauth/token",
-      audience: "https://api.us1.fga.dev/",
-      ...credentials,
-    });
-    writerTokens.set(credentials.clientId, tokens);
-  }
-  const tokenSupplier = tokens;
+  // isolate内で共有し、tuple writeのたびにtoken exchangeしない（#90）。
+  const tokenSupplier = sharedFgaTokenProvider({ ...env, ...credentials });
   return new AuthorizationRelationshipCoordinator({
     store: new D1AuthorizationRelationshipStore(env.DB),
     gateway: new OpenFgaRelationshipTupleGateway({
       authorizationModelId: modelId,
       clientFor: (organizationId: OrganizationId) =>
         new OpenFgaClient({
-          apiUrl: env.OPENFGA_API_URL ?? "https://api.us1.fga.dev",
+          apiUrl: env.OPENFGA_API_URL ?? DEFAULT_FGA_API_URL,
           storeId,
           authorizationModelId: modelId,
           organizationId,

@@ -1,5 +1,11 @@
 import { Result } from "@praha/byethrow";
-import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey, type JWTPayload } from "jose";
+import {
+  createRemoteJWKSet,
+  customFetch,
+  jwtVerify,
+  type JWTVerifyGetKey,
+  type JWTPayload,
+} from "jose";
 import { parseBrand } from "@app/approval-core";
 
 import type { OrganizationId, PrincipalRef } from "@app/approval-core";
@@ -42,6 +48,26 @@ const USER_GRANT_TYPES = new Set(["password", "refresh_token", "authorization_co
 const CLIENT_CREDENTIALS_GRANT_TYPE = "client-credentials";
 
 type KeyResolver = JWTVerifyGetKey;
+
+const keyResolvers = new Map<string, KeyResolver>();
+
+/**
+ * Auth0 tenantのJWKS resolverをisolate（module scope）で共有する（#90）。`createRemoteJWKSet`は
+ * instance内でJWKSをcacheするため、リクエストごとに作るとJWKSを毎回取り直してしまう。
+ */
+export function auth0KeyResolver(
+  domain: string,
+  fetchImplementation?: typeof globalThis.fetch,
+): KeyResolver {
+  const cached = keyResolvers.get(domain);
+  if (cached) return cached;
+  const created = createRemoteJWKSet(
+    new URL(`https://${domain}/.well-known/jwks.json`),
+    fetchImplementation ? { [customFetch]: fetchImplementation } : undefined,
+  );
+  keyResolvers.set(domain, created);
+  return created;
+}
 
 type VerifiedToken = { principal: PrincipalRef; payload: JWTPayload; scopes: ReadonlySet<string> };
 
@@ -124,8 +150,7 @@ export class Auth0IdentityProvider
     resolveKey?: KeyResolver,
   ) {
     this.issuer = `https://${config.domain}/`;
-    this.resolveKey =
-      resolveKey ?? createRemoteJWKSet(new URL(`https://${config.domain}/.well-known/jwks.json`));
+    this.resolveKey = resolveKey ?? auth0KeyResolver(config.domain);
   }
 
   private async verify(

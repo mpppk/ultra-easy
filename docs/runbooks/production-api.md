@@ -77,9 +77,17 @@ Governance bootstrap rule (docs/governance-bootstrap.md) option 1
   extension was needed (additive-only rule still applies to future changes).
 - Token endpoint is `https://auth.fga.dev/oauth/token`
   (NOT `api.us1.fga.dev`), audience `https://api.us1.fga.dev/`.
-  The worker exchanges client credentials at runtime with in-memory cache
-  (`ClientCredentialsTokenProvider`); no static token secret.
+  Override with the optional vars `FGA_API_TOKEN_ISSUER` (host or full token
+  URL) / `FGA_API_AUDIENCE`; when unset, the audience follows the origin of
+  `OPENFGA_API_URL` (e.g. `https://api.eu1.fga.dev/`).
+  The worker exchanges client credentials at runtime. The provider is shared
+  per isolate (`sharedFgaTokenProvider`, keyed by client/secret/endpoint/audience),
+  so one exchange serves every request and Workflow step until 60s before
+  expiry (#90). Expiry comes from the JWT `exp` (decoded with `atob`, no
+  `nodejs_compat` needed) or `expires_in`. No static token secret.
   Secrets `FGA_CLIENT_ID` / `FGA_CLIENT_SECRET` via `wrangler secret put`.
+- Auth0 JWKS is fetched once per isolate per tenant domain
+  (`auth0KeyResolver`); jose refreshes it on an unknown `kid` (key rotation).
 - Tenant scoping: the repo client checks `ticket:<org>/<id>` objects
   (`tenantScopedOpenFgaObject`). Tuples MUST use the scoped object form,
   e.g. `ticket:organization%3Astaging/staging-e2e-1`, or checks deny.

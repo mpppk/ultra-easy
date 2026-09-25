@@ -7,5 +7,4 @@ export * from "./workflow-cancellation.ts";
 export * from "./telemetry.ts";
 export * from "./operations.ts";
 export * from "./cloudflare-workflow.ts";
-export * from "./fga-token.ts";
 export * from "./workflow-dependencies.ts";

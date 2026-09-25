@@ -6,6 +6,7 @@ import type { OrganizationId } from "@app/approval-core";
 
 import {
   Auth0IdentityProvider,
+  auth0KeyResolver,
   readAuth0OrganizationMembership,
   type Auth0OrganizationMembership,
 } from "./auth0-identity.ts";
@@ -221,5 +222,43 @@ describe("Auth0IdentityProvider", () => {
         AUTH0_ORGANIZATION_CLAIM_VALUE: "organization:staging",
       }),
     ).toEqual({ type: "claim", claim: "https://ultra-easy/org", value: "organization:staging" });
+  });
+});
+
+describe("auth0KeyResolver (#90)", () => {
+  it("同一isolateの連続したリクエストでJWKS取得は1回だけ", async () => {
+    const isolateDomain = "jwks-cache.example.auth0.com";
+    const pair = await generateKeyPair("RS256");
+    const publicJwk = { ...(await exportJWK(pair.publicKey)), kid: "cache-key", alg: "RS256" };
+    let jwksFetches = 0;
+    auth0KeyResolver(isolateDomain, (async () => {
+      jwksFetches += 1;
+      return Response.json({ keys: [publicJwk] });
+    }) as typeof globalThis.fetch);
+
+    const token = await new SignJWT({ scope: allScopes, sub: "auth0|alice", gty: "password" })
+      .setProtectedHeader({ alg: "RS256", kid: "cache-key" })
+      .setIssuer(`https://${isolateDomain}/`)
+      .setAudience(audience)
+      .setExpirationTime(new Date("2030-01-01T00:00:00Z"))
+      .sign(pair.privateKey);
+
+    // buildApiはリクエストごとにproviderを作る。resolverはdomain単位で共有される。
+    for (let request = 0; request < 3; request += 1) {
+      const provider = new Auth0IdentityProvider({
+        domain: isolateDomain,
+        audience,
+        organizationId,
+        membership: { type: "tenant" },
+      });
+      const principal = await provider.authenticate({
+        request: requestWith(token),
+        organizationId,
+        operation: "action_request.read",
+      });
+      assert(Result.isSuccess(principal));
+    }
+    expect(jwksFetches).toBe(1);
+    expect(auth0KeyResolver(isolateDomain)).toBe(auth0KeyResolver(isolateDomain));
   });
 });

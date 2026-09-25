@@ -3,9 +3,10 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 
 import type { ActionRequest, RelationName } from "@app/approval-core";
 import {
-  ClientCredentialsTokenProvider,
+  DEFAULT_FGA_API_URL,
   OpenFgaActionAuthorizer,
   OpenFgaClient,
+  sharedFgaTokenProvider,
 } from "@app/approval-fga";
 import { ConsoleTelemetrySink, parseBrand } from "@app/approval-core";
 
@@ -81,11 +82,13 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
     if (!storeId || !modelId || !clientId || !clientSecret) {
       return errorBody("fga_not_configured", "FGA接続設定がありません", true, 500);
     }
-    const tokenSupplier = new ClientCredentialsTokenProvider({
-      tokenUrl: "https://auth.fga.dev/oauth/token",
-      audience: "https://api.us1.fga.dev/",
+    // isolate内で共有し、認可checkのたびにtoken exchangeしない（#90）。
+    const tokenSupplier = sharedFgaTokenProvider({
       clientId,
       clientSecret,
+      ...(env["OPENFGA_API_URL"] ? { OPENFGA_API_URL: env["OPENFGA_API_URL"] } : {}),
+      ...(env["FGA_API_TOKEN_ISSUER"] ? { FGA_API_TOKEN_ISSUER: env["FGA_API_TOKEN_ISSUER"] } : {}),
+      ...(env["FGA_API_AUDIENCE"] ? { FGA_API_AUDIENCE: env["FGA_API_AUDIENCE"] } : {}),
     });
     const organizationId = parseBrand(
       "OrganizationId",
@@ -105,7 +108,7 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
       : null;
     const authorizer = new OpenFgaActionAuthorizer(
       new OpenFgaClient({
-        apiUrl: env["OPENFGA_API_URL"] ?? "https://api.us1.fga.dev",
+        apiUrl: env["OPENFGA_API_URL"] ?? DEFAULT_FGA_API_URL,
         storeId,
         authorizationModelId: modelId,
         organizationId: organizationId.value,
