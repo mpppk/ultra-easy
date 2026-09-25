@@ -10,9 +10,11 @@
     "test": "vp test"
   },
   "dependencies": {
+    "@app/approval-application": "workspace:*",
     "@app/approval-core": "workspace:*",
     "@app/expression-core": "workspace:*",
     "@app/workflow-core": "workspace:*",
-    "@praha/byethrow": "^0.12.0"
+    "@praha/byethrow": "^0.12.0",
+    "@standard-schema/spec": "^1.1.0"
   }
 }

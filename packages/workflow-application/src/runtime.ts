@@ -105,6 +105,15 @@ function needsPolling(state: WorkflowRunState): boolean {
   );
 }
 
+function summary(record: WorkflowRunRecord): WorkflowAdvanceResult {
+  return {
+    runId: record.state.runId,
+    status: record.state.status,
+    revision: record.revision,
+    ...(record.wakeAt !== undefined ? { wakeAt: record.wakeAt } : {}),
+  };
+}
+
 function repositoryFailure(error: { code: string; retriable: boolean; message: string }) {
   return Result.fail(new WorkflowRuntimeError(error.code, error.retriable, error.message));
 }
@@ -212,6 +221,8 @@ export class WorkflowRuntime {
     context: WorkflowRunContext;
     invocation: WorkflowInvocation;
     depth: number;
+    /** falseならrunを作成するだけで進めない（scheduler / runnerに任せる）。既定true。 */
+    advance?: boolean;
   }): Result.ResultAsync<WorkflowAdvanceResult, WorkflowRuntimeError> {
     const version = await this.loadVersion(input.organizationId, input.definitionId, input.version);
     if (Result.isFailure(version)) return version;
@@ -239,8 +250,10 @@ export class WorkflowRuntime {
       runId: input.runId,
     });
     if (Result.isFailure(existing)) return repositoryFailure(existing.error);
-    if (existing.value)
+    if (existing.value) {
+      if (input.advance === false) return Result.succeed(summary(existing.value));
       return this.advance({ organizationId: input.organizationId, runId: input.runId });
+    }
 
     if (this.deps.admission) {
       const admitted = await this.deps.admission.admitRun({
@@ -287,6 +300,11 @@ export class WorkflowRuntime {
       events: workflowRunTransitionEvents(null, state),
     });
     if (Result.isFailure(created)) return repositoryFailure(created.error);
+    if (input.advance === false) {
+      const current =
+        created.value.type === "existing" ? created.value.record : { ...record, revision: 1 };
+      return Result.succeed(summary(current));
+    }
     return this.advance({ organizationId: input.organizationId, runId: input.runId });
   }
 
