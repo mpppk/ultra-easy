@@ -9,12 +9,11 @@ import {
 } from "@app/approval-core";
 import type {
   ActionEventRecord,
+  ActionEventRepository,
   ActionRequestId,
   OrganizationId,
   TelemetrySink,
 } from "@app/approval-core";
-import { D1ActionEventRepository } from "@app/approval-d1";
-import type { D1DatabaseLike } from "@app/approval-d1";
 
 export function emitDomainEventTelemetry(
   telemetry: TelemetrySink,
@@ -26,12 +25,12 @@ export function emitDomainEventTelemetry(
 }
 
 export async function emitActionSliSnapshot(input: {
-  db: D1DatabaseLike;
+  events: ActionEventRepository;
   organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   telemetry: TelemetrySink;
 }): Promise<void> {
-  const records = await new D1ActionEventRepository(input.db).listForAction({
+  const records = await input.events.listForAction({
     organizationId: input.organizationId,
     actionRequestId: input.actionRequestId,
   });

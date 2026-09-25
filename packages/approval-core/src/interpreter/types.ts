@@ -112,3 +112,15 @@ export type ApprovalInterpreterContext = {
   state: ApprovalRuntimeState;
   now: string;
 };
+
+/** version付きのruntime projection（#89 楽観ロック）。 */
+export type VersionedApprovalRuntimeProjection = {
+  state: ApprovalRuntimeState;
+  version: number;
+  writer?: string;
+};
+
+export type ApprovalRuntimeProjectionWriteResult =
+  | { type: "written"; version: number; state: ApprovalRuntimeState }
+  /** 別のwriterが先にversionを進めた。currentは現在の保存内容。 */
+  | { type: "conflict"; current: VersionedApprovalRuntimeProjection | null };

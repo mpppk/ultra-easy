@@ -1,14 +1,12 @@
 import { Result } from "@praha/byethrow";
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import type { WorkflowEvent, WorkflowSleepDuration, WorkflowStep } from "cloudflare:workers";
-import type { D1Database } from "@cloudflare/workers-types";
 
 import {
   actionEventRecord,
   actionExecutionOutcomeEvents,
   actionRuntimeTransitionEvents,
   advanceApprovalRuntime,
-  ConsoleTelemetrySink,
   ApproverResolverProviderError,
   expireApprovalRuntime,
   isApprovalDecisionRejection,
@@ -25,30 +23,21 @@ import type {
   ApprovalDecisionRejectionError,
   ApprovalPlanChecksum,
   ApprovalRuntimeState,
-  ApproverResolver,
   MaterializedApprovalPlan,
+  MaterializedPlanLoadResult,
   OrganizationId,
 } from "@app/approval-core";
-import {
-  D1ActionEventRepository,
-  D1ActionResultProjectionRepository,
-  D1ApprovalRuntimeProjectionRepository,
-  D1MaterializedPlanRepository,
-  D1PublicApiRepository,
-} from "@app/approval-d1";
-import {
-  ClientCredentialsTokenProvider,
-  OpenFgaApproverResolver,
-  OpenFgaClient,
-} from "@app/approval-fga";
 
-import { runActionExecution, type ActionExecutionWorkflowEnv } from "./action-execution.ts";
+import { runActionExecution } from "./action-execution.ts";
 import {
   emitActionSliSnapshot,
   emitDomainEventTelemetry,
   emitWorkflowFailure,
   emitWorkflowRetry,
 } from "./telemetry.ts";
+import type { ActionWorkflowDependencies, ActionWorkflowEnv } from "./workflow-dependencies.ts";
+
+export type { ActionWorkflowDependencies, ActionWorkflowEnv } from "./workflow-dependencies.ts";
 
 export type ActionWorkflowParams = {
   organizationId: OrganizationId;
@@ -99,18 +88,6 @@ export type ActionWorkflowOutput =
       code: string;
       message: string;
     };
-
-export type ActionWorkflowEnv = ActionExecutionWorkflowEnv & {
-  DB: D1Database;
-  ACTION_EXECUTION_MODE?: "execute" | "approval_only";
-  OPENFGA_API_URL: string;
-  OPENFGA_STORE_ID: string;
-  OPENFGA_AUTHORIZATION_MODEL_ID: string;
-  OPENFGA_ASSUME_LIST_USERS_COMPLETE?: string;
-  OPENFGA_API_TOKEN?: string;
-  FGA_CLIENT_ID?: string;
-  FGA_CLIENT_SECRET?: string;
-};
 
 type RuntimeTransition =
   | {
@@ -207,10 +184,7 @@ function interpreterFailure(
 }
 
 function loadFailure(
-  result: Exclude<
-    Awaited<ReturnType<D1MaterializedPlanRepository["loadForWorkflow"]>>,
-    { type: "found" }
-  >,
+  result: Exclude<MaterializedPlanLoadResult, { type: "found" }>,
 ): RuntimeFailure | Extract<RuntimeTransition, { type: "retry" }> {
   if (result.type === "repository_error") {
     return retry(new Error(`Materialized Approval Plan repository error: ${result.message}`));
@@ -236,43 +210,12 @@ function loadFailure(
   };
 }
 
-function resolverFor(
-  env: ActionWorkflowEnv,
-  organizationId: OrganizationId,
-  actionRequestId: ActionRequestId,
-): ApproverResolver {
-  return new OpenFgaApproverResolver(
-    new OpenFgaClient({
-      apiUrl: env.OPENFGA_API_URL,
-      storeId: env.OPENFGA_STORE_ID,
-      authorizationModelId: env.OPENFGA_AUTHORIZATION_MODEL_ID,
-      organizationId,
-      actionRequestId,
-      ...(env.OPENFGA_API_TOKEN ? { token: env.OPENFGA_API_TOKEN } : {}),
-      ...(env.FGA_CLIENT_ID && env.FGA_CLIENT_SECRET
-        ? {
-            tokenSupplier: new ClientCredentialsTokenProvider({
-              tokenUrl: "https://auth.fga.dev/oauth/token",
-              audience: "https://api.us1.fga.dev/",
-              clientId: env.FGA_CLIENT_ID,
-              clientSecret: env.FGA_CLIENT_SECRET,
-            }),
-          }
-        : {}),
-      telemetry: new ConsoleTelemetrySink(),
-      ...(env.OPENFGA_ASSUME_LIST_USERS_COMPLETE === "true"
-        ? { listUsersCompleteness: "assume_complete" as const }
-        : {}),
-    }),
-  );
-}
-
 /**
  * runtime projectionをcompare-and-setで保存する（#89）。Workflowとforce-cancelの2つのwriterが
  * 競合しても状態を巻き戻さない。Workflow外から終端されていれば、そのstateを採用して終了する。
  */
 async function persistProjection(input: {
-  env: ActionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   plan: MaterializedApprovalPlan;
   previousState: ApprovalRuntimeState | null;
   state: ApprovalRuntimeState;
@@ -281,7 +224,7 @@ async function persistProjection(input: {
   expectedVersion: number | null | undefined;
   writer: string;
 }): Promise<RuntimeTransition> {
-  const repository = new D1ApprovalRuntimeProjectionRepository(input.env.DB);
+  const repository = input.deps.projections;
   let expectedVersion = input.expectedVersion;
   if (expectedVersion === undefined) {
     const current = await repository.loadVersioned({
@@ -316,18 +259,17 @@ async function persistProjection(input: {
       message: "runtime projectionが別のwriterによって更新されました",
     };
   }
-  emitDomainEventTelemetry(new ConsoleTelemetrySink(), events);
+  emitDomainEventTelemetry(input.deps.telemetry, events);
   return { type: "advanced", state: stored.value.state, version: stored.value.version };
 }
 
 async function initializeRuntime(
-  env: ActionWorkflowEnv,
+  deps: ActionWorkflowDependencies,
   params: ActionWorkflowParams,
   startedAt: string,
   workflowInstanceId: string,
 ): Promise<RuntimeTransition> {
-  const repository = new D1MaterializedPlanRepository(env.DB);
-  const loaded = await repository.loadForWorkflow({
+  const loaded = await deps.plans.loadForWorkflow({
     organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
@@ -336,12 +278,12 @@ async function initializeRuntime(
 
   const started = await startApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
+    resolver: deps.approverResolver(params),
     startedAt,
   });
   if (Result.isFailure(started)) return interpreterFailure(started.error);
   return persistProjection({
-    env,
+    deps,
     plan: loaded.plan,
     previousState: null,
     state: started.value,
@@ -351,7 +293,9 @@ async function initializeRuntime(
   });
 }
 
-function retryOnCommandFailure(error: Error): Extract<RuntimeTransition, { type: "retry" }> {
+function retryOnCommandFailure(error: {
+  message: string;
+}): Extract<RuntimeTransition, { type: "retry" }> {
   return retry(new Error(`Approval command outcomeを保存できません: ${error.message}`));
 }
 
@@ -360,7 +304,7 @@ function retryOnCommandFailure(error: Error): Extract<RuntimeTransition, { type:
  * eventKeyとcommandのCASにより、step retryで再実行しても重複しない。
  */
 async function rejectDecision(
-  env: ActionWorkflowEnv,
+  deps: ActionWorkflowDependencies,
   plan: MaterializedApprovalPlan,
   event: ApprovalDecisionEvent,
   error: ApprovalDecisionRejectionError,
@@ -378,10 +322,10 @@ async function rejectDecision(
       code: error.code,
     },
   });
-  const appended = await new D1ActionEventRepository(env.DB).append(record);
+  const appended = await deps.events.appendMany([record]);
   if (Result.isFailure(appended)) return retry(appended.error);
 
-  const resolved = await new D1PublicApiRepository(env.DB).resolveOutcome({
+  const resolved = await deps.commands.resolveOutcome({
     organizationId: plan.organizationId,
     commandId: event.idempotencyKey,
     status: "rejected",
@@ -395,21 +339,20 @@ async function rejectDecision(
     },
   });
   if (Result.isFailure(resolved)) return retryOnCommandFailure(resolved.error);
-  emitDomainEventTelemetry(new ConsoleTelemetrySink(), [record]);
+  emitDomainEventTelemetry(deps.telemetry, [record]);
   return { type: "decision_rejected", code: error.code };
 }
 
 type RuntimeCursor = { state: ApprovalRuntimeState; version: number | undefined; writer: string };
 
 async function recordDecision(
-  env: ActionWorkflowEnv,
+  deps: ActionWorkflowDependencies,
   params: ActionWorkflowParams,
   cursor: RuntimeCursor,
   event: ApprovalDecisionEvent,
 ): Promise<DecisionTransition> {
   const { state } = cursor;
-  const repository = new D1MaterializedPlanRepository(env.DB);
-  const loaded = await repository.loadForWorkflow({
+  const loaded = await deps.plans.loadForWorkflow({
     organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
@@ -418,17 +361,17 @@ async function recordDecision(
 
   const recorded = await recordApprovalDecision({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
+    resolver: deps.approverResolver(params),
     state,
     event,
   });
   if (Result.isFailure(recorded)) {
     return isApprovalDecisionRejection(recorded.error)
-      ? rejectDecision(env, loaded.plan, event, recorded.error)
+      ? rejectDecision(deps, loaded.plan, event, recorded.error)
       : interpreterFailure(recorded.error);
   }
   const persisted = await persistProjection({
-    env,
+    deps,
     plan: loaded.plan,
     previousState: state,
     state: recorded.value.state,
@@ -439,7 +382,7 @@ async function recordDecision(
 
   // commandの「applied」はWorkflowがDecisionを受理した時点で確定する（配送済みとは区別する）。
   // Workflow外で終端されていた（force-cancel）場合、Decisionは適用されていない。
-  const resolved = await new D1PublicApiRepository(env.DB).resolveOutcome({
+  const resolved = await deps.commands.resolveOutcome({
     organizationId: loaded.plan.organizationId,
     commandId: event.idempotencyKey,
     status: persisted.superseded ? "rejected" : "applied",
@@ -461,14 +404,13 @@ async function recordDecision(
 }
 
 async function advanceRuntime(
-  env: ActionWorkflowEnv,
+  deps: ActionWorkflowDependencies,
   params: ActionWorkflowParams,
   cursor: RuntimeCursor,
   now: string,
 ): Promise<RuntimeTransition> {
   const { state } = cursor;
-  const repository = new D1MaterializedPlanRepository(env.DB);
-  const loaded = await repository.loadForWorkflow({
+  const loaded = await deps.plans.loadForWorkflow({
     organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
@@ -477,13 +419,13 @@ async function advanceRuntime(
 
   const advanced = await advanceApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
+    resolver: deps.approverResolver(params),
     state,
     now,
   });
   if (Result.isFailure(advanced)) return interpreterFailure(advanced.error);
   return persistProjection({
-    env,
+    deps,
     plan: loaded.plan,
     previousState: state,
     state: advanced.value,
@@ -493,14 +435,13 @@ async function advanceRuntime(
 }
 
 async function expireRuntime(
-  env: ActionWorkflowEnv,
+  deps: ActionWorkflowDependencies,
   params: ActionWorkflowParams,
   cursor: RuntimeCursor,
   now: string,
 ): Promise<RuntimeTransition> {
   const { state } = cursor;
-  const repository = new D1MaterializedPlanRepository(env.DB);
-  const loaded = await repository.loadForWorkflow({
+  const loaded = await deps.plans.loadForWorkflow({
     organizationId: params.organizationId,
     actionRequestId: params.actionRequestId,
     expectedApprovalPlanChecksum: params.approvalPlanChecksum,
@@ -509,13 +450,13 @@ async function expireRuntime(
 
   const expired = await expireApprovalRuntime({
     plan: loaded.plan,
-    resolver: resolverFor(env, params.organizationId, params.actionRequestId),
+    resolver: deps.approverResolver(params),
     state,
     now,
   });
   if (Result.isFailure(expired)) return interpreterFailure(expired.error);
   return persistProjection({
-    env,
+    deps,
     plan: loaded.plan,
     previousState: state,
     state: expired.value,
@@ -525,6 +466,7 @@ async function expireRuntime(
 }
 
 async function runRuntimeStep<T extends DecisionTransition>(
+  deps: ActionWorkflowDependencies,
   step: WorkflowStep,
   name: string,
   params: ActionWorkflowParams,
@@ -534,7 +476,7 @@ async function runRuntimeStep<T extends DecisionTransition>(
     const transition = await callback();
     if (transition.type === "retry") {
       emitWorkflowRetry({
-        telemetry: new ConsoleTelemetrySink(),
+        telemetry: deps.telemetry,
         organizationId: params.organizationId,
         actionRequestId: params.actionRequestId,
         operation: name,
@@ -579,7 +521,7 @@ const parseActionExecutionResult = Result.fn({
  * （pending_approvalのまま放置しない）。eventの保存自体に失敗しても終了は妨げない。
  */
 async function failWorkflow(input: {
-  env: ActionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   step: WorkflowStep;
   params: ActionWorkflowParams;
   workflowInstanceId: string;
@@ -588,7 +530,7 @@ async function failWorkflow(input: {
   message: string;
 }): Promise<ActionWorkflowOutput> {
   emitWorkflowFailure({
-    telemetry: new ConsoleTelemetrySink(),
+    telemetry: input.deps.telemetry,
     organizationId: input.params.organizationId,
     actionRequestId: input.params.actionRequestId,
     operation: input.operation,
@@ -607,7 +549,7 @@ async function failWorkflow(input: {
   try {
     await input.step.do("record workflow failure", async () => {
       // occurredAtはstep結果として固定し、replayで別の時刻のeventを作らない。
-      const appended = await new D1ActionEventRepository(input.env.DB).appendMany([record]);
+      const appended = await input.deps.events.appendMany([record]);
       if (Result.isFailure(appended)) return Promise.reject(appended.error);
       return { recordedAt: record.occurredAt };
     });
@@ -623,13 +565,13 @@ async function failWorkflow(input: {
 }
 
 async function projectActionResult(input: {
-  env: ActionWorkflowEnv;
+  deps: ActionWorkflowDependencies;
   params: ActionWorkflowParams;
   workflowInstanceId: string;
   execution: Extract<Awaited<ReturnType<typeof runActionExecution>>, { type: "completed" }>;
   completedAt: string;
 }): Result.ResultAsync<void, ActionResultProjectionError> {
-  const loaded = await new D1MaterializedPlanRepository(input.env.DB).loadForWorkflow({
+  const loaded = await input.deps.plans.loadForWorkflow({
     organizationId: input.params.organizationId,
     actionRequestId: input.params.actionRequestId,
     expectedApprovalPlanChecksum: input.params.approvalPlanChecksum,
@@ -663,7 +605,7 @@ async function projectActionResult(input: {
     ...(input.execution.message !== undefined ? { message: input.execution.message } : {}),
   });
 
-  const saved = await new D1ActionResultProjectionRepository(input.env.DB).save(
+  const saved = await input.deps.results.save(
     {
       organizationId: loaded.plan.organizationId,
       actionRequestId: loaded.plan.actionRequestId,
@@ -687,10 +629,10 @@ async function projectActionResult(input: {
       new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
     );
   }
-  const telemetry = new ConsoleTelemetrySink();
+  const telemetry = input.deps.telemetry;
   emitDomainEventTelemetry(telemetry, events);
   await emitActionSliSnapshot({
-    db: input.env.DB,
+    events: input.deps.events,
     organizationId: loaded.plan.organizationId,
     actionRequestId: loaded.plan.actionRequestId,
     telemetry,
@@ -698,174 +640,187 @@ async function projectActionResult(input: {
   return Result.succeed(undefined);
 }
 
-export class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, ActionWorkflowParams> {
-  async run(
-    event: WorkflowEvent<ActionWorkflowParams>,
-    step: WorkflowStep,
-  ): Promise<ActionWorkflowOutput> {
-    const params = event.payload;
+/**
+ * 汎用のActionWorkflowを依存注入で組み立てる（#106）。Workflowのロジックはportだけに依存し、
+ * D1 / OpenFGA / service bindingの具象は`dependencies(env)`が供給する（isolate内でmemo化する想定）。
+ */
+export function createActionWorkflow(
+  dependencies: (env: ActionWorkflowEnv) => ActionWorkflowDependencies,
+) {
+  return class ActionWorkflow extends WorkflowEntrypoint<ActionWorkflowEnv, ActionWorkflowParams> {
+    async run(
+      event: WorkflowEvent<ActionWorkflowParams>,
+      step: WorkflowStep,
+    ): Promise<ActionWorkflowOutput> {
+      return runActionWorkflow(dependencies(this.env), event, step);
+    }
+  };
+}
 
-    if (event.instanceId !== (await actionWorkflowInstanceId(params))) {
-      return {
-        type: "failed",
-        actionRequestId: params.actionRequestId,
-        code: "workflow_instance_id_mismatch",
-        message: `Workflow instance idはorganizationId + actionRequestIdと一致する必要があります: ${event.instanceId}`,
-      };
+/** ActionWorkflowの本体。WorkflowEntrypointから切り離し、fake depsとfake stepでテストできる。 */
+export async function runActionWorkflow(
+  deps: ActionWorkflowDependencies,
+  event: WorkflowEvent<ActionWorkflowParams>,
+  step: WorkflowStep,
+): Promise<ActionWorkflowOutput> {
+  const params = event.payload;
+
+  if (event.instanceId !== (await actionWorkflowInstanceId(params))) {
+    return {
+      type: "failed",
+      actionRequestId: params.actionRequestId,
+      code: "workflow_instance_id_mismatch",
+      message: `Workflow instance idはorganizationId + actionRequestIdと一致する必要があります: ${event.instanceId}`,
+    };
+  }
+
+  const fail = (operation: string, failure: { code: string; message: string }) =>
+    failWorkflow({
+      deps,
+      step,
+      params,
+      workflowInstanceId: event.instanceId,
+      operation,
+      code: failure.code,
+      message: failure.message,
+    });
+
+  let logicalNow = event.timestamp.toISOString();
+  const initialized = await runRuntimeStep(deps, step, "initialize approval runtime", params, () =>
+    initializeRuntime(deps, params, logicalNow, event.instanceId),
+  );
+  if (initialized.type === "failed") return fail("approval_runtime", initialized);
+
+  let state = initialized.state;
+  let version = initialized.version;
+  const cursor = (writer: string): RuntimeCursor => ({ state, version, writer });
+  let iteration = 0;
+  while (state.status === "pending") {
+    const nextExpiry = nextApprovalRuntimeExpiry(state);
+    if (nextExpiry && Date.parse(nextExpiry) <= Date.parse(logicalNow)) {
+      const name = `expire approval runtime ${iteration}`;
+      const expired = await runRuntimeStep(deps, step, name, params, () =>
+        expireRuntime(deps, params, cursor(name), nextExpiry),
+      );
+      if (expired.type === "failed") return fail("approval_runtime", expired);
+      state = expired.state;
+      version = expired.version;
+      logicalNow = nextExpiry;
+      iteration += 1;
+      continue;
     }
 
-    const fail = (operation: string, failure: { code: string; message: string }) =>
-      failWorkflow({
-        env: this.env,
-        step,
-        params,
-        workflowInstanceId: event.instanceId,
-        operation,
-        code: failure.code,
-        message: failure.message,
+    const timeout = timeoutUntil(logicalNow, nextExpiry);
+    const decision = await waitForDecision({
+      step,
+      name: `wait for approval decision ${iteration}`,
+      timeout: timeout.timeout,
+    });
+    if (decision.type === "control_flow") {
+      emitWorkflowFailure({
+        telemetry: deps.telemetry,
+        organizationId: params.organizationId,
+        actionRequestId: params.actionRequestId,
+        operation: "wait_for_approval_decision",
+        errorCode: errorName(decision.error) ?? "workflow_control_flow_error",
       });
-
-    let logicalNow = event.timestamp.toISOString();
-    const initialized = await runRuntimeStep(step, "initialize approval runtime", params, () =>
-      initializeRuntime(this.env, params, logicalNow, event.instanceId),
-    );
-    if (initialized.type === "failed") return fail("approval_runtime", initialized);
-
-    let state = initialized.state;
-    let version = initialized.version;
-    const cursor = (writer: string): RuntimeCursor => ({ state, version, writer });
-    let iteration = 0;
-    while (state.status === "pending") {
-      const nextExpiry = nextApprovalRuntimeExpiry(state);
-      if (nextExpiry && Date.parse(nextExpiry) <= Date.parse(logicalNow)) {
+      return Promise.reject(decision.error);
+    }
+    if (decision.type === "timeout") {
+      if (nextExpiry) {
         const name = `expire approval runtime ${iteration}`;
-        const expired = await runRuntimeStep(step, name, params, () =>
-          expireRuntime(this.env, params, cursor(name), nextExpiry),
+        const expired = await runRuntimeStep(deps, step, name, params, () =>
+          expireRuntime(deps, params, cursor(name), nextExpiry),
         );
         if (expired.type === "failed") return fail("approval_runtime", expired);
         state = expired.state;
         version = expired.version;
         logicalNow = nextExpiry;
-        iteration += 1;
-        continue;
+      } else {
+        logicalNow = addSeconds(logicalNow, timeout.seconds);
       }
-
-      const timeout = timeoutUntil(logicalNow, nextExpiry);
-      const decision = await waitForDecision({
-        step,
-        name: `wait for approval decision ${iteration}`,
-        timeout: timeout.timeout,
-      });
-      if (decision.type === "control_flow") {
-        emitWorkflowFailure({
-          telemetry: new ConsoleTelemetrySink(),
-          organizationId: params.organizationId,
-          actionRequestId: params.actionRequestId,
-          operation: "wait_for_approval_decision",
-          errorCode: errorName(decision.error) ?? "workflow_control_flow_error",
-        });
-        return Promise.reject(decision.error);
-      }
-      if (decision.type === "timeout") {
-        if (nextExpiry) {
-          const name = `expire approval runtime ${iteration}`;
-          const expired = await runRuntimeStep(step, name, params, () =>
-            expireRuntime(this.env, params, cursor(name), nextExpiry),
-          );
-          if (expired.type === "failed") return fail("approval_runtime", expired);
-          state = expired.state;
-          version = expired.version;
-          logicalNow = nextExpiry;
-        } else {
-          logicalNow = addSeconds(logicalNow, timeout.seconds);
-        }
-        iteration += 1;
-        continue;
-      }
-
-      const recordName = `record approval decision ${iteration}`;
-      const recorded = await runRuntimeStep(step, recordName, params, () =>
-        recordDecision(this.env, params, cursor(recordName), decision.event),
-      );
-      if (recorded.type === "failed") return fail("approval_runtime", recorded);
-      if (recorded.type === "decision_rejected") {
-        // invalid decisionは監査に残して無視し、同じTaskの待機を継続する。
-        if (Date.parse(decision.event.decidedAt) > Date.parse(logicalNow)) {
-          logicalNow = decision.event.decidedAt;
-        }
-        iteration += 1;
-        continue;
-      }
-      state = recorded.state;
-      version = recorded.version;
-      logicalNow = decision.event.decidedAt;
-      if (state.status !== "pending" && recorded.superseded) break;
-
-      const activateName = `activate approval runtime ${iteration}`;
-      const advanced = await runRuntimeStep(step, activateName, params, () =>
-        advanceRuntime(this.env, params, cursor(activateName), logicalNow),
-      );
-      if (advanced.type === "failed") return fail("approval_runtime", advanced);
-      state = advanced.state;
-      version = advanced.version;
       iteration += 1;
+      continue;
     }
 
-    if (state.status !== "approved" || this.env.ACTION_EXECUTION_MODE === "approval_only") {
-      if (state.status !== "approved") {
-        await emitActionSliSnapshot({
-          db: this.env.DB,
-          organizationId: params.organizationId,
-          actionRequestId: params.actionRequestId,
-          telemetry: new ConsoleTelemetrySink(),
-        });
+    const recordName = `record approval decision ${iteration}`;
+    const recorded = await runRuntimeStep(deps, step, recordName, params, () =>
+      recordDecision(deps, params, cursor(recordName), decision.event),
+    );
+    if (recorded.type === "failed") return fail("approval_runtime", recorded);
+    if (recorded.type === "decision_rejected") {
+      // invalid decisionは監査に残して無視し、同じTaskの待機を継続する。
+      if (Date.parse(decision.event.decidedAt) > Date.parse(logicalNow)) {
+        logicalNow = decision.event.decidedAt;
       }
-      return {
-        type: "completed",
+      iteration += 1;
+      continue;
+    }
+    state = recorded.state;
+    version = recorded.version;
+    logicalNow = decision.event.decidedAt;
+    if (state.status !== "pending" && recorded.superseded) break;
+
+    const activateName = `activate approval runtime ${iteration}`;
+    const advanced = await runRuntimeStep(deps, step, activateName, params, () =>
+      advanceRuntime(deps, params, cursor(activateName), logicalNow),
+    );
+    if (advanced.type === "failed") return fail("approval_runtime", advanced);
+    state = advanced.state;
+    version = advanced.version;
+    iteration += 1;
+  }
+
+  if (state.status !== "approved" || deps.executionMode === "approval_only") {
+    if (state.status !== "approved") {
+      await emitActionSliSnapshot({
+        events: deps.events,
+        organizationId: params.organizationId,
         actionRequestId: params.actionRequestId,
-        status: state.status,
-      };
-    }
-
-    const execution = await runActionExecution({
-      env: this.env,
-      params,
-      step,
-      evaluatedAt: logicalNow,
-    });
-    if (execution.type === "failed") return fail("action_execution", execution);
-
-    try {
-      await step.do("project action result", async () => {
-        const projected = await projectActionResult({
-          env: this.env,
-          params,
-          workflowInstanceId: event.instanceId,
-          execution,
-          completedAt: logicalNow,
-        });
-        if (Result.isFailure(projected)) return Promise.reject(projected.error);
-        return { type: "projected" } as const;
-      });
-    } catch (error) {
-      return fail("project_action_result", {
-        code: "execution_projection_failed",
-        message: error instanceof Error ? error.message : String(error),
+        telemetry: deps.telemetry,
       });
     }
-
     return {
       type: "completed",
       actionRequestId: params.actionRequestId,
-      status: execution.status,
-      ...(execution.guaranteeLevel !== undefined
-        ? { guaranteeLevel: execution.guaranteeLevel }
-        : {}),
-      ...(execution.idempotencyKey !== undefined
-        ? { idempotencyKey: execution.idempotencyKey }
-        : {}),
-      ...(execution.code ? { code: execution.code } : {}),
-      ...(execution.message ? { message: execution.message } : {}),
+      status: state.status,
     };
   }
+
+  const execution = await runActionExecution({
+    deps,
+    params,
+    step,
+    evaluatedAt: logicalNow,
+  });
+  if (execution.type === "failed") return fail("action_execution", execution);
+
+  try {
+    await step.do("project action result", async () => {
+      const projected = await projectActionResult({
+        deps,
+        params,
+        workflowInstanceId: event.instanceId,
+        execution,
+        completedAt: logicalNow,
+      });
+      if (Result.isFailure(projected)) return Promise.reject(projected.error);
+      return { type: "projected" } as const;
+    });
+  } catch (error) {
+    return fail("project_action_result", {
+      code: "execution_projection_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return {
+    type: "completed",
+    actionRequestId: params.actionRequestId,
+    status: execution.status,
+    ...(execution.guaranteeLevel !== undefined ? { guaranteeLevel: execution.guaranteeLevel } : {}),
+    ...(execution.idempotencyKey !== undefined ? { idempotencyKey: execution.idempotencyKey } : {}),
+    ...(execution.code ? { code: execution.code } : {}),
+    ...(execution.message ? { message: execution.message } : {}),
+  };
 }
