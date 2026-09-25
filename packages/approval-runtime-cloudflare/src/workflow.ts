@@ -1,6 +1,11 @@
 import { Result } from "@praha/byethrow";
 import { WorkflowEntrypoint } from "cloudflare:workers";
-import type { WorkflowEvent, WorkflowSleepDuration, WorkflowStep } from "cloudflare:workers";
+import type {
+  WorkflowEvent,
+  WorkflowSleepDuration,
+  WorkflowStep,
+  WorkflowStepConfig,
+} from "cloudflare:workers";
 
 import {
   actionEventRecord,
@@ -629,16 +634,35 @@ async function projectActionResult(input: {
       new ActionResultProjectionError(saved.error.message, { cause: saved.error }),
     );
   }
-  const telemetry = input.deps.telemetry;
-  emitDomainEventTelemetry(telemetry, events);
-  await emitActionSliSnapshot({
-    events: input.deps.events,
-    organizationId: loaded.plan.organizationId,
-    actionRequestId: loaded.plan.actionRequestId,
-    telemetry,
-  });
+  emitDomainEventTelemetry(input.deps.telemetry, events);
   return Result.succeed(undefined);
 }
+
+/**
+ * 終端したActionのSLIを1回だけ出す（#110）。retryされる投影stepの中で出すとretryのたびに
+ * metricが重複するため、retryしない専用stepに分ける。step結果はcacheされるのでreplayでも
+ * 再送しない。元データを読めない場合はtelemetry.failedを出して終える（業務は止めない）。
+ */
+async function emitActionSli(input: {
+  deps: ActionWorkflowDependencies;
+  step: WorkflowStep;
+  params: ActionWorkflowParams;
+}): Promise<void> {
+  try {
+    await input.step.do("emit action SLI", SLI_STEP_CONFIG, () =>
+      emitActionSliSnapshot({
+        events: input.deps.events,
+        organizationId: input.params.organizationId,
+        actionRequestId: input.params.actionRequestId,
+        telemetry: input.deps.telemetry,
+      }),
+    );
+  } catch {
+    // telemetryの失敗でWorkflowを失敗させない。
+  }
+}
+
+const SLI_STEP_CONFIG: WorkflowStepConfig = { retries: { limit: 0, delay: 0 } };
 
 /**
  * 汎用のActionWorkflowを依存注入で組み立てる（#106）。Workflowのロジックはportだけに依存し、
@@ -772,14 +796,7 @@ export async function runActionWorkflow(
   }
 
   if (state.status !== "approved" || deps.executionMode === "approval_only") {
-    if (state.status !== "approved") {
-      await emitActionSliSnapshot({
-        events: deps.events,
-        organizationId: params.organizationId,
-        actionRequestId: params.actionRequestId,
-        telemetry: deps.telemetry,
-      });
-    }
+    if (state.status !== "approved") await emitActionSli({ deps, step, params });
     return {
       type: "completed",
       actionRequestId: params.actionRequestId,
@@ -813,6 +830,7 @@ export async function runActionWorkflow(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+  await emitActionSli({ deps, step, params });
 
   return {
     type: "completed",

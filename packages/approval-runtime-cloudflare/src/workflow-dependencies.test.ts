@@ -3,6 +3,7 @@ import { assert, describe, expect, it } from "vite-plus/test";
 import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 
 import {
+  ActionEventRepositoryError,
   computeActionFingerprint,
   computeApprovalBindingFingerprint,
   computeApprovalPlanChecksum,
@@ -214,6 +215,37 @@ describe("#106 ActionWorkflow dependency injection", () => {
     expect(memory.events.map((record) => record.event.type)).toContain("action.completed");
     expect(step.names).toEqual(
       expect.arrayContaining(["initialize approval runtime", "execute action"]),
+    );
+    // #110: SLIはretryしない専用stepで1回だけ出す
+    expect(step.names.filter((name) => name === "emit action SLI")).toHaveLength(1);
+    expect(step.names.indexOf("emit action SLI")).toBeGreaterThan(
+      step.names.indexOf("project action result"),
+    );
+  });
+
+  it("SLIの元データを読めなければtelemetry.failedを出し、Workflowは完了する", async () => {
+    const plan = await noApprovalPlan("action:di-sli-unavailable");
+    const memory = inMemoryDependencies(plan);
+    memory.deps.events.listForAction = async () =>
+      Result.fail(new ActionEventRepositoryError("d1_unavailable", true, "D1 unavailable"));
+
+    const output = await runActionWorkflow(
+      memory.deps,
+      await workflowEvent({
+        organizationId,
+        actionRequestId: plan.actionRequestId,
+        approvalPlanChecksum: plan.approvalPlanChecksum,
+      }),
+      fakeStep(),
+    );
+
+    expect(output).toMatchObject({ type: "completed", status: "executed" });
+    expect(memory.telemetry).toContainEqual(
+      expect.objectContaining({
+        kind: "log",
+        event: "telemetry.failed",
+        attributes: { errorCode: "sli_source_unavailable" },
+      }),
     );
   });
 

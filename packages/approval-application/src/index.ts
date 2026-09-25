@@ -5,3 +5,4 @@ export * from "./public-http.ts";
 export * from "./read-command.ts";
 export * from "./simulator.ts";
 export * from "./authorization-admin.ts";
+export * from "./http-access-log.ts";

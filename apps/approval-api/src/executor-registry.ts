@@ -14,6 +14,7 @@ import { D1GovernanceRepository } from "@app/approval-d1";
 import {
   CloudflareWorkflowCancellationControl,
   type WorkflowBindingControl,
+  telemetrySinkFromEnv,
 } from "@app/approval-runtime-cloudflare";
 
 import { relationshipExecutor, type RelationshipMutationEnv } from "./relationship-mutation.ts";
@@ -71,7 +72,11 @@ export function createActionExecutorRegistry(
   return new ActionExecutorRegistry({
     [String(GOVERNANCE_EXECUTOR_KEY)]: new GovernanceActionExecutor(
       new D1GovernanceRepository(env.DB),
-      new CloudflareWorkflowCancellationControl(env.DB, env.ACTION_WORKFLOW),
+      new CloudflareWorkflowCancellationControl(
+        env.DB,
+        env.ACTION_WORKFLOW,
+        telemetrySinkFromEnv(env),
+      ),
     ),
     [String(AUTHORIZATION_EXECUTOR_KEY)]:
       relationshipExecutor(env) ??

@@ -37,6 +37,7 @@
       "name": "@app/approval-runtime",
       "version": "0.0.0",
       "dependencies": {
+        "@app/approval-application": "workspace:*",
         "@app/approval-core": "workspace:*",
         "@app/approval-d1": "workspace:*",
         "@app/approval-runtime-cloudflare": "workspace:*",

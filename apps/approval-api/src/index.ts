@@ -7,8 +7,17 @@ import {
   createActionRequestHttpApi,
   createPublicHttpApi,
   PublicApiRepositoryError,
+  AUTHORIZATION_ADMIN_HTTP_ROUTES,
+  PUBLIC_HTTP_ROUTES,
+  withHttpAccessLog,
 } from "@app/approval-application";
-import { newIdentifier, parseBrand, type OrganizationId } from "@app/approval-core";
+import {
+  newIdentifier,
+  parseBrand,
+  safeLogRecord,
+  systemCorrelation,
+  type OrganizationId,
+} from "@app/approval-core";
 import {
   createD1ActionRequestPersistence,
   D1FixedWindowRateLimiter,
@@ -191,7 +200,19 @@ function buildApi(input: {
         now: new Date().toISOString(),
       });
       if (Result.isFailure(processed)) {
-        console.error("decision inline process failed", { code: processed.error.code });
+        // cronが再処理する。inline処理の失敗はtelemetryへ残す（#110）。
+        telemetry.emit(
+          safeLogRecord({
+            level: "warn",
+            event: "request.failed",
+            correlation: systemCorrelation({
+              component: "http",
+              operation: "decision.inline_process",
+              organizationId,
+            }),
+            attributes: { errorCode: processed.error.code },
+          }),
+        );
       }
     },
   });
@@ -208,7 +229,19 @@ function buildApi(input: {
               organizationId,
               thresholds: readOperatorAlertThresholds(env),
             }),
-          onError: (code) => console.error("operator dashboard failed", { code }),
+          onError: (code) =>
+            telemetry.emit(
+              safeLogRecord({
+                level: "error",
+                event: "request.failed",
+                correlation: systemCorrelation({
+                  component: "http",
+                  operation: "operator.dashboard",
+                  organizationId,
+                }),
+                attributes: { errorCode: code },
+              }),
+            ),
         });
       }
       return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
@@ -233,38 +266,49 @@ async function reconcileRelationships(
   return Result.succeed({ reconciled: reconciled.value.reconciled });
 }
 
-export default {
-  async fetch(request: Request, env: ApprovalApiEnv): Promise<Response> {
-    try {
-      const authorizerBinding = env.ACTION_AUTHORIZER;
-      const executorBinding = env.ACTION_EXECUTOR;
-      if (!authorizerBinding || !executorBinding) {
-        return Response.json(
-          { error: "ACTION_AUTHORIZER/ACTION_EXECUTOR bindingがありません" },
-          { status: 500 },
-        );
-      }
-      const organizationId = deploymentOrganizationId(env);
-      if (!organizationId) {
-        return Response.json({ error: "AUTH0_ORGANIZATION_IDが不正です" }, { status: 500 });
-      }
-      return buildApi({ env, authorizerBinding, organizationId }).fetch(request);
-    } catch (error) {
-      // 例外messageは応答に含めない（#93）。
-      console.error("approval api unhandled error", {
-        code: "unhandled_error",
-        name: error instanceof Error ? error.name : typeof error,
-      });
+/** access log（#110）の対象route。一致しないpathは`unmatched`として記録する。 */
+const APPROVAL_API_ROUTES = [
+  ...PUBLIC_HTTP_ROUTES,
+  ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
+  "/operator/dashboard",
+];
+
+async function handleFetch(request: Request, env: ApprovalApiEnv): Promise<Response> {
+  try {
+    const authorizerBinding = env.ACTION_AUTHORIZER;
+    const executorBinding = env.ACTION_EXECUTOR;
+    if (!authorizerBinding || !executorBinding) {
       return Response.json(
-        {
-          type: "urn:ultra-easy:problem:internal_error",
-          title: "Internal Server Error",
-          status: 500,
-          code: "internal_error",
-        },
-        { status: 500, headers: { "content-type": "application/problem+json" } },
+        { error: "ACTION_AUTHORIZER/ACTION_EXECUTOR bindingがありません" },
+        { status: 500 },
       );
     }
+    const organizationId = deploymentOrganizationId(env);
+    if (!organizationId) {
+      return Response.json({ error: "AUTH0_ORGANIZATION_IDが不正です" }, { status: 500 });
+    }
+    return buildApi({ env, authorizerBinding, organizationId }).fetch(request);
+  } catch {
+    // 例外messageは応答にもlogにも含めない（#93）。access logがinternal_errorの500を記録する。
+    return Response.json(
+      {
+        type: "urn:ultra-easy:problem:internal_error",
+        title: "Internal Server Error",
+        status: 500,
+        code: "internal_error",
+      },
+      { status: 500, headers: { "content-type": "application/problem+json" } },
+    );
+  }
+}
+
+export default {
+  async fetch(request: Request, env: ApprovalApiEnv): Promise<Response> {
+    return withHttpAccessLog((logged) => handleFetch(logged, env), {
+      telemetry: telemetrySinkFromEnv(env),
+      routes: APPROVAL_API_ROUTES,
+      defaultOrganizationId: deploymentOrganizationId(env),
+    })(request);
   },
 
   async scheduled(controller, env): Promise<void> {

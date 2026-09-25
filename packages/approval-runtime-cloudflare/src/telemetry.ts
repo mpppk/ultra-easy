@@ -24,20 +24,42 @@ export function emitDomainEventTelemetry(
   }
 }
 
+/** SLIの元データ（action_events）を読めなかったときのtelemetry error code（#110）。 */
+export const SLI_SOURCE_UNAVAILABLE = "sli_source_unavailable";
+
+/**
+ * 終端したActionのSLI metricをaction_eventsから導出して出す。元データを読めなければ黙って
+ * 捨てず、`telemetry.failed`（errorCode `sli_source_unavailable`）を出す（#110）。
+ */
 export async function emitActionSliSnapshot(input: {
   events: ActionEventRepository;
   organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   telemetry: TelemetrySink;
-}): Promise<void> {
+}): Promise<{ type: "emitted"; metrics: number } | { type: "failed"; code: string }> {
   const records = await input.events.listForAction({
     organizationId: input.organizationId,
     actionRequestId: input.actionRequestId,
   });
-  if (Result.isFailure(records)) return;
-  for (const metric of deriveApprovalSliMetrics(records.value)) {
-    input.telemetry.emit(metric);
+  if (Result.isFailure(records)) {
+    input.telemetry.emit(
+      safeLogRecord({
+        level: "error",
+        event: "telemetry.failed",
+        correlation: actionCorrelation({
+          organizationId: input.organizationId,
+          actionRequestId: input.actionRequestId,
+          component: "workflow",
+          operation: "emit_action_sli",
+        }),
+        attributes: { errorCode: SLI_SOURCE_UNAVAILABLE },
+      }),
+    );
+    return { type: "failed", code: SLI_SOURCE_UNAVAILABLE };
   }
+  const metrics = deriveApprovalSliMetrics(records.value);
+  for (const metric of metrics) input.telemetry.emit(metric);
+  return { type: "emitted", metrics: metrics.length };
 }
 
 export function emitWorkflowRetry(input: {
