@@ -125,7 +125,7 @@ function MockApproval() {
                 <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
                   Signed in as {task.data.viewer.displayName}, who is not an approver of this task.
                   Switch the demo principal to one of:{" "}
-                  {task.data.candidates.map((candidate) => candidate.displayName).join(", ")}.
+                  {task.data.candidates.map((candidate) => candidate.displayName).join(", ")}
                 </p>
               )
             ) : null}
