@@ -8,12 +8,7 @@ import {
   createPublicHttpApi,
   PublicApiRepositoryError,
 } from "@app/approval-application";
-import {
-  ConsoleTelemetrySink,
-  newIdentifier,
-  parseBrand,
-  type OrganizationId,
-} from "@app/approval-core";
+import { newIdentifier, parseBrand, type OrganizationId } from "@app/approval-core";
 import {
   createD1ActionRequestPersistence,
   D1FixedWindowRateLimiter,
@@ -36,6 +31,7 @@ import {
   type ActionWorkflowParams,
   type NotificationQueueMessage,
   type NotificationQueueProducer,
+  telemetrySinkFromEnv,
 } from "@app/approval-runtime-cloudflare";
 
 import {
@@ -129,7 +125,7 @@ function buildApi(input: {
   fetch(request: Request): Promise<Response>;
 } {
   const env = input.env;
-  const telemetry = new ConsoleTelemetrySink();
+  const telemetry = telemetrySinkFromEnv(env);
   const organizationId = input.organizationId;
   const membership = readAuth0OrganizationMembership(env);
   const identity = new Auth0IdentityProvider({
@@ -272,7 +268,7 @@ export default {
   },
 
   async scheduled(controller, env): Promise<void> {
-    const telemetry = new ConsoleTelemetrySink();
+    const telemetry = telemetrySinkFromEnv(env);
     const webhookUrl = env.SLACK_WEBHOOK_URL?.trim() ?? "";
     await runScheduledTasks({
       now: new Date(controller.scheduledTime).toISOString(),
@@ -316,7 +312,7 @@ export default {
       db: env.DB,
       // secret未設定のdegraded動作: 配信をskippedとして記録し、設定後にcronで再送する。
       sink: createSlackNotificationSink(env.SLACK_WEBHOOK_URL),
-      telemetry: new ConsoleTelemetrySink(),
+      telemetry: telemetrySinkFromEnv(env),
       now: () => new Date().toISOString(),
     });
   },

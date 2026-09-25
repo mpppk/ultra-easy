@@ -1,9 +1,9 @@
 import {
   AuthorizationRelationshipCoordinator,
   AuthorizationRelationshipExecutor,
-  ConsoleTelemetrySink,
   type OrganizationId,
 } from "@app/approval-core";
+import { telemetrySinkFromEnv, type TelemetryEnv } from "@app/approval-runtime-cloudflare";
 import { D1AuthorizationRelationshipStore, type D1DatabaseLike } from "@app/approval-d1";
 import {
   DEFAULT_FGA_API_URL,
@@ -12,7 +12,7 @@ import {
   sharedFgaTokenProvider,
 } from "@app/approval-fga";
 
-export type RelationshipMutationEnv = {
+export type RelationshipMutationEnv = TelemetryEnv & {
   DB: D1DatabaseLike;
   OPENFGA_API_URL?: string;
   OPENFGA_STORE_ID?: string;
@@ -61,7 +61,7 @@ export function relationshipCoordinator(
           authorizationModelId: modelId,
           organizationId,
           tokenSupplier,
-          telemetry: new ConsoleTelemetrySink(),
+          telemetry: telemetrySinkFromEnv(env),
         }),
     }),
     clock: { now: () => new Date().toISOString() },

@@ -22,6 +22,7 @@ import type {
   VersionedApprovalRuntimeProjection,
 } from "@app/approval-core";
 
+import type { TelemetryEnv } from "./analytics-engine-telemetry.ts";
 import type { ActionExecutorDescription, ActionServiceBinding } from "./service-binding.ts";
 
 // ActionWorkflowのport（#106）。Workflowのロジックはこの型だけに依存し、D1 / OpenFGA /
@@ -109,7 +110,7 @@ export type ActionWorkflowDependencies = {
   executionMode: "execute" | "approval_only";
 };
 
-export type ActionWorkflowEnv = {
+export type ActionWorkflowEnv = TelemetryEnv & {
   DB: D1Database;
   ACTION_AUTHORIZER?: ActionServiceBinding;
   ACTION_EXECUTOR?: ActionServiceBinding;

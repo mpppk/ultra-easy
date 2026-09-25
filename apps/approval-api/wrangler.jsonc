@@ -28,6 +28,14 @@
     "AUTHORIZATION_MODEL_SOURCE_REVISION": "319bcda",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
   },
+  // #108: SLI / metricの時系列store（Workers Analytics Engine）。datasetは初回書き込みで作られる。
+  // layoutとSQLはdocs/observability.md「Time-series store」。
+  "analytics_engine_datasets": [
+    {
+      "binding": "TELEMETRY_ANALYTICS",
+      "dataset": "ultra_easy_telemetry_staging",
+    },
+  ],
   "services": [
     {
       "binding": "ACTION_AUTHORIZER",
@@ -73,6 +81,12 @@
       "vars": {
         "AUTH0_ORGANIZATION_ID": "organization:production",
       },
+      "analytics_engine_datasets": [
+        {
+          "binding": "TELEMETRY_ANALYTICS",
+          "dataset": "ultra_easy_telemetry_production",
+        },
+      ],
       "queues": {
         "producers": [
           {

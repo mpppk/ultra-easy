@@ -3,7 +3,6 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 
 import {
   ActionExecutorRegistry,
-  ConsoleTelemetrySink,
   decodeUriComponent,
   GOVERNANCE_ACTION_DEFINITIONS,
   GOVERNANCE_ACTION_TYPES,
@@ -44,6 +43,7 @@ import {
   type ActionWorkflowParams,
   type NotificationQueueMessage,
   type NotificationQueueProducer,
+  telemetrySinkFromEnv,
 } from "@app/approval-runtime-cloudflare";
 
 import { parseForceCancelBody } from "./preview-force-cancel.ts";
@@ -484,7 +484,7 @@ export default {
   },
 
   async scheduled(controller, env): Promise<void> {
-    const telemetry = new ConsoleTelemetrySink();
+    const telemetry = telemetrySinkFromEnv(env);
     await runScheduledTasks({
       now: new Date(controller.scheduledTime).toISOString(),
       telemetry,
@@ -515,7 +515,7 @@ export default {
       batch,
       db: env.DB,
       sink: new PreviewNotificationSink(),
-      telemetry: new ConsoleTelemetrySink(),
+      telemetry: telemetrySinkFromEnv(env),
       now: () => new Date().toISOString(),
     });
   },
