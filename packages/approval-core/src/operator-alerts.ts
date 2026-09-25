@@ -2,7 +2,38 @@ export type OperatorAlertKey =
   | "outbox_backlog"
   | "outbox_failures_increasing"
   | "executor_failures_increasing"
-  | "approval_dwell_p95";
+  | "approval_dwell_p95"
+  /** #109: Workflowの異常終了（workflow.failed event）が直近windowにある。 */
+  | "workflow_failures"
+  /** #109: OpenFGAのerror率（Analytics Engine metric）。 */
+  | "fga_error_rate"
+  /** #109: OpenFGA Checkのp95 latency（Analytics Engine metric）。 */
+  | "fga_latency_p95"
+  /** #109: projectionが非終端なのにWorkflowが終わっている等、進まないActionRequest。 */
+  | "stuck_action_requests";
+
+export const OPERATOR_ALERT_KEYS: readonly OperatorAlertKey[] = [
+  "outbox_backlog",
+  "outbox_failures_increasing",
+  "executor_failures_increasing",
+  "approval_dwell_p95",
+  "workflow_failures",
+  "fga_error_rate",
+  "fga_latency_p95",
+  "stuck_action_requests",
+];
+
+/** alertから誘導するrunbook（Slack通知・dashboardに出す）。 */
+export const OPERATOR_ALERT_RUNBOOKS: Record<OperatorAlertKey, string> = {
+  outbox_backlog: "docs/runbooks/dependency-outage.md",
+  outbox_failures_increasing: "docs/runbooks/dependency-outage.md",
+  executor_failures_increasing: "docs/runbooks/dependency-outage.md",
+  approval_dwell_p95: "docs/runbooks/operator-dashboard.md",
+  workflow_failures: "docs/runbooks/stuck-action-request.md",
+  fga_error_rate: "docs/runbooks/dependency-outage.md",
+  fga_latency_p95: "docs/runbooks/dependency-outage.md",
+  stuck_action_requests: "docs/runbooks/stuck-action-request.md",
+};
 
 export type OperatorAlertStatus = "ok" | "breaching" | "firing";
 
@@ -12,6 +43,16 @@ export type OperatorAlertThresholds = {
   failureTrendMinutes: number;
   /** nullのときdwellアラートは無効。テナントSLAが文書化されるまでのつなぎ。 */
   dwellP95SlaMs: number | null;
+  /** workflow.failedを数える直近window（分）。1件でもあれば即firing。 */
+  workflowFailureWindowMinutes: number;
+  /** FGA error率の上限（0.01 = 1%）と、継続時間（分）。 */
+  fgaErrorRateLimit: number;
+  fgaErrorMinutes: number;
+  /** FGA Check p95の上限（ms）と、継続時間（分）。 */
+  fgaLatencyP95Ms: number;
+  fgaLatencyMinutes: number;
+  /** この時間（分）以上更新の無い非終端ActionRequestを滞留候補として照合する。 */
+  stuckAfterMinutes: number;
 };
 
 export const DEFAULT_OPERATOR_ALERT_THRESHOLDS: OperatorAlertThresholds = {
@@ -19,6 +60,12 @@ export const DEFAULT_OPERATOR_ALERT_THRESHOLDS: OperatorAlertThresholds = {
   outboxBacklogMinutes: 10,
   failureTrendMinutes: 5,
   dwellP95SlaMs: null,
+  workflowFailureWindowMinutes: 5,
+  fgaErrorRateLimit: 0.01,
+  fgaErrorMinutes: 5,
+  fgaLatencyP95Ms: 1_000,
+  fgaLatencyMinutes: 10,
+  stuckAfterMinutes: 15,
 };
 
 export type OperatorAlertInput = {
@@ -26,6 +73,13 @@ export type OperatorAlertInput = {
   outboxFailedTotal: number;
   executorFailureTotal: number;
   dwellP95Ms: number | null;
+  /** 直近windowのworkflow.failed件数。undefinedは未評価（ok扱い）。 */
+  workflowFailuresInWindow?: number;
+  /** Analytics Engine由来。null / undefinedはmetric sourceが未設定・取得不可（ok扱い）。 */
+  fgaErrorRate?: number | null;
+  fgaCheckP95Ms?: number | null;
+  /** 滞留と判定したActionRequest数。 */
+  stuckActionRequests?: number;
 };
 
 export type PersistedOperatorAlertState = {
@@ -129,6 +183,32 @@ export function evaluateOperatorAlerts(input: {
         input.values.dwellP95Ms !== null &&
         input.values.dwellP95Ms > input.thresholds.dwellP95SlaMs,
       requiredMinutes: input.thresholds.failureTrendMinutes,
+    },
+    {
+      key: "workflow_failures",
+      breached: (input.values.workflowFailuresInWindow ?? 0) > 0,
+      requiredMinutes: 0,
+    },
+    {
+      key: "fga_error_rate",
+      breached:
+        input.values.fgaErrorRate !== undefined &&
+        input.values.fgaErrorRate !== null &&
+        input.values.fgaErrorRate > input.thresholds.fgaErrorRateLimit,
+      requiredMinutes: input.thresholds.fgaErrorMinutes,
+    },
+    {
+      key: "fga_latency_p95",
+      breached:
+        input.values.fgaCheckP95Ms !== undefined &&
+        input.values.fgaCheckP95Ms !== null &&
+        input.values.fgaCheckP95Ms > input.thresholds.fgaLatencyP95Ms,
+      requiredMinutes: input.thresholds.fgaLatencyMinutes,
+    },
+    {
+      key: "stuck_action_requests",
+      breached: (input.values.stuckActionRequests ?? 0) > 0,
+      requiredMinutes: 0,
     },
   ];
 

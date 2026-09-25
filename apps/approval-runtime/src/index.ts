@@ -46,6 +46,8 @@ import {
   type NotificationQueueMessage,
   type NotificationQueueProducer,
   telemetrySinkFromEnv,
+  fgaAlertMetricsFromEnv,
+  type FgaMetricsEnv,
 } from "@app/approval-runtime-cloudflare";
 
 import { parseForceCancelBody } from "./preview-force-cancel.ts";
@@ -58,14 +60,15 @@ import {
 
 export { ActionWorkflow };
 
-type PreviewRuntimeEnv = ActionWorkflowEnv & {
-  ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
-  NOTIFICATION_QUEUE: NotificationQueueProducer;
-  OPERATOR_ALERT_OUTBOX_BACKLOG?: string;
-  OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES?: string;
-  OPERATOR_ALERT_FAILURE_TREND_MINUTES?: string;
-  OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
-};
+type PreviewRuntimeEnv = ActionWorkflowEnv &
+  FgaMetricsEnv & {
+    ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
+    NOTIFICATION_QUEUE: NotificationQueueProducer;
+    OPERATOR_ALERT_OUTBOX_BACKLOG?: string;
+    OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES?: string;
+    OPERATOR_ALERT_FAILURE_TREND_MINUTES?: string;
+    OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
+  };
 
 function json(data: unknown, init?: ResponseInit): Response {
   return Response.json(data, init);
@@ -527,6 +530,9 @@ export default {
               thresholds: readOperatorAlertThresholds(env),
               now,
               telemetry,
+              // #109: 滞留検出（Workflow状態の照合）とFGA metric（Analytics Engine）。
+              workflow: env.ACTION_WORKFLOW,
+              fgaMetrics: fgaAlertMetricsFromEnv(env),
             }),
         },
         retentionScheduledTask(env.DB),

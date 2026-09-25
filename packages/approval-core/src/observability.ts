@@ -120,6 +120,10 @@ export type SafeLogEvent =
   | "request.completed"
   /** telemetry自体の失敗（SLIの元データを読めない等）。 */
   | "telemetry.failed"
+  /** 滞留したActionRequest（#109）。runbook: docs/runbooks/stuck-action-request.md */
+  | "action.stuck"
+  /** alert signalを取得できなかった（alertは評価できない）。 */
+  | "alert.signal_unavailable"
   | "workflow.retry"
   | "workflow.failed"
   | "executor.completed"

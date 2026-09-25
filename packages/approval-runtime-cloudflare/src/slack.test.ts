@@ -109,6 +109,7 @@ describe("SlackWebhookSink", () => {
     expect(text).toContain("outbox_backlog");
     expect(text).toContain("firing");
     expect(text).toContain(String(organizationId));
+    expect(text).toContain("runbook=docs/runbooks/dependency-outage.md");
   });
 
   it("notification textは種別・相関のみ", () => {

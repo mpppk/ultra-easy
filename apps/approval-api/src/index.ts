@@ -41,6 +41,8 @@ import {
   type NotificationQueueMessage,
   type NotificationQueueProducer,
   telemetrySinkFromEnv,
+  fgaAlertMetricsFromEnv,
+  type FgaMetricsEnv,
 } from "@app/approval-runtime-cloudflare";
 
 import {
@@ -60,31 +62,32 @@ import { relationshipCoordinator } from "./relationship-mutation.ts";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 
-type ApprovalApiEnv = ActionWorkflowEnv & {
-  /** Non-secret Git revision the FGA model was published from (Model view). */
-  AUTHORIZATION_MODEL_SOURCE_REVISION?: string;
-  ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
-  NOTIFICATION_QUEUE: NotificationQueueProducer;
-  AUTH0_DOMAIN: string;
-  AUTH0_API_AUDIENCE: string;
-  AUTH0_ORGANIZATION_ID: string;
-  /** Auth0 Organizations等でorganization所属を示すclaim名（既定 org_id）。 */
-  AUTH0_ORGANIZATION_CLAIM?: string;
-  /** そのclaimに期待する値（Auth0 Organization ID）。設定時はclaim一致を必須にする。 */
-  AUTH0_ORGANIZATION_CLAIM_VALUE?: string;
-  /**
-   * "true"のときだけ、claimなしでAuth0 tenant全体を単一organizationとして信頼する
-   * （public signupを無効にした単一組織tenant向けの明示opt-in）。どちらも無ければ全て403。
-   */
-  AUTH0_TENANT_IS_ORGANIZATION?: string;
-  /** wrangler secret put のみ。平文commit禁止。未設定時は配信をskip (no-op成功) する。 */
-  SLACK_WEBHOOK_URL?: string;
-  /** alert閾値override (staging drill用 --var)。未設定・不正値はbaselineへfallback。 */
-  OPERATOR_ALERT_OUTBOX_BACKLOG?: string;
-  OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES?: string;
-  OPERATOR_ALERT_FAILURE_TREND_MINUTES?: string;
-  OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
-};
+type ApprovalApiEnv = ActionWorkflowEnv &
+  FgaMetricsEnv & {
+    /** Non-secret Git revision the FGA model was published from (Model view). */
+    AUTHORIZATION_MODEL_SOURCE_REVISION?: string;
+    ACTION_WORKFLOW: Workflow<ActionWorkflowParams>;
+    NOTIFICATION_QUEUE: NotificationQueueProducer;
+    AUTH0_DOMAIN: string;
+    AUTH0_API_AUDIENCE: string;
+    AUTH0_ORGANIZATION_ID: string;
+    /** Auth0 Organizations等でorganization所属を示すclaim名（既定 org_id）。 */
+    AUTH0_ORGANIZATION_CLAIM?: string;
+    /** そのclaimに期待する値（Auth0 Organization ID）。設定時はclaim一致を必須にする。 */
+    AUTH0_ORGANIZATION_CLAIM_VALUE?: string;
+    /**
+     * "true"のときだけ、claimなしでAuth0 tenant全体を単一organizationとして信頼する
+     * （public signupを無効にした単一組織tenant向けの明示opt-in）。どちらも無ければ全て403。
+     */
+    AUTH0_TENANT_IS_ORGANIZATION?: string;
+    /** wrangler secret put のみ。平文commit禁止。未設定時は配信をskip (no-op成功) する。 */
+    SLACK_WEBHOOK_URL?: string;
+    /** alert閾値override (staging drill用 --var)。未設定・不正値はbaselineへfallback。 */
+    OPERATOR_ALERT_OUTBOX_BACKLOG?: string;
+    OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES?: string;
+    OPERATOR_ALERT_FAILURE_TREND_MINUTES?: string;
+    OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
+  };
 
 /** deploymentが担当するorganization（env）をsmart constructorで検証する。不正ならnull。 */
 function deploymentOrganizationId(env: ApprovalApiEnv): OrganizationId | null {
@@ -332,6 +335,9 @@ export default {
               thresholds: readOperatorAlertThresholds(env),
               now,
               telemetry,
+              // #109: 滞留検出（Workflow状態の照合）とFGA metric（Analytics Engine）。
+              workflow: env.ACTION_WORKFLOW,
+              fgaMetrics: fgaAlertMetricsFromEnv(env),
               onTransition: (transition) =>
                 notifyAlertTransition({
                   webhookUrl,

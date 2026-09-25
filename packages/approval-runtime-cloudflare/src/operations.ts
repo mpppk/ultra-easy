@@ -7,6 +7,7 @@ import {
   safeLogRecord,
   systemCorrelation,
   type NotificationSink,
+  type OperatorAlertInput,
   type OperatorAlertThresholds,
   type OrganizationId,
   type PersistedOperatorAlertState,
@@ -16,6 +17,7 @@ import {
 import {
   D1NotificationOutboxRepository,
   D1OperatorAlertStateRepository,
+  countRecentWorkflowFailures,
   listRecentOrganizations,
   loadOperatorDashboard,
   purgeExpiredOperationalData,
@@ -25,7 +27,13 @@ import {
   type OperatorDashboardSnapshot,
 } from "@app/approval-d1";
 
+import {
+  detectStuckActionRequests,
+  type FgaAlertMetrics,
+  type FgaAlertMetricsSource,
+} from "./operator-signals.ts";
 import { emitNotificationSkipped } from "./slack.ts";
+import type { WorkflowBindingControl } from "./workflow-cancellation.ts";
 import {
   consumeNotificationMessage,
   dispatchNotificationOutbox,
@@ -53,6 +61,9 @@ export function readOperatorAlertThresholds(env: {
   OPERATOR_ALERT_OUTBOX_BACKLOG_MINUTES?: string;
   OPERATOR_ALERT_FAILURE_TREND_MINUTES?: string;
   OPERATOR_ALERT_DWELL_P95_SLA_MS?: string;
+  OPERATOR_ALERT_FGA_ERROR_RATE?: string;
+  OPERATOR_ALERT_FGA_LATENCY_P95_MS?: string;
+  OPERATOR_ALERT_STUCK_AFTER_MINUTES?: string;
 }): OperatorAlertThresholds {
   const dwellRaw = env.OPERATOR_ALERT_DWELL_P95_SLA_MS;
   const dwellParsed = dwellRaw === undefined ? null : Number(dwellRaw);
@@ -71,6 +82,21 @@ export function readOperatorAlertThresholds(env: {
     ),
     dwellP95SlaMs:
       dwellParsed !== null && Number.isFinite(dwellParsed) && dwellParsed > 0 ? dwellParsed : null,
+    workflowFailureWindowMinutes: DEFAULT_OPERATOR_ALERT_THRESHOLDS.workflowFailureWindowMinutes,
+    fgaErrorRateLimit: positiveNumber(
+      env.OPERATOR_ALERT_FGA_ERROR_RATE,
+      DEFAULT_OPERATOR_ALERT_THRESHOLDS.fgaErrorRateLimit,
+    ),
+    fgaErrorMinutes: DEFAULT_OPERATOR_ALERT_THRESHOLDS.fgaErrorMinutes,
+    fgaLatencyP95Ms: positiveNumber(
+      env.OPERATOR_ALERT_FGA_LATENCY_P95_MS,
+      DEFAULT_OPERATOR_ALERT_THRESHOLDS.fgaLatencyP95Ms,
+    ),
+    fgaLatencyMinutes: DEFAULT_OPERATOR_ALERT_THRESHOLDS.fgaLatencyMinutes,
+    stuckAfterMinutes: positiveNumber(
+      env.OPERATOR_ALERT_STUCK_AFTER_MINUTES,
+      DEFAULT_OPERATOR_ALERT_THRESHOLDS.stuckAfterMinutes,
+    ),
   };
 }
 
@@ -100,6 +126,40 @@ const ALERT_COMPONENT: Record<PersistedOperatorAlertState["key"], TelemetryCompo
   outbox_failures_increasing: "outbox",
   executor_failures_increasing: "executor",
   approval_dwell_p95: "d1",
+  workflow_failures: "workflow",
+  fga_error_rate: "fga",
+  fga_latency_p95: "fga",
+  stuck_action_requests: "workflow",
+};
+
+function emitSignalUnavailable(input: {
+  telemetry: TelemetrySink;
+  organizationId?: OrganizationId;
+  signal: string;
+  errorCode: string;
+}): void {
+  input.telemetry.emit(
+    safeLogRecord({
+      level: "warn",
+      event: "alert.signal_unavailable",
+      correlation: systemCorrelation({
+        component: "d1",
+        operation: `operator.signal.${input.signal}`,
+        ...(input.organizationId ? { organizationId: input.organizationId } : {}),
+      }),
+      attributes: { errorCode: input.errorCode },
+    }),
+  );
+}
+
+/**
+ * D1以外のalert signal（#109）。未設定のsignalに対応するalertは評価しない（ok扱い）。
+ * - workflow: 滞留検出でWorkflow instanceの状態を照合する
+ * - fgaMetrics: Analytics EngineのFGA error率 / latency
+ */
+export type OperatorAlertSignalSources = {
+  workflow?: WorkflowBindingControl;
+  fgaMetrics?: FgaAlertMetricsSource | null;
 };
 
 export type OperatorAlertTransition = {
@@ -117,6 +177,9 @@ export async function evaluateOrganizationAlerts(input: {
   telemetry: TelemetrySink;
   /** firing / resolvedへの遷移ごとに呼ぶ（Slack通知等）。 */
   onTransition?: (transition: OperatorAlertTransition) => Promise<void>;
+  workflow?: WorkflowBindingControl;
+  /** evaluateRecentOrganizationAlertsが1回だけ読んだFGA metric（未設定・取得不可はundefined）。 */
+  fgaMetrics?: FgaAlertMetrics;
 }): Result.ResultAsync<
   PersistedOperatorAlertState[],
   D1OperatorDashboardError | D1OperatorAlertStateRepositoryError
@@ -128,6 +191,7 @@ export async function evaluateOrganizationAlerts(input: {
   if (Result.isFailure(previous)) return previous;
 
   const dwellSamples = Object.values(snapshot.value.sli.dwellByStepKey);
+  const signals = await loadOrganizationSignals(input);
   const evaluated = evaluateOperatorAlerts({
     thresholds: input.thresholds,
     previous: previous.value,
@@ -145,6 +209,7 @@ export async function evaluateOrganizationAlerts(input: {
         dwellSamples.length === 0
           ? null
           : Math.max(...dwellSamples.map((sample) => sample.p95Ms ?? 0)),
+      ...signals,
     },
     now: input.now,
   });
@@ -174,18 +239,81 @@ export async function evaluateOrganizationAlerts(input: {
   return Result.succeed(evaluated.states);
 }
 
+async function loadOrganizationSignals(input: {
+  db: D1DatabaseLike;
+  organizationId: OrganizationId;
+  thresholds: OperatorAlertThresholds;
+  now: string;
+  telemetry: TelemetrySink;
+  workflow?: WorkflowBindingControl;
+  fgaMetrics?: FgaAlertMetrics;
+}): Promise<
+  Pick<
+    OperatorAlertInput,
+    "workflowFailuresInWindow" | "stuckActionRequests" | "fgaErrorRate" | "fgaCheckP95Ms"
+  >
+> {
+  const since = new Date(
+    Date.parse(input.now) - input.thresholds.workflowFailureWindowMinutes * 60_000,
+  ).toISOString();
+  const failures = await countRecentWorkflowFailures(input.db, {
+    organizationId: input.organizationId,
+    since,
+  });
+  if (Result.isFailure(failures)) {
+    emitSignalUnavailable({
+      telemetry: input.telemetry,
+      organizationId: input.organizationId,
+      signal: "workflow_failures",
+      errorCode: failures.error.code,
+    });
+  }
+
+  let stuckActionRequests: number | undefined;
+  if (input.workflow) {
+    const stuck = await detectStuckActionRequests({
+      db: input.db,
+      workflow: input.workflow,
+      organizationId: input.organizationId,
+      now: input.now,
+      stuckAfterMinutes: input.thresholds.stuckAfterMinutes,
+      telemetry: input.telemetry,
+    });
+    if (Result.isFailure(stuck)) {
+      emitSignalUnavailable({
+        telemetry: input.telemetry,
+        organizationId: input.organizationId,
+        signal: "stuck_action_requests",
+        errorCode: stuck.error.code,
+      });
+    } else {
+      stuckActionRequests = stuck.value.length;
+    }
+  }
+
+  return {
+    ...(Result.isSuccess(failures) ? { workflowFailuresInWindow: failures.value } : {}),
+    ...(stuckActionRequests !== undefined ? { stuckActionRequests } : {}),
+    ...(input.fgaMetrics
+      ? { fgaErrorRate: input.fgaMetrics.errorRate, fgaCheckP95Ms: input.fgaMetrics.checkP95Ms }
+      : {}),
+  };
+}
+
 /**
  * 直近のorganizationごとにalertを評価する。1 orgの失敗で他のorgの評価を止めず、
  * 失敗したorg数をerrorで返す。
  */
-export async function evaluateRecentOrganizationAlerts(input: {
-  db: D1DatabaseLike;
-  thresholds: OperatorAlertThresholds;
-  now: string;
-  telemetry: TelemetrySink;
-  organizationLimit?: number;
-  onTransition?: (transition: OperatorAlertTransition) => Promise<void>;
-}): Result.ResultAsync<
+export async function evaluateRecentOrganizationAlerts(
+  input: {
+    db: D1DatabaseLike;
+    thresholds: OperatorAlertThresholds;
+    now: string;
+    telemetry: TelemetrySink;
+    organizationLimit?: number;
+    onTransition?: (transition: OperatorAlertTransition) => Promise<void>;
+  } & OperatorAlertSignalSources,
+): Result.ResultAsync<
   { organizationId: OrganizationId; states: PersistedOperatorAlertState[] }[],
   D1OperatorDashboardError | D1OperatorAlertStateRepositoryError
 > {
@@ -193,8 +321,30 @@ export async function evaluateRecentOrganizationAlerts(input: {
   if (Result.isFailure(organizations)) return organizations;
   const results: { organizationId: OrganizationId; states: PersistedOperatorAlertState[] }[] = [];
   let firstFailure: D1OperatorDashboardError | D1OperatorAlertStateRepositoryError | undefined;
+  // FGA metricはcron 1回につき1回だけ読む（組織ごとにSQL APIを呼ばない）。
+  let fgaMetrics: Map<string, FgaAlertMetrics> | undefined;
+  if (input.fgaMetrics) {
+    const loaded = await input.fgaMetrics.load();
+    if (Result.isFailure(loaded)) {
+      emitSignalUnavailable({
+        telemetry: input.telemetry,
+        signal: "fga_metrics",
+        errorCode: loaded.error.code,
+      });
+    } else {
+      fgaMetrics = loaded.value;
+    }
+  }
   for (const organizationId of organizations.value) {
-    const evaluated = await evaluateOrganizationAlerts({ ...input, organizationId });
+    const organizationMetrics = fgaMetrics
+      ? (fgaMetrics.get(String(organizationId)) ?? { errorRate: null, checkP95Ms: null })
+      : undefined;
+    const { fgaMetrics: _source, ...rest } = input;
+    const evaluated = await evaluateOrganizationAlerts({
+      ...rest,
+      organizationId,
+      ...(organizationMetrics ? { fgaMetrics: organizationMetrics } : {}),
+    });
     if (Result.isFailure(evaluated)) {
       firstFailure ??= evaluated.error;
       continue;

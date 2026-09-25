@@ -1,5 +1,6 @@
 import { Result } from "@praha/byethrow";
 
+import { OPERATOR_ALERT_KEYS } from "@app/approval-core";
 import type {
   OperatorAlertKey,
   OperatorAlertStatus,
@@ -47,15 +48,8 @@ type StoredAlertStateRow = {
   updated_at: string;
 };
 
-const ALERT_KEYS: readonly OperatorAlertKey[] = [
-  "outbox_backlog",
-  "outbox_failures_increasing",
-  "executor_failures_increasing",
-  "approval_dwell_p95",
-];
-
 function isAlertKey(value: string): value is OperatorAlertKey {
-  return (ALERT_KEYS as readonly string[]).includes(value);
+  return (OPERATOR_ALERT_KEYS as readonly string[]).includes(value);
 }
 
 function isAlertStatus(value: string): value is OperatorAlertStatus {

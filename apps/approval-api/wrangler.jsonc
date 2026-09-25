@@ -27,6 +27,10 @@
     "OPENFGA_AUTHORIZATION_MODEL_ID": "01M38K1Q55CCNETS1V6XHJZJTB",
     "AUTHORIZATION_MODEL_SOURCE_REVISION": "319bcda",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
+    // #109: FGA alertはAnalytics Engine（TELEMETRY_ANALYTICS）をSQL APIで読む。
+    // ANALYTICS_ENGINE_API_TOKEN（Account Analytics: Read）は`wrangler secret put`のみ。
+    "ANALYTICS_ENGINE_ACCOUNT_ID": "e3e66e02919ba2916b412cba4009f5c0",
+    "TELEMETRY_DATASET": "ultra_easy_telemetry_staging",
   },
   // #108: SLI / metricの時系列store（Workers Analytics Engine）。datasetは初回書き込みで作られる。
   // layoutとSQLはdocs/observability.md「Time-series store」。
@@ -80,6 +84,8 @@
     "production": {
       "vars": {
         "AUTH0_ORGANIZATION_ID": "organization:production",
+        "ANALYTICS_ENGINE_ACCOUNT_ID": "e3e66e02919ba2916b412cba4009f5c0",
+        "TELEMETRY_DATASET": "ultra_easy_telemetry_production",
       },
       "analytics_engine_datasets": [
         {
