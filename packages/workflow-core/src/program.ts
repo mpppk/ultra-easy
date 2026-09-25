@@ -4,6 +4,8 @@ import { ErrorFactory } from "@praha/error-factory";
 import { isPlainRecord, jsonValueIssue } from "@app/expression-core";
 import type { JsonObject, JsonValue } from "@app/expression-core";
 
+import type { JsonSchemaLite } from "./schema-lite.ts";
+
 /**
  * Sandbox内のProgramが要求できる外部作用。Programは作用を直接実行せず、yieldして
  * Host Runtime（Capability Broker / ActionRequest / LLM Gateway）に委ねる。
@@ -119,4 +121,111 @@ export function parseProgramResult(
     });
   }
   return invalid("typeはcompleteまたはyieldである必要があります");
+}
+
+/**
+ * Programが **要求** するcapability（自己grantはできない）。実効grantはCapability Broker（#161）が
+ * user / admin policyとの積で決め、Program NodeのCapabilityGrantとして固定する。
+ */
+export type ProgramCapabilityManifest = {
+  actions?: { actionType: string; resourceType?: string }[];
+  llm?: {
+    models: string[];
+    maxCalls: number;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    maxCostMicroUsd: number;
+  };
+  maxEffects?: number;
+};
+
+/** sandboxのresource上限（runtime profile）。 */
+export type SandboxLimits = {
+  memoryBytes: number;
+  timeoutMs: number;
+  maxOutputBytes: number;
+  maxLogBytes: number;
+  stackBytes: number;
+};
+
+export const DEFAULT_SANDBOX_LIMITS: SandboxLimits = {
+  memoryBytes: 32 * 1024 * 1024,
+  timeoutMs: 1000,
+  maxOutputBytes: 256 * 1024,
+  maxLogBytes: 8 * 1024,
+  stackBytes: 512 * 1024,
+};
+
+export const MAX_SANDBOX_LIMITS: SandboxLimits = {
+  memoryBytes: 128 * 1024 * 1024,
+  timeoutMs: 10_000,
+  maxOutputBytes: 1024 * 1024,
+  maxLogBytes: 64 * 1024,
+  stackBytes: 2 * 1024 * 1024,
+};
+
+export type ProgramGeneratorMetadata = {
+  kind: "llm" | "manual";
+  model?: string;
+  /** 自然言語指示のsha256（promptそのものは保存しない）。 */
+  instructionDigest?: string;
+  generatedAt: string;
+};
+
+/**
+ * publish済みのimmutableなProgram Node Version。runtimeで毎回コードを再生成せず、
+ * このsource / digestだけを実行する。
+ */
+export type ProgramNodeVersion = {
+  programId: string;
+  version: number;
+  language: "javascript";
+  source: string;
+  /** sourceのsha256（`sha256:<hex>`）。Program Nodeの参照と実行時に照合する。 */
+  sourceDigest: string;
+  inputSchema: JsonSchemaLite;
+  outputSchema: JsonSchemaLite;
+  requestedCapabilities: ProgramCapabilityManifest;
+  runtimeProfile: SandboxLimits;
+  generator: ProgramGeneratorMetadata;
+  description?: string;
+  publishedAt: string;
+  publishedBy: string;
+};
+
+export type SandboxInvocation = {
+  source: string;
+  input: JsonValue;
+  /** yieldした作用の結果から再開する場合の、明示的にserializeされたstate。 */
+  resume?: { state: JsonValue; effectResult: JsonValue };
+  limits: SandboxLimits;
+};
+
+export type SandboxRunResult = {
+  result: ProgramResult;
+  logs: string[];
+  logsTruncated: boolean;
+  durationMs: number;
+};
+
+export type SandboxErrorCode =
+  | "sandbox_timeout"
+  | "sandbox_memory_exceeded"
+  | "sandbox_output_too_large"
+  | "program_error"
+  | "program_result_invalid"
+  | "sandbox_unavailable";
+
+export class SandboxError extends ErrorFactory({
+  name: "SandboxError",
+  message: ({ detail }) => detail,
+  fields: ErrorFactory.fields<{ code: SandboxErrorCode; detail: string; retriable: boolean }>(),
+}) {}
+
+/**
+ * untrusted codeを隔離実行するport。実装は network / credential / host binding（log以外）を
+ * 一切与えず、invocationごとにephemeralな環境を作って破棄する（待機中にprocessを保持しない）。
+ */
+export interface SandboxAdapter {
+  run(invocation: SandboxInvocation): Result.ResultAsync<SandboxRunResult, SandboxError>;
 }

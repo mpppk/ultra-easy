@@ -5,6 +5,7 @@ export * from "./graph.ts";
 export * from "./ids.ts";
 export * from "./program.ts";
 export * from "./scheduler.ts";
+export * from "./schema-lite.ts";
 export * from "./state.ts";
 export * from "./validation.ts";
 export * from "./version.ts";

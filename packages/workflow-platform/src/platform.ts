@@ -33,6 +33,8 @@ import {
   PlanParentActionContextResolver,
   TimerEffectHandler,
   WORKFLOW_EXECUTOR_KEY,
+  ProgramAuthoringService,
+  ProgramEffectHandler,
   WorkflowActionExecutor,
   WorkflowApprovalProjector,
   WorkflowInputSchemaResolver,
@@ -46,18 +48,23 @@ import type {
   ChildActionCanceller,
   Clock,
   EffectHandlers,
+  ProgramCodeGenerator,
+  SandboxAdmission,
   WorkflowAdmissionController,
   WorkflowRunScheduler,
 } from "@app/workflow-application";
 import {
   D1ActionCatalogPublisher,
   D1ChildActionCorrelationRepository,
+  D1ProgramRepository,
   D1WorkflowActionBindingRepository,
   D1WorkflowDraftRepository,
   D1WorkflowRunRepository,
   D1WorkflowVersionRepository,
 } from "@app/workflow-d1";
 import type { D1DatabaseLike } from "@app/workflow-d1";
+import type { SandboxAdapter } from "@app/workflow-core";
+import { validateProgramSource } from "@app/workflow-sandbox";
 
 import { PolicyApprovalRequirementProbe } from "./projection-probe.ts";
 
@@ -81,6 +88,11 @@ export type WorkflowPlatformOptions = {
   /** 承認待ち等のprimitive child ActionRequestのcancel。 */
   primitiveCanceller?: ChildActionCanceller;
   pollIntervalSeconds?: number;
+  /** Program Nodeを実行するsandbox（#160）。未設定ならProgram Nodeは失敗する。 */
+  sandbox?: SandboxAdapter;
+  /** 自然言語からProgramを生成するCoding LLM（#160 / #161）。 */
+  codeGenerator?: ProgramCodeGenerator;
+  sandboxAdmission?: SandboxAdmission;
   /** Composite Actionの最大nest深さ（既定: MAX_WORKFLOW_DEPTH）。 */
   maxDepth?: number;
   idGenerator?: { next(): ActionRequestId };
@@ -106,6 +118,7 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
   const results = new D1ActionResultProjectionRepository(db);
   const asyncExecutions = new D1AsyncActionExecutionRepository(db);
   const governance = new D1GovernanceRepository(db);
+  const programs = new D1ProgramRepository(db);
 
   let runtime: WorkflowRuntime | undefined;
   const getRuntime = (): WorkflowRuntime => {
@@ -176,6 +189,15 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
         }),
         timer: new TimerEffectHandler(),
         human_input: new HumanInputEffectHandler(),
+        ...(options.sandbox
+          ? {
+              program: new ProgramEffectHandler({
+                programs,
+                sandbox: options.sandbox,
+                ...(options.sandboxAdmission ? { admission: options.sandboxAdmission } : {}),
+              }),
+            }
+          : {}),
         ...options.effects,
       },
     });
@@ -190,6 +212,16 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
     }),
   });
 
+  const programAuthoring = options.sandbox
+    ? new ProgramAuthoringService({
+        programs,
+        sandbox: options.sandbox,
+        validateSource: validateProgramSource,
+        clock: options.clock,
+        ...(options.codeGenerator ? { generator: options.codeGenerator } : {}),
+      })
+    : null;
+
   const publishing = new WorkflowPublishingService({
     versions,
     drafts,
@@ -202,6 +234,7 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
     registry,
     completion,
     publishing,
+    programAuthoring,
     projector,
     actionDefinitionResolver,
     statuses,
@@ -221,6 +254,7 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
       events,
       results,
       asyncExecutions,
+      programs,
     },
     /** `Composite ActionRequest -> WorkflowRun -> NodeRun -> child ActionRequest`の相関trace。 */
     async trace(actionRequestId: ActionRequestId): Promise<ActionTrace | null> {

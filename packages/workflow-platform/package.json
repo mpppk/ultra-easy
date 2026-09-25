@@ -17,6 +17,7 @@
     "@app/workflow-application": "workspace:*",
     "@app/workflow-core": "workspace:*",
     "@app/workflow-d1": "workspace:*",
+    "@app/workflow-sandbox": "workspace:*",
     "@praha/byethrow": "^0.12.0"
   }
 }

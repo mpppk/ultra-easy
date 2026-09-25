@@ -17,6 +17,7 @@ packages/
   workflow-d1/                 # #157 D1 persistence（workflow_* tables, migration 0021）
   workflow-runtime-cloudflare/ # #157 Cloudflare Workflows runner + cron sweeper
   workflow-platform/           # #158 composition root（ActionRequest pipeline + Workflow Runtime on D1）
+  workflow-sandbox/            # #160 QuickJS（WASM）sandbox + program source validator
 ```
 
 依存方向:
@@ -262,3 +263,49 @@ Workflow Agentへのhopへ引き継ぐ。
 - Composite Actionのchildは `nested` projectionとして再帰的に投影する（深さ4まで）。
 - 実際の承認（enforcement）は `traceAction` の `approval: { required, source: "materialized_plan" }` で、
   projection（`kind: "projection"`）とは型でも区別する。
+
+## Sandboxed Program Node (#160)
+
+### Authoring
+
+```text
+Natural language -> ProgramCodeGenerator（Coding LLM）-> generated source
+  -> static validation（validateProgramSource）-> test sandbox（samples / schema / expected output）
+  -> ProgramNodeVersion（immutable, sha256 source digest）
+```
+
+- `ProgramAuthoringService.draft` は生成・検証・testまでで、publishはしない（review用のdraft）。
+  `publish` は再検証・再testしてから次のversionとしてinsert-onlyで保存する（`workflow_programs`、
+  UPDATE / DELETEはtriggerで禁止）。runtimeでコードを再生成しない。
+- `ProgramNodeVersion`: source / sourceDigest / input・output schema（`JsonSchemaLite`）/
+  requested capability manifest / runtime profile（memory・timeout・output・log・stack上限）/
+  generator metadata（model・指示のdigest。promptそのものは保存しない）/ version。
+- Program Nodeは `(programId, version, sourceDigest)` を参照し、実行時にdigestを照合する。
+
+### Sandbox（`@app/workflow-sandbox`）
+
+- QuickJS（WASM）。invocationごとにruntime / contextを生成・破棄する（ephemeral）。
+- network / fetch / module / process / timer / filesystem / credential / host bindingは無い
+  （hostが渡すのは容量上限付きの `console.log` だけ）。静的検証でも `fetch` / `require` / `import` 等を拒否する。
+- memory / stack / 実行時間（interrupt）/ output / logの上限を強制し、超過はterminateする
+  （`sandbox_timeout` / `sandbox_memory_exceeded` / `sandbox_output_too_large`）。
+- Cloudflare Workersでは `@app/workflow-sandbox/workerd`（bundle済みwasm moduleを注入）、
+  Node / testでは `@app/workflow-sandbox/node` で読み込む。
+
+### Effect-based runtime
+
+```ts
+function main(input, context) {
+  // context.resume = { state, effectResult } | null
+  if (!context.resume)
+    return ue.action({ step: 1 }, "payment.execute", { type: "invoice", id }, { amount });
+  return ue.complete({ paid: context.resume.effectResult.output });
+}
+```
+
+- Programは作用を直接実行できず、`ue.action / ue.llm / ue.sleep / ue.askHuman` で **yield** するだけ。
+  Host Runtimeが作用を実行し（Actionは必ずActionRequest、LLMはLLM Gateway）、結果をdurableに保存してから
+  新しいsandboxで `state + effectResult` から再開する。待機中（承認待ち等）にsandboxを保持しない。
+- yieldした作用は、Programのrequested manifestと、Program Nodeの実効capability grantの **両方** に
+  含まれる必要がある（`capability_denied`、fail-closed）。生成コードは能力を自己grantできない。
+- input / output schemaをboundaryで検証する（`program_input_invalid` / `program_output_invalid`）。

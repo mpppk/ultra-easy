@@ -17,6 +17,7 @@
     "@app/workflow-application": "workspace:*",
     "@app/workflow-core": "workspace:*",
     "@app/workflow-platform": "workspace:*",
+    "@app/workflow-sandbox": "workspace:*",
     "@praha/byethrow": "^0.12.0",
     "@standard-schema/spec": "^1.1.0"
   }
