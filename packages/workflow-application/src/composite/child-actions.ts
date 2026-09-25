@@ -195,6 +195,46 @@ export const actionNodeScopePolicy: ActionEffectScopePolicy = {
   },
 };
 
+/**
+ * Program / LLM Nodeが実行時に要求したActionを、Nodeの実効capability grantの範囲でだけ
+ * Node Agentへ委任する（grantに無いActionはcapability_denied, fail-closed）。
+ * Action Nodeは宣言どおりのaction typeだけを委任する。
+ */
+export const capabilityGrantScopePolicy: ActionEffectScopePolicy = {
+  scopeFor(context, request) {
+    if (context.node.type === "action") return actionNodeScopePolicy.scopeFor(context, request);
+    if (context.node.type !== "program" && context.node.type !== "llm") {
+      return Result.fail(
+        new EffectHandlerError("capability_denied", false, "このNodeはActionを要求できません"),
+      );
+    }
+    const granted = (context.node.capabilities?.actions ?? []).find(
+      (action) =>
+        String(action.actionType) === String(request.actionType) &&
+        (action.resourceType === undefined || action.resourceType === request.resource.type),
+    );
+    if (!granted) {
+      return Result.fail(
+        new EffectHandlerError(
+          "capability_denied",
+          false,
+          `${String(request.actionType)}はこのNodeのcapability grantに含まれていません`,
+        ),
+      );
+    }
+    const resourceType = parseBrand("ResourceType", request.resource.type);
+    if (Result.isFailure(resourceType)) {
+      return Result.fail(
+        new EffectHandlerError("action_input_invalid", false, "resource typeが不正です"),
+      );
+    }
+    return Result.succeed({
+      actionTypes: [request.actionType],
+      resourceTypes: [resourceType.value],
+    });
+  },
+};
+
 function submitReport(submitted: ActionRequestSubmitResult): EffectOutcomeReport {
   if (submitted.type === "authorization_denied") {
     return {
@@ -265,7 +305,7 @@ export class ActionRequestEffectHandler implements EffectHandler {
     if (Result.isFailure(existing)) return existing;
     if (existing.value) return Result.succeed(childStatusReport(existing.value));
 
-    const scope = (this.deps.scopePolicy ?? actionNodeScopePolicy).scopeFor(context, request);
+    const scope = (this.deps.scopePolicy ?? capabilityGrantScopePolicy).scopeFor(context, request);
     if (Result.isFailure(scope)) {
       return Result.succeed({
         type: "failed",
