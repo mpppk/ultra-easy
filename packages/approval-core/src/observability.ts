@@ -181,6 +181,7 @@ export function safeActionEventLogRecord(
     attributes.retriable = event.retriable;
   }
   if (event.type === "action.completed") attributes.result = event.result;
+  if (event.type === "approval_decision.rejected") attributes.errorCode = event.code;
 
   return safeLogRecord({
     level:
@@ -188,7 +189,9 @@ export function safeActionEventLogRecord(
       event.type === "action.authorization_check_failed" ||
       event.type === "action.reauthorization_check_failed"
         ? "error"
-        : event.type === "step.rejected" || event.type === "step.expired"
+        : event.type === "step.rejected" ||
+            event.type === "step.expired" ||
+            event.type === "approval_decision.rejected"
           ? "warn"
           : "info",
     event: "domain.event",

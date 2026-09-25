@@ -88,6 +88,33 @@ function commandErrorResponse(error: ApprovalCommandApplicationError): Response 
       detail: error.message,
     });
   }
+  if (error.code === "approval_task_closed" || error.code === "approval_user_already_decided") {
+    return problem({
+      status: 409,
+      code: error.code,
+      title: "Approval taskはこのDecisionを受け付けません",
+      detail: error.message,
+    });
+  }
+  if (
+    error.code === "approval_self_approval_denied" ||
+    error.code === "approval_candidate_rejected"
+  ) {
+    return problem({
+      status: 403,
+      code: error.code,
+      title: "このApproval taskを承認できません",
+      detail: error.message,
+    });
+  }
+  if (error.code === "approval_comment_required") {
+    return problem({
+      status: 422,
+      code: error.code,
+      title: "commentが必要です",
+      detail: error.message,
+    });
+  }
   if (error.code === "approval_command_conflict") {
     return problem({
       status: 409,

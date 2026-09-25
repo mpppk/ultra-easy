@@ -110,6 +110,7 @@ function database(): SqliteD1Database {
     "0005_action_results.sql",
     "0006_public_api.sql",
     "0014_api_idempotency_lease.sql",
+    "0015_approval_command_delivery.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
   }
@@ -263,18 +264,113 @@ describe("D1PublicApiRepository", () => {
     assert(Result.isSuccess(created));
     expect(created.value.type).toBe("created");
 
-    const updated = await repository.update({
+    const claimed = await repository.claim({
       organizationId,
       commandId: "command:m6-d1",
-      status: "applied",
+      now: "2026-09-19T00:00:02.500Z",
+      leaseUntil: "2026-09-19T00:01:02.500Z",
+    });
+    assert(Result.isSuccess(claimed));
+    expect(claimed.value?.command.id).toBe("command:m6-d1");
+    const contended = await repository.claim({
+      organizationId,
+      commandId: "command:m6-d1",
+      now: "2026-09-19T00:00:02.600Z",
+      leaseUntil: "2026-09-19T00:01:02.600Z",
+    });
+    assert(Result.isSuccess(contended));
+    expect(contended.value).toBeNull();
+
+    const delivered = await repository.transition({
+      organizationId,
+      commandId: "command:m6-d1",
+      from: ["pending"],
+      to: "delivered",
+    });
+    assert(Result.isSuccess(delivered));
+    expect(delivered.value).toMatchObject({
+      type: "updated",
+      record: { command: { status: "delivered" } },
+    });
+
+    const updated = await repository.transition({
+      organizationId,
+      commandId: "command:m6-d1",
+      from: ["pending", "delivered"],
+      to: "applied",
       appliedAt: "2026-09-19T00:00:03.000Z",
     });
     assert(Result.isSuccess(updated));
-    expect(updated.value.command).toMatchObject({
+    expect(updated.value.type).toBe("updated");
+    expect(updated.value.record.command).toMatchObject({
       id: "command:m6-d1",
       status: "applied",
       appliedAt: "2026-09-19T00:00:03.000Z",
     });
+
+    const stale = await repository.transition({
+      organizationId,
+      commandId: "command:m6-d1",
+      from: ["pending"],
+      to: "failed",
+    });
+    assert(Result.isSuccess(stale));
+    expect(stale.value).toMatchObject({
+      type: "stale",
+      record: { command: { status: "applied" } },
+    });
+  });
+
+  it("#88: retriable失敗はattempt_count/next_attempt_atでbackoffし、期限到来後にorg横断で拾う", async () => {
+    const db = database();
+    const repository = new D1PublicApiRepository(db);
+    for (const [id, org] of [
+      ["command:quiet-org", "organization:quiet"],
+      ["command:busy-org", String(organizationId)],
+    ] as const) {
+      const created = await repository.createPending({
+        command: {
+          id,
+          organizationId: org,
+          actionRequestId: "action-request:m6-d1",
+          taskId: String(taskId),
+          type: "approve",
+          status: "pending",
+          createdAt:
+            id === "command:quiet-org" ? "2026-09-19T00:00:00.000Z" : "2026-09-19T00:00:01.000Z",
+        },
+        actorUserId: alice,
+      });
+      assert(Result.isSuccess(created));
+    }
+
+    const retry = await repository.scheduleRetry({
+      organizationId,
+      commandId: "command:busy-org",
+      nextAttemptAt: "2026-09-19T00:05:00.000Z",
+      error: {
+        type: "urn:ultra-easy:problem:decision_workflow_send_failed",
+        title: "retry",
+        status: 503,
+        code: "decision_workflow_send_failed",
+      },
+    });
+    assert(Result.isSuccess(retry));
+    expect(retry.value.record).toMatchObject({
+      attemptCount: 1,
+      nextAttemptAt: "2026-09-19T00:05:00.000Z",
+      command: { status: "pending" },
+    });
+
+    const early = await repository.listDuePending({ now: "2026-09-19T00:01:00.000Z", limit: 10 });
+    assert(Result.isSuccess(early));
+    expect(early.value.map((record) => record.command.id)).toEqual(["command:quiet-org"]);
+    const due = await repository.listDuePending({ now: "2026-09-19T00:05:00.000Z", limit: 10 });
+    assert(Result.isSuccess(due));
+    expect(due.value.map((record) => record.command.id)).toEqual([
+      "command:quiet-org",
+      "command:busy-org",
+    ]);
   });
 
   it("Idempotency reservationをreplayし、異なるpayload hashはconflictにする", async () => {

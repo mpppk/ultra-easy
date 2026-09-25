@@ -135,3 +135,40 @@ export type ApprovalInterpreterError =
   | ApprovalDecisionBindingMismatchError
   | ApprovalCommentRequiredError
   | ApproverResolutionError;
+
+/**
+ * Decision 1件に閉じた業務上の却下。runtime stateは変化せず、durable runtimeは
+ * これを致命的失敗として扱わずに同じTaskの待機を継続する（invalid decisionは無視して再待機）。
+ */
+export type ApprovalDecisionRejectionError =
+  | InvalidRuntimeTimestampError
+  | ApprovalTaskNotFoundError
+  | ApprovalTaskClosedError
+  | ApprovalCandidateRejectedError
+  | ApprovalUserAlreadyDecidedError
+  | ApprovalSelfApprovalDeniedError
+  | ApprovalDistinctApproverViolationError
+  | ApprovalDecisionBindingMismatchError
+  | ApprovalCommentRequiredError;
+
+export type ApprovalDecisionRejectionCode = ApprovalDecisionRejectionError["code"];
+
+/**
+ * recordApprovalDecisionの失敗を「Decisionの却下（業務結果）」と「インフラ障害・契約違反」へ分ける。
+ * provider errorやsemantics version不一致は却下ではないためfalseを返す。
+ */
+export function isApprovalDecisionRejection(
+  error: ApprovalInterpreterError,
+): error is ApprovalDecisionRejectionError {
+  return (
+    error instanceof InvalidRuntimeTimestampError ||
+    error instanceof ApprovalTaskNotFoundError ||
+    error instanceof ApprovalTaskClosedError ||
+    error instanceof ApprovalCandidateRejectedError ||
+    error instanceof ApprovalUserAlreadyDecidedError ||
+    error instanceof ApprovalSelfApprovalDeniedError ||
+    error instanceof ApprovalDistinctApproverViolationError ||
+    error instanceof ApprovalDecisionBindingMismatchError ||
+    error instanceof ApprovalCommentRequiredError
+  );
+}

@@ -12,11 +12,14 @@ import {
   type ApprovalDecisionApplyResult,
   type ApprovalDecisionSink,
 } from "@app/approval-application";
-import { actionWorkflowInstanceId } from "@app/approval-runtime-cloudflare";
+import {
+  actionWorkflowInstanceId,
+  approvalDecisionWorkflowEvent,
+} from "@app/approval-runtime-cloudflare";
 
 type WorkflowBinding = {
   get(id: string): Promise<{
-    sendEvent(input: { type: string; payload: Record<string, unknown> }): Promise<unknown>;
+    sendEvent(input: ReturnType<typeof approvalDecisionWorkflowEvent>): Promise<unknown>;
   }>;
 };
 
@@ -31,6 +34,7 @@ function fail(
 /**
  * Decision commandをWorkflowのapproval-decision eventへ配送するsink。
  * commandIdをidempotencyKeyにしてat-least-once配送を冪等化する。
+ * 配送成功は「delivered」であり、受理/却下はWorkflowがcommandへ書き戻す。
  */
 export class WorkflowDecisionSink implements ApprovalDecisionSink {
   constructor(private readonly workflow: WorkflowBinding) {}
@@ -60,16 +64,16 @@ export class WorkflowDecisionSink implements ApprovalDecisionSink {
       );
     }
     try {
-      await instance.sendEvent({
-        type: "approval-decision",
-        payload: {
+      await instance.sendEvent(
+        approvalDecisionWorkflowEvent({
           idempotencyKey: input.commandId,
-          taskId: String(input.taskId),
-          userId: String(input.userId),
+          taskId: input.taskId,
+          userId: input.userId,
           decision: input.decision,
           decidedAt: input.decidedAt,
-        },
-      });
+          ...(input.comment !== undefined ? { comment: input.comment } : {}),
+        }),
+      );
     } catch (error) {
       return fail(
         "decision_workflow_send_failed",
@@ -77,6 +81,6 @@ export class WorkflowDecisionSink implements ApprovalDecisionSink {
         error instanceof Error ? error.message : String(error),
       );
     }
-    return Result.succeed({ type: "applied" });
+    return Result.succeed({ type: "delivered" });
   }
 }

@@ -7,13 +7,18 @@ import type {
   ApprovalBindingFingerprint,
   ApprovalPlanChecksum,
   ApprovalStepKey,
+  ApprovalTaskId,
   EvaluationSnapshotChecksum,
   MaterializedStepId,
   OrganizationId,
   UserId,
 } from "./domain/brand.ts";
 import type { DelegationHop, PrincipalRef } from "./domain/principal.ts";
-import type { ApprovalRuntimeState, ApprovalTaskRuntimeState } from "./interpreter/types.ts";
+import type {
+  ApprovalDecisionValue,
+  ApprovalRuntimeState,
+  ApprovalTaskRuntimeState,
+} from "./interpreter/types.ts";
 import type {
   MaterializedApprovalPlan,
   MaterializedApprovalStep,
@@ -97,6 +102,19 @@ export type ActionEvent =
       comment?: string;
     }
   | {
+      /**
+       * Durable runtimeが受け取ったDecisionを業務制約（closed task・候補外・既決・自己承認・
+       * comment必須など）で却下した記録。runtime stateは変化せず、同じTaskの待機を継続する。
+       */
+      type: "approval_decision.rejected";
+      actionRequestId: ActionRequestId;
+      taskId: ApprovalTaskId;
+      decisionKey: string;
+      actorId: UserId;
+      decision: ApprovalDecisionValue;
+      code: string;
+    }
+  | {
       type: "step.expired";
       actionRequestId: ActionRequestId;
       materializedStepId: MaterializedStepId;
@@ -169,6 +187,8 @@ function eventDiscriminator(event: ActionEvent): string {
     case "step.approved":
     case "step.rejected":
       return `${String(event.materializedStepId)}:${event.decisionKey}`;
+    case "approval_decision.rejected":
+      return `${String(event.taskId)}:${event.decisionKey}`;
     case "step.activated":
     case "step.expired":
       return String(event.materializedStepId);

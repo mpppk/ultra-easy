@@ -78,27 +78,52 @@ statements.push(`INSERT OR IGNORE INTO published_action_definitions (
   ${sqlQuote(mustJson(stagingDefinition))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
 );`);
 
-const policy = definePolicy({
-  key: "policy:staging-serial-two-users",
-  name: "staging-serial-two-users",
-  description: "M8 staging E2E: direct-user serial approval (alice then bob)",
-  rules: [
-    rule("default", {
-      when: always(),
-      flow: serial(
-        approve({ key: "manager", approver: user(literal(ALICE)), purpose: "business_approval" }),
-        approve({ key: "finance", approver: user(literal(BOB)), purpose: "business_approval" }),
-      ),
-    }),
-  ],
-});
-statements.push(`INSERT OR IGNORE INTO published_approval_policy_versions (
+// #87: selfApprovalの既定はdeny（execution_consentを除く）。staging Auth0にはalice/bobの
+// 2 userしか居らず、requester（can_execute）はaliceだけのため、aliceが承認するStepだけ
+// selfApproval=allowを明示してopt-inする（semantic validatorのwarning対象）。bobのStepは
+// 既定のdenyのまま職務分離を検証する。過去のversionはINSERT OR IGNOREで残り、新しいversionが優先される。
+const ALICE_SELF_APPROVAL = { selfApproval: { mode: "allow" as const } };
+
+function publishPolicyVersions(
+  key: string,
+  versions: readonly { version: number; policy: ReturnType<typeof definePolicy> }[],
+): void {
+  for (const { version, policy } of versions) {
+    statements.push(`INSERT OR IGNORE INTO published_approval_policy_versions (
   organization_id, policy_key, version, policy_json, actor_json,
   source_action_request_id, published_at
 ) VALUES (
-  ${sqlQuote(ORGANIZATION_ID)}, 'policy:staging-serial-two-users', 1,
+  ${sqlQuote(ORGANIZATION_ID)}, ${sqlQuote(key)}, ${version},
   ${sqlQuote(mustJson(policy))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
 );`);
+  }
+}
+
+function serialTwoUsersPolicy(aliceSelfApproval: boolean) {
+  return definePolicy({
+    key: "policy:staging-serial-two-users",
+    name: "staging-serial-two-users",
+    description: "M8 staging E2E: direct-user serial approval (alice then bob)",
+    rules: [
+      rule("default", {
+        when: always(),
+        flow: serial(
+          approve({
+            key: "manager",
+            approver: user(literal(ALICE)),
+            purpose: "business_approval",
+            ...(aliceSelfApproval ? ALICE_SELF_APPROVAL : {}),
+          }),
+          approve({ key: "finance", approver: user(literal(BOB)), purpose: "business_approval" }),
+        ),
+      }),
+    ],
+  });
+}
+publishPolicyVersions("policy:staging-serial-two-users", [
+  { version: 1, policy: serialTwoUsersPolicy(false) },
+  { version: 2, policy: serialTwoUsersPolicy(true) },
+]);
 
 const binding = {
   id: "binding:staging-ticket-update",
@@ -189,47 +214,53 @@ statements.push(`INSERT OR IGNORE INTO published_action_definitions (
   ${sqlQuote(ORGANIZATION_ID)}, 'staging:ticket-escalate', 1, 'ticket.escalate',
   ${sqlQuote(mustJson(escalateDefinition))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
 );`);
-const escalatePolicy = definePolicy({
-  key: "policy:staging-parallel-escalation",
-  name: "staging-parallel-escalation",
-  description: "M9 staging E2E: serial of any / all / quorum parallel groups",
-  rules: [
-    rule("default", {
-      when: always(),
-      flow: serial(
-        parallelAny(
-          approve({ key: "triage-alice", approver: user(literal(ALICE)) }),
-          approve({ key: "triage-bob", approver: user(literal(BOB)) }),
+function escalatePolicy(aliceSelfApproval: boolean) {
+  const aliceStep = aliceSelfApproval ? ALICE_SELF_APPROVAL : {};
+  return definePolicy({
+    key: "policy:staging-parallel-escalation",
+    name: "staging-parallel-escalation",
+    description: "M9 staging E2E: serial of any / all / quorum parallel groups",
+    rules: [
+      rule("default", {
+        when: always(),
+        flow: serial(
+          parallelAny(
+            approve({ key: "triage-alice", approver: user(literal(ALICE)), ...aliceStep }),
+            approve({ key: "triage-bob", approver: user(literal(BOB)) }),
+          ),
+          parallelAll(
+            approve({
+              key: "review-alice",
+              approver: user(literal(ALICE)),
+              purpose: "business_approval",
+              ...aliceStep,
+            }),
+            approve({
+              key: "review-bob",
+              approver: user(literal(BOB)),
+              purpose: "security_approval",
+            }),
+          ),
+          parallelQuorum(
+            2,
+            approve({ key: "board-alice", approver: user(literal(ALICE)), ...aliceStep }),
+            approve({ key: "board-bob", approver: user(literal(BOB)) }),
+            approve({
+              key: "board-alice-2",
+              approver: user(literal(ALICE)),
+              resolution: "snapshot",
+              ...aliceStep,
+            }),
+          ),
         ),
-        parallelAll(
-          approve({
-            key: "review-alice",
-            approver: user(literal(ALICE)),
-            purpose: "business_approval",
-          }),
-          approve({
-            key: "review-bob",
-            approver: user(literal(BOB)),
-            purpose: "security_approval",
-          }),
-        ),
-        parallelQuorum(
-          2,
-          approve({ key: "board-alice", approver: user(literal(ALICE)) }),
-          approve({ key: "board-bob", approver: user(literal(BOB)) }),
-          approve({ key: "board-alice-2", approver: user(literal(ALICE)), resolution: "snapshot" }),
-        ),
-      ),
-    }),
-  ],
-});
-statements.push(`INSERT OR IGNORE INTO published_approval_policy_versions (
-  organization_id, policy_key, version, policy_json, actor_json,
-  source_action_request_id, published_at
-) VALUES (
-  ${sqlQuote(ORGANIZATION_ID)}, 'policy:staging-parallel-escalation', 1,
-  ${sqlQuote(mustJson(escalatePolicy))}, ${sqlQuote(mustJson(ACTOR))}, ${sqlQuote(SOURCE)}, ${sqlQuote(OCCURRED_AT)}
-);`);
+      }),
+    ],
+  });
+}
+publishPolicyVersions("policy:staging-parallel-escalation", [
+  { version: 1, policy: escalatePolicy(false) },
+  { version: 2, policy: escalatePolicy(true) },
+]);
 const escalateBinding = {
   id: "binding:staging-ticket-escalate",
   organizationId: ORGANIZATION_ID,
