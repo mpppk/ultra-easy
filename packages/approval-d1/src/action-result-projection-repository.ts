@@ -1,11 +1,14 @@
 import { Result } from "@praha/byethrow";
 
+import { ActionResultRepositoryError } from "@app/approval-core";
 import type {
   ActionExecutionGuaranteeLevel,
   ActionExecutionResult,
   ActionExecutionTerminalStatus,
   ActionEventRecord,
   ActionRequestId,
+  ActionResultRecord,
+  ActionResultRepository,
   OrganizationId,
 } from "@app/approval-core";
 
@@ -16,18 +19,10 @@ import type {
   D1RunResultLike,
 } from "./materialized-plan-repository.ts";
 
-export type ActionResultProjection = {
-  organizationId: OrganizationId;
-  actionRequestId: ActionRequestId;
-  workflowInstanceId: string;
-  status: ActionExecutionTerminalStatus;
-  guaranteeLevel?: ActionExecutionGuaranteeLevel;
-  idempotencyKey?: string;
-  result?: ActionExecutionResult;
-  code?: string;
-  message?: string;
-  completedAt: string;
-};
+export type ActionResultProjection = ActionResultRecord;
+
+/** workflow_instance_idはNOT NULL。Workflowを経由しない同期実行は空文字で保存する。 */
+const SYNCHRONOUS_EXECUTION_INSTANCE_ID = "";
 
 type D1BatchDatabaseLike = D1DatabaseLike & {
   batch(statements: D1PreparedStatementLike[]): Promise<D1RunResultLike[]>;
@@ -46,9 +41,12 @@ type StoredActionResultRow = {
   completed_at: string;
 };
 
-export class D1ActionResultProjectionRepositoryError extends Error {
-  readonly name = "D1ActionResultProjectionRepositoryError";
-  readonly code = "action_result_projection_repository_error";
+export class D1ActionResultProjectionRepositoryError extends ActionResultRepositoryError {
+  override readonly name = "D1ActionResultProjectionRepositoryError";
+
+  constructor(message: string) {
+    super("action_result_projection_repository_error", true, message);
+  }
 }
 
 function repositoryError(
@@ -92,7 +90,7 @@ const parseResult = Result.fn({
  * このrecordは監査・観測用途であり、Executor呼び出しをskipするためのlockや
  * external side effectのexactly-once根拠として使用しない。
  */
-export class D1ActionResultProjectionRepository {
+export class D1ActionResultProjectionRepository implements ActionResultRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
   async save(
@@ -121,7 +119,7 @@ export class D1ActionResultProjectionRepository {
       .bind(
         projection.organizationId,
         projection.actionRequestId,
-        projection.workflowInstanceId,
+        projection.workflowInstanceId ?? SYNCHRONOUS_EXECUTION_INSTANCE_ID,
         projection.status,
         projection.guaranteeLevel ?? null,
         projection.idempotencyKey ?? null,
@@ -203,7 +201,9 @@ export class D1ActionResultProjectionRepository {
     return Result.succeed({
       organizationId: row.value.organization_id as OrganizationId,
       actionRequestId: row.value.action_request_id as ActionRequestId,
-      workflowInstanceId: row.value.workflow_instance_id,
+      ...(row.value.workflow_instance_id !== SYNCHRONOUS_EXECUTION_INSTANCE_ID
+        ? { workflowInstanceId: row.value.workflow_instance_id }
+        : {}),
       status: row.value.status,
       ...(row.value.guarantee_level !== null ? { guaranteeLevel: row.value.guarantee_level } : {}),
       ...(row.value.idempotency_key !== null ? { idempotencyKey: row.value.idempotency_key } : {}),

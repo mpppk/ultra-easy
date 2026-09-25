@@ -11,17 +11,15 @@ import {
 import {
   ConsoleTelemetrySink,
   evaluateOperatorAlerts,
-  GovernanceActionExecutor,
   safeLogRecord,
   type ActionRequestId,
-  type ExecutorKey,
   type NotificationSink,
   type OrganizationId,
   type PersistedOperatorAlertState,
 } from "@app/approval-core";
 import {
+  D1ActionResultProjectionRepository,
   D1FixedWindowRateLimiter,
-  D1GovernanceRepository,
   D1MaterializedPlanRepository,
   D1NotificationOutboxRepository,
   D1OperatorAlertStateRepository,
@@ -34,13 +32,11 @@ import {
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
-  CloudflareWorkflowCancellationControl,
   consumeNotificationMessage,
   dispatchNotificationOutbox,
   emitNotificationSkipped,
   notifyAlertTransition,
   ServiceBindingActionAuthorizer,
-  ServiceBindingActionExecutor,
   SlackWebhookSink,
   type ActionServiceBinding,
   type ActionWorkflowEnv,
@@ -57,13 +53,13 @@ import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-
 import { readOperatorAlertThresholds } from "./operator-alert-thresholds.ts";
 import { handleOperatorDashboard } from "./operator-dashboard.ts";
 import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
-import { DispatchingActionExecutor } from "./dispatching-executor.ts";
+import { createActionExecutorRegistry } from "./executor-registry.ts";
 import { StagingSchemaResolver } from "./staging-schema-resolver.ts";
 import { StagingTrustedContextProvider } from "./trusted-context.ts";
 import { WorkflowDecisionSink } from "./decision-sink.ts";
 import { StagingActionAuthorizer } from "./staging-authorizer.ts";
 import { StagingActionExecutor } from "./staging-executor.ts";
-import { relationshipCoordinator, relationshipExecutor } from "./relationship-mutation.ts";
+import { relationshipCoordinator } from "./relationship-mutation.ts";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 
@@ -149,11 +145,9 @@ async function sweepPendingDecisions(env: ApprovalApiEnv, now: string): Promise<
   }
 }
 
-function buildApi(input: {
-  env: ApprovalApiEnv;
-  authorizerBinding: ActionServiceBinding;
-  executorBinding: ActionServiceBinding;
-}): { fetch(request: Request): Promise<Response> } {
+function buildApi(input: { env: ApprovalApiEnv; authorizerBinding: ActionServiceBinding }): {
+  fetch(request: Request): Promise<Response>;
+} {
   const env = input.env;
   const telemetry = new ConsoleTelemetrySink();
   const organizationId = stagingOrganizationId(env);
@@ -170,22 +164,14 @@ function buildApi(input: {
     next: () => `command:${crypto.randomUUID()}`,
   });
   const authorizer = new ServiceBindingActionAuthorizer(input.authorizerBinding, organizationId);
-  const authorizationExecutor = relationshipExecutor(env);
-  const dispatcher = new DispatchingActionExecutor({
-    governance: new GovernanceActionExecutor(
-      new D1GovernanceRepository(env.DB),
-      new CloudflareWorkflowCancellationControl(env.DB, env.ACTION_WORKFLOW),
-    ),
-    staging: new ServiceBindingActionExecutor(input.executorBinding, "staging" as ExecutorKey),
-    ...(authorizationExecutor ? { authorization: authorizationExecutor } : {}),
-  });
   const service = new ActionRequestApplicationService({
     actionDefinitionResolver: new D1PublishedActionDefinitionResolver(env.DB, organizationId),
     schemaResolver: new StagingSchemaResolver(),
     policyBindingResolver: new D1PublishedPolicyBindingResolver(env.DB),
     authorizer,
-    executor: dispatcher,
+    executor: createActionExecutorRegistry(env),
     planRepository: new D1MaterializedPlanRepository(env.DB),
+    resultRepository: new D1ActionResultProjectionRepository(env.DB),
     workflowStarter: new CloudflareActionWorkflowStarter(env.ACTION_WORKFLOW),
     idGenerator: { next: () => `action:${crypto.randomUUID()}` as ActionRequestId },
   });
@@ -382,7 +368,7 @@ export default {
           { status: 500 },
         );
       }
-      return buildApi({ env, authorizerBinding, executorBinding }).fetch(request);
+      return buildApi({ env, authorizerBinding }).fetch(request);
     } catch (error) {
       return Response.json(
         { error: error instanceof Error ? error.message : String(error) },

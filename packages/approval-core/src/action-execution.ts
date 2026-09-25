@@ -36,7 +36,9 @@ export type ActionExecutionTerminalStatus =
   | "executed"
   | "authorization_revoked"
   | "authorization_check_failed"
-  | "execution_failed";
+  | "execution_failed"
+  /** at-most-onceのexecutorが一時障害で失敗し、外部副作用の有無が不明。人手でreconcileする。 */
+  | "execution_unknown";
 
 const ActionExecutorErrorBase = ErrorFactory({
   name: "ActionExecutorError",
@@ -74,9 +76,62 @@ export interface ActionExecutor {
    */
   readonly guaranteeLevel: ActionExecutionGuaranteeLevel;
 
+  /**
+   * actionごとに保証が異なるexecutor（registry等）が、実際に委譲する先の保証を返す。
+   * 未実装ならguaranteeLevelを使う。
+   */
+  guaranteeLevelFor?(action: MaterializedActionSnapshot): ActionExecutionGuaranteeLevel;
+
   execute(
     request: ActionExecutionRequest,
   ): Result.ResultAsync<ActionExecutionResult, ActionExecutorError>;
+}
+
+/** registryに無いexecutorKey。成功扱いにせず非retriableなexecution_failedにする。 */
+export function unknownExecutorKeyError(executorKey: string): ActionExecutorError {
+  return new ActionExecutorError({
+    code: "unknown_executor_key",
+    retriable: false,
+    detail: `未対応のexecutorKeyです: ${executorKey}`,
+  });
+}
+
+/**
+ * executorKeyごとの登録情報。承認不要の同期実行とWorkflow経路（service binding越し）の
+ * どちらも同じregistryでdispatchし、executorKeyを取り違えないようにする。
+ * guaranteeLevelは委譲先の値を返す（registry自体の既定値は最も弱いbest_effort）。
+ */
+export class ActionExecutorRegistry implements ActionExecutor {
+  readonly guaranteeLevel: ActionExecutionGuaranteeLevel = "best_effort_at_most_once";
+
+  constructor(private readonly delegates: Readonly<Record<string, ActionExecutor>>) {}
+
+  lookup(executorKey: string): ActionExecutor | undefined {
+    return Object.hasOwn(this.delegates, executorKey) ? this.delegates[executorKey] : undefined;
+  }
+
+  guaranteeLevelFor(action: MaterializedActionSnapshot): ActionExecutionGuaranteeLevel {
+    const delegate = this.lookup(String(action.definition.executorKey));
+    return delegate
+      ? (delegate.guaranteeLevelFor?.(action) ?? delegate.guaranteeLevel)
+      : this.guaranteeLevel;
+  }
+
+  async execute(
+    request: ActionExecutionRequest,
+  ): Result.ResultAsync<ActionExecutionResult, ActionExecutorError> {
+    const key = String(request.action.definition.executorKey);
+    const delegate = this.lookup(key);
+    if (!delegate) return Result.fail(unknownExecutorKeyError(key));
+    return delegate.execute(request);
+  }
+}
+
+export function executorGuaranteeLevel(
+  executor: ActionExecutor,
+  action: MaterializedActionSnapshot,
+): ActionExecutionGuaranteeLevel {
+  return executor.guaranteeLevelFor?.(action) ?? executor.guaranteeLevel;
 }
 
 const ActionAuthorizationCheckFailedErrorBase = ErrorFactory({
@@ -254,7 +309,7 @@ export async function executeAuthorizedAction(input: {
   return Result.succeed({
     type: "executed",
     idempotencyKey,
-    guaranteeLevel: input.executor.guaranteeLevel,
+    guaranteeLevel: executorGuaranteeLevel(input.executor, input.action),
     authorizationEvidence: input.authorizationEvidence,
     result: executed.value,
   });

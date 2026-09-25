@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { InMemoryActionAuditStore } from "@app/approval-core/testing";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
@@ -366,6 +367,7 @@ export function createGatewayHarness(
     authorizer,
     executor,
     planRepository: plans,
+    resultRepository: new InMemoryActionAuditStore(),
     workflowStarter: workflows,
     idGenerator: {
       next: () => branded<ActionRequestId>(`action-request:${++actionRequestCounter}`),

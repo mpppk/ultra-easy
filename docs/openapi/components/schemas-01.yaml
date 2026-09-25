@@ -74,6 +74,10 @@ ActionRequestStatus:
   - authorization_revoked
   - authorization_check_failed
   - execution_failed
+  - execution_unknown
+  description: |-
+    execution_unknown: at-most-onceのexecutorが一時障害で失敗し、外部副作用の有無が不明（retryせず、
+    人手でreconcileする）。承認不要の同期実行もWorkflow経路と同じ終端状態を返す。
 ActionResult:
   type: object
   required:
@@ -89,6 +93,7 @@ ActionResult:
       - authorization_revoked
       - authorization_check_failed
       - execution_failed
+      - execution_unknown
     output:
       $ref: ./schemas-01.yaml#/JsonValue
     code:

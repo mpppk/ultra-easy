@@ -2,6 +2,7 @@ export type * from "./domain/index.ts";
 export type * from "./action-definition.ts";
 export * from "./action-event.ts";
 export * from "./action-execution.ts";
+export * from "./action-execution-record.ts";
 export * from "./approval-flow-presentation.ts";
 export * from "./approver-resolver.ts";
 export * from "./attachment.ts";

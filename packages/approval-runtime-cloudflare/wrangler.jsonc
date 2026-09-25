@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "ultra-easy-approval-runtime-test",
-  "main": "src/index.ts",
+  "main": "src/testing/test-worker.ts",
   "compatibility_date": "2026-09-12",
   "d1_databases": [
     {
@@ -18,6 +18,14 @@
     "OPENFGA_AUTHORIZATION_MODEL_ID": "01M38K1Q55CCNETS1V6XHJZJTB",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
   },
+  // Workflow経路のexecutor registry（approval-apiのStagingActionExecutorに相当）。
+  "services": [
+    {
+      "binding": "ACTION_EXECUTOR",
+      "service": "ultra-easy-approval-runtime-test",
+      "entrypoint": "TestActionExecutor",
+    },
+  ],
   "workflows": [
     {
       "binding": "ACTION_WORKFLOW",

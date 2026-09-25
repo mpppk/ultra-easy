@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { InMemoryActionAuditStore } from "@app/approval-core/testing";
 import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -234,6 +235,7 @@ function harness(options: {
     authorizer,
     executor,
     planRepository: plans,
+    resultRepository: new InMemoryActionAuditStore(),
     workflowStarter: workflows,
     idGenerator: { next: () => `action:m9-${++id}` as ActionRequestId },
   });

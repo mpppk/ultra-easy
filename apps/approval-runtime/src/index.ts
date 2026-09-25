@@ -2,6 +2,7 @@ import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import {
+  ActionExecutorRegistry,
   ConsoleTelemetrySink,
   GOVERNANCE_ACTION_DEFINITIONS,
   GOVERNANCE_ACTION_TYPES,
@@ -9,6 +10,10 @@ import {
   computeActionFingerprint,
 } from "@app/approval-core";
 import type {
+  ActionExecutionRequest,
+  ActionExecutionResult,
+  ActionExecutor,
+  ActionExecutorError,
   ActionRequestId,
   ApprovalDecisionEvent,
   ApprovalTaskId,
@@ -31,6 +36,7 @@ import {
   CloudflareWorkflowCancellationControl,
   consumeNotificationMessage,
   dispatchNotificationOutbox,
+  serveActionExecutorRegistry,
   type ActionWorkflowEnv,
   type ActionWorkflowParams,
   type NotificationQueueMessage,
@@ -43,7 +49,12 @@ import {
   readOperatorAlertThresholds,
 } from "./operator-dashboard.ts";
 import { parseForceCancelBody } from "./preview-force-cancel.ts";
-import { createPreviewPlan, isPreviewScenario, PREVIEW_ORGANIZATION_ID } from "./preview-plan.ts";
+import {
+  createPreviewPlan,
+  isPreviewScenario,
+  PREVIEW_EXECUTOR_KEY,
+  PREVIEW_ORGANIZATION_ID,
+} from "./preview-plan.ts";
 
 export { ActionWorkflow };
 
@@ -101,51 +112,35 @@ export class PreviewActionAuthorizer extends WorkerEntrypoint<PreviewRuntimeEnv>
   }
 }
 
+/** Preview専用のside-effect mock。外部副作用を持たないためidempotent。 */
+class PreviewSinkActionExecutor implements ActionExecutor {
+  readonly guaranteeLevel = "idempotent" as const;
+
+  async execute(
+    request: ActionExecutionRequest,
+  ): Result.ResultAsync<ActionExecutionResult, ActionExecutorError> {
+    return Result.succeed({
+      status: "succeeded",
+      output: {
+        preview: true,
+        executorKey: String(request.action.definition.executorKey),
+        idempotencyKey: request.idempotencyKey,
+      },
+    });
+  }
+}
+
 /**
- * Preview専用のside-effect mock。
- * idempotency keyをheader/bodyの両方から確認し、実際のActionExecutor adapter contractを
+ * Preview専用のAction Executor registry。
+ * 本番と同じ`serveActionExecutorRegistry` contract（describe + idempotency / correlation検証）を
  * Preview環境でE2E確認できるようにする。
  */
 export class PreviewActionExecutor extends WorkerEntrypoint<PreviewRuntimeEnv> {
   override async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const match = /^\/execute\/([^/]+)$/.exec(url.pathname);
-    if (request.method !== "POST" || !match?.[1]) {
-      return new Response("Not Found", { status: 404 });
-    }
-
-    const body = await request.json().catch(() => null);
-    const headerIdempotencyKey = request.headers.get("idempotency-key");
-    const correlationId = request.headers.get("x-ue-correlation-id");
-    const bodyIdempotencyKey =
-      isRecord(body) && typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
-    const bodyActionRequestId =
-      isRecord(body) && typeof body.actionRequestId === "string" ? body.actionRequestId : undefined;
-    if (
-      !headerIdempotencyKey ||
-      !bodyIdempotencyKey ||
-      headerIdempotencyKey !== bodyIdempotencyKey ||
-      !correlationId ||
-      correlationId !== bodyActionRequestId
-    ) {
-      return json(
-        {
-          code: "invalid_idempotency_contract",
-          retriable: false,
-          detail: "idempotency key and ActionRequest correlation headers must be stable",
-        },
-        { status: 409 },
-      );
-    }
-
-    return json({
-      status: "succeeded",
-      output: {
-        preview: true,
-        executorKey: decodeURIComponent(match[1]),
-        idempotencyKey: headerIdempotencyKey,
-      },
-    });
+    return serveActionExecutorRegistry(
+      request,
+      new ActionExecutorRegistry({ [PREVIEW_EXECUTOR_KEY]: new PreviewSinkActionExecutor() }),
+    );
   }
 }
 

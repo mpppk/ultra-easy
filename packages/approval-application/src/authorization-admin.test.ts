@@ -1,4 +1,5 @@
 import { Result } from "@praha/byethrow";
+import { InMemoryActionAuditStore } from "@app/approval-core/testing";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { assert, describe, expect, it } from "vite-plus/test";
 
@@ -165,6 +166,7 @@ function service(input: {
         return Result.succeed({ status: "succeeded" as const });
       },
     },
+    resultRepository: new InMemoryActionAuditStore(),
     planRepository: {
       save: async () => {
         input.recorder.saves += 1;

@@ -39,6 +39,7 @@ import {
   D1MaterializedPlanRepository,
 } from "@app/approval-d1";
 
+import { TEST_EXECUTOR_KEYS } from "./testing/test-worker.ts";
 import { CloudflareWorkflowCancellationControl } from "./workflow-cancellation.ts";
 import { actionWorkflowInstanceId, type ActionWorkflowParams } from "./workflow.ts";
 
@@ -66,6 +67,7 @@ beforeEach(async () => {
     testEnv.DB.prepare("DELETE FROM approval_task_candidate_projections"),
     testEnv.DB.prepare("DELETE FROM action_requests"),
     testEnv.DB.prepare("DELETE FROM approval_commands"),
+    testEnv.DB.prepare("DELETE FROM published_action_definitions"),
   ]);
 });
 
@@ -99,16 +101,20 @@ async function validPlan(
   flow: MaterializedFlow,
   input: Record<string, unknown> = {},
   planOrganizationId: OrganizationId = organizationId,
+  options: {
+    executorKey?: string;
+    action?: MaterializedApprovalPlan["action"];
+  } = {},
 ): Promise<MaterializedApprovalPlan> {
   const actionRequestId = name as ActionRequestId;
-  const action: MaterializedApprovalPlan["action"] = {
+  const action: MaterializedApprovalPlan["action"] = options.action ?? {
     definition: {
       key: "action:workflow" as MaterializedApprovalPlan["action"]["definition"]["key"],
       version: 1,
       actionType: "workflow" as MaterializedApprovalPlan["action"]["definition"]["actionType"],
       inputSchema: { key: "schema:workflow" as SchemaKey, version: 1 },
-      executorKey:
-        "executor:workflow" as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
+      executorKey: (options.executorKey ??
+        TEST_EXECUTOR_KEYS.idempotent) as MaterializedApprovalPlan["action"]["definition"]["executorKey"],
     },
     type: "workflow" as MaterializedApprovalPlan["action"]["type"],
     resource: {
@@ -465,7 +471,7 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     expect(await introspector.getOutput()).toMatchObject({
       type: "completed",
       status: "executed",
-      guaranteeLevel: "best_effort_at_most_once",
+      guaranteeLevel: "idempotent",
     });
     const actionResult = await new D1ActionResultProjectionRepository(testEnv.DB).load({
       organizationId,
@@ -474,7 +480,8 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
     assert(Result.isSuccess(actionResult));
     expect(actionResult.value).toMatchObject({
       status: "executed",
-      guaranteeLevel: "best_effort_at_most_once",
+      guaranteeLevel: "idempotent",
+      result: { output: { attempt: 2 } },
       idempotencyKey: createActionExecutionIdempotencyKey(
         plan.organizationId,
         plan.actionRequestId,
@@ -482,6 +489,132 @@ describe("ActionWorkflow / Cloudflare Workflows integration", () => {
       ),
     });
     await introspector.dispose();
+  });
+
+  it("#104: at-most-once executorの一時障害はretryせずexecution_unknownで終端する", async () => {
+    const plan = await validPlan(
+      "cf-execution-at-most-once",
+      { type: "none" },
+      { executorScenario: "retry-once" },
+      organizationId,
+      { executorKey: TEST_EXECUTOR_KEYS.atMostOnce },
+    );
+    await savePlan(plan);
+
+    const id = await actionWorkflowInstanceId(plan);
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    await introspector.modify(async (modifier) => {
+      await modifier.disableRetryDelays();
+    });
+    await createInstance(plan, id);
+
+    await introspector.waitForStatus("complete");
+    // retryしていれば2回目のattemptで成功（executed）するため、execution_unknownはretry無しを示す。
+    expect(await introspector.getOutput()).toMatchObject({
+      type: "completed",
+      status: "execution_unknown",
+      guaranteeLevel: "best_effort_at_most_once",
+      code: "temporary_timeout",
+    });
+    const actionResult = await new D1ActionResultProjectionRepository(testEnv.DB).load({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(actionResult));
+    expect(actionResult.value).toMatchObject({
+      status: "execution_unknown",
+      guaranteeLevel: "best_effort_at_most_once",
+    });
+    const audit = await new D1ActionEventRepository(testEnv.DB).listForAction({
+      organizationId,
+      actionRequestId: plan.actionRequestId,
+    });
+    assert(Result.isSuccess(audit));
+    expect(audit.value.map((record) => record.event)).toContainEqual(
+      expect.objectContaining({
+        type: "action.execution_failed",
+        code: "temporary_timeout",
+        retriable: true,
+      }),
+    );
+    await introspector.dispose();
+  });
+
+  it("#91: registryに無いexecutorKeyは成功扱いにせずexecution_failedにする", async () => {
+    const plan = await validPlan(
+      "cf-execution-unregistered",
+      { type: "none" },
+      {},
+      organizationId,
+      {
+        executorKey: TEST_EXECUTOR_KEYS.unregistered,
+      },
+    );
+    await savePlan(plan);
+    const id = await actionWorkflowInstanceId(plan);
+    await createInstance(plan, id);
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({
+      type: "completed",
+      status: "execution_failed",
+      code: "unknown_executor_key",
+    });
+    await introspector.dispose();
+  });
+
+  it("#91: 承認付きgovernance actionはWorkflow経由でGovernanceActionExecutorに到達する", async () => {
+    const definition = GOVERNANCE_ACTION_DEFINITIONS.find(
+      (candidate) =>
+        String(candidate.actionType) === String(GOVERNANCE_ACTION_TYPES.actionDefinitionPublish),
+    );
+    assert(definition);
+    const published = {
+      key: "definition:via-workflow",
+      version: 1,
+      actionType: "ticket.via-workflow",
+      inputSchema: { key: "schema:ticket", version: 1 },
+      executorKey: "staging",
+    };
+    const approval = await directStep("governance", bob, "root");
+    const plan = await validPlan("cf-governance", approval, {}, organizationId, {
+      action: {
+        definition,
+        type: GOVERNANCE_ACTION_TYPES.actionDefinitionPublish,
+        resource: {
+          type: "governance" as MaterializedApprovalPlan["action"]["resource"]["type"],
+          id: "governance:action-definitions" as MaterializedApprovalPlan["action"]["resource"]["id"],
+        },
+        input: { definition: published } as MaterializedApprovalPlan["action"]["input"],
+      },
+    });
+    await savePlan(plan);
+
+    const id = await actionWorkflowInstanceId(plan);
+    const introspector = await introspectWorkflowInstance(testEnv.ACTION_WORKFLOW, id);
+    const instance = await createInstance(plan, id);
+    await instance.sendEvent({
+      type: "approval-decision",
+      payload: decision(plan, approval, bob, "governance-approved"),
+    });
+    await introspector.waitForStatus("complete");
+    expect(await introspector.getOutput()).toMatchObject({
+      type: "completed",
+      status: "executed",
+      guaranteeLevel: "idempotent",
+    });
+    await introspector.dispose();
+
+    const row = await testEnv.DB.prepare(
+      `SELECT action_type, source_action_request_id FROM published_action_definitions
+        WHERE organization_id = ? AND definition_key = ?`,
+    )
+      .bind(organizationId, published.key)
+      .first<{ action_type: string; source_action_request_id: string }>();
+    expect(row).toEqual({
+      action_type: "ticket.via-workflow",
+      source_action_request_id: String(plan.actionRequestId),
+    });
   });
 
   it("AC-M5-006: non-retriable Executor failureをretryせずexecution_failedでterminal化する", async () => {
