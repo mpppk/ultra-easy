@@ -17,7 +17,9 @@ import type {
   SpaceDetailView,
   SpaceSettingsView,
 } from "../shared/api.ts";
+import { MAINTENANCE_SCHEDULE_TRIGGER } from "../ultra-easy/client.ts";
 import { handleKnowledgeApi } from "./api.ts";
+import { runScheduledMaintenance } from "./maintenance.ts";
 import { createRuntime, type KnowledgeRuntime } from "./runtime.ts";
 
 const MOCK_MIGRATIONS = new URL("../../ultra-easy-mock/migrations/", import.meta.url);
@@ -387,6 +389,87 @@ describe("Knowledge Workspace demo scenario (#167 Definition of Done)", () => {
     // run IDs do not leak across spaces
     const hana = await signIn("user:hana");
     expect((await hana.get(`/api/automation/${started.body.runId}`)).status).toBe(404);
+  });
+
+  it("weekly trigger starts the same maintenance workflow per space and skips active runs (#184)", async () => {
+    const yuki = await signIn("user:yuki");
+    const monday = new Date("2026-09-28T00:00:00.000Z");
+    const first = await runScheduledMaintenance(runtime, monday);
+    assert(Result.isSuccess(first));
+    const engineering = first.value.find((outcome) => outcome.spaceKey === "engineering");
+    expect(engineering).toMatchObject({ outcome: "started" });
+    expect(first.value.every((outcome) => outcome.outcome === "started")).toBe(true);
+    const runsAfterFirst = count(platformDb, "SELECT count(*) AS total FROM mock_workflow_runs");
+    expect(runsAfterFirst).toBe(first.value.length);
+
+    // Same Workflow Definition as the manual button: owner review + archive approval.
+    const detail = await yuki.get<AutomationDetailView>(`/api/automation/${engineering?.runId}`);
+    expect(detail.body.status).toBe("waiting_input");
+    expect(detail.body.humanInputs.map((input) => [input.pageId, input.canRespond])).toEqual([
+      ["pg_api_auth_guide", true],
+    ]);
+    expect(detail.body.approvals).toHaveLength(1);
+
+    // A redelivered Cron event in the same week is a no-op; the waiting run is skipped.
+    const redelivered = await runScheduledMaintenance(
+      runtime,
+      new Date("2026-09-28T00:05:00.000Z"),
+    );
+    assert(Result.isSuccess(redelivered));
+    expect(redelivered.value.find((outcome) => outcome.spaceKey === "engineering")).toMatchObject({
+      outcome: "skipped_active",
+      runId: engineering?.runId,
+    });
+    expect(count(platformDb, "SELECT count(*) AS total FROM mock_workflow_runs")).toBe(
+      runsAfterFirst,
+    );
+
+    // The manual button reuses the active scheduled run instead of starting another.
+    const manual = await yuki.send<{ runId: string }>(
+      "POST",
+      "/api/spaces/engineering/maintenance",
+    );
+    expect(manual.body.runId).toBe(engineering?.runId);
+
+    // Next week: finished spaces get a new run, the still-waiting space is skipped.
+    const nextWeek = await runScheduledMaintenance(runtime, new Date("2026-10-05T00:00:00.000Z"));
+    assert(Result.isSuccess(nextWeek));
+    expect(nextWeek.value.find((outcome) => outcome.spaceKey === "engineering")?.outcome).toBe(
+      "skipped_active",
+    );
+    expect(count(platformDb, "SELECT count(*) AS total FROM mock_workflow_runs")).toBeGreaterThan(
+      runsAfterFirst,
+    );
+
+    // The trigger principal is never a space member or an approval candidate.
+    expect(
+      count(
+        platformDb,
+        `SELECT count(*) AS total FROM mock_space_roles WHERE principal_id = '${MAINTENANCE_SCHEDULE_TRIGGER.id}'`,
+      ),
+    ).toBe(0);
+    const candidates = count(
+      platformDb,
+      `SELECT count(*) AS total FROM mock_approval_tasks WHERE candidate_ids_json LIKE '%${MAINTENANCE_SCHEDULE_TRIGGER.id}%'`,
+    );
+    expect(candidates).toBe(0);
+  });
+
+  it("the weekly trigger may only request maintenance actions", async () => {
+    await signIn("user:yuki");
+    const space = await runtime.repos.spaces.findByKey(runtime.organizationId, "engineering");
+    assert(Result.isSuccess(space) && space.value);
+    const denied = await runtime.ultraEasy.startAction({
+      organizationId: runtime.organizationId,
+      actor: MAINTENANCE_SCHEDULE_TRIGGER,
+      actionType: "knowledge.publish_document",
+      resource: { type: "knowledge_page", id: "pg_cf_workers_deploy" },
+      input: {},
+      correlation: { spaceId: space.value.id, pageId: "pg_cf_workers_deploy" },
+      idempotencyKey: "trigger-publish",
+    });
+    assert(Result.isFailure(denied));
+    expect(denied.error.code).toBe("forbidden");
   });
 
   it("space settings compile presets and go through governed meta-approval", async () => {

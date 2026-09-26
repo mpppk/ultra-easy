@@ -71,6 +71,17 @@ export class D1SpaceRepository {
     );
   }
 
+  /** Every space of the organization (scheduled maintenance sweeps all of them). */
+  listAll(organizationId: string): Result.ResultAsync<Space[], KnowledgeStoreError> {
+    return mapResult(
+      this.sql.all<SpaceRow>(
+        `SELECT ${SPACE_COLUMNS} FROM spaces WHERE organization_id = ? ORDER BY key`,
+        organizationId,
+      ),
+      (rows) => rows.map(toSpace),
+    );
+  }
+
   count(organizationId: string): Result.ResultAsync<number, KnowledgeStoreError> {
     return mapResult(
       this.sql.first<{ total: number }>(
