@@ -17,6 +17,18 @@ import type { SpaceRole } from "@app/knowledge-core";
 
 export type PrincipalRef = { id: string; displayName: string };
 
+/**
+ * Identity of the weekly `knowledge.maintain_space` trigger (#184). Scheduled
+ * runs start the same Workflow Definition as the manual button; only the
+ * trigger (and therefore the requesting principal) differs. ultra-easy grants
+ * this trigger `knowledge.maintain_space` and its child actions only — it is
+ * never a space member and never an approval candidate.
+ */
+export const MAINTENANCE_SCHEDULE_TRIGGER: PrincipalRef = {
+  id: "trigger:knowledge-maintenance-weekly",
+  displayName: "Weekly maintenance schedule",
+};
+
 export class UltraEasyError extends Error {
   constructor(
     readonly code:

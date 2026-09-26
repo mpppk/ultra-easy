@@ -6,6 +6,7 @@ publishing, archiving, post-publish side effects and document maintenance.
 
 ```text
 apps/knowledge/           TanStack Start + Cloudflare Worker (UI, HTTP API, /mcp)
+  src/server.ts           Worker entry: TanStack Start fetch + weekly maintenance Cron Trigger
   src/routes/             7 MVP screens + Space Settings (post-MVP screen 8) + /mcp + /api/*
   src/server/             KnowledgeService (authorized projections), API router, session, seed
   src/mcp/                Streamable HTTP MCP endpoint + primitive Knowledge Actions
@@ -46,6 +47,21 @@ in Automation. There is no approval inbox: "View approval" deep-links to the ult
   published and draft text live in separate FTS5 indexes.
 - **Domain state ≠ automation state**: a failed notification leaves the page published; only the failed
   effect is retried, as a new ActionRequest. The original run keeps its failed history.
+
+## Scheduled maintenance
+
+`knowledge.maintain_space` runs weekly for every space (Cron Trigger `0 0 * * 1`, Mondays 00:00 UTC, in
+`wrangler.jsonc`) as well as from the manual "Run maintenance" button. Both go through
+`startSpaceMaintenance` (`src/server/maintenance.ts`), so they start the same Workflow Definition:
+
+- a space whose maintenance run is still running / waiting for input or approval is skipped;
+- the idempotency key is scoped to the space and week, so a redelivered Cron event starts nothing new;
+- scheduled runs are requested by the trigger principal `trigger:knowledge-maintenance-weekly`, which ultra-easy
+  authorizes for `knowledge.maintain_space` and its child actions only. It is never a space member or an
+  approval candidate; owner review and archive approval stay with the page owners.
+
+The Cron Trigger is interim until the ultra-easy Workflow scheduler / Timer Trigger is public. Try it locally
+with `curl "http://localhost:3001/cdn-cgi/handler/scheduled?cron=0+0+*+*+1"` while `vp dev` runs.
 
 ## ultra-easy integration and the mock
 
@@ -113,5 +129,4 @@ every deploy (`deploy` script).
 
 ## Not in this MVP
 
-Auth0 sign-in (demo principals only), the real ultra-easy public API / Service Binding, a scheduler trigger for
-maintenance (manual "Run maintenance"), rich-text / collaborative editing, semantic search.
+Auth0 sign-in (demo principals only), the real ultra-easy public API / Service Binding, rich-text / collaborative editing, semantic search.

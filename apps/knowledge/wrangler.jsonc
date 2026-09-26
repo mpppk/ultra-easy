@@ -5,9 +5,15 @@
   "name": "ultra-easy-knowledge",
   "compatibility_date": "2026-09-08",
   "compatibility_flags": ["nodejs_compat"],
-  "main": "@tanstack/react-start/server-entry",
+  // TanStack Start fetch handler + the weekly maintenance Cron Trigger (#184).
+  "main": "./src/server.ts",
   "observability": {
     "enabled": true,
+  },
+  // #184: weekly `knowledge.maintain_space` per space (Mondays 00:00 UTC). Interim
+  // Cron Trigger until the ultra-easy Workflow scheduler / Timer Trigger exists.
+  "triggers": {
+    "crons": ["0 0 * * 1"],
   },
   "vars": {
     // "demo": fixture principals selectable in the UI (local / demo only).

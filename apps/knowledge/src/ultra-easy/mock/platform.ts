@@ -4,6 +4,7 @@ import { newId, type SpaceRole } from "@app/knowledge-core";
 import type { D1DatabaseLike } from "@app/knowledge-d1";
 
 import {
+  MAINTENANCE_SCHEDULE_TRIGGER,
   UltraEasyError,
   type ActionCorrelation,
   type ApprovalTaskRef,
@@ -45,6 +46,13 @@ export const MAINTENANCE_AGENT: PrincipalRef = {
   id: "service:knowledge-maintenance",
   displayName: "Knowledge maintenance agent",
 };
+
+/** Actions the weekly maintenance trigger may request (trigger binding, not a space role). */
+const SCHEDULE_TRIGGER_ACTIONS: ReadonlySet<string> = new Set([
+  "knowledge.maintain_space",
+  "knowledge.page.mark_reviewed",
+  "knowledge.page.archive",
+]);
 
 const PUBLISH_NODES: Array<[string, string]> = [
   ["analyze_metadata", "Metadata analysis"],
@@ -257,6 +265,7 @@ export class MockUltraEasy implements UltraEasyClient {
 
   private async principal(organizationId: string, id: string): Promise<PrincipalRef> {
     if (id === MAINTENANCE_AGENT.id) return MAINTENANCE_AGENT;
+    if (id === MAINTENANCE_SCHEDULE_TRIGGER.id) return MAINTENANCE_SCHEDULE_TRIGGER;
     const row = await this.first<{ display_name: string }>(
       "SELECT display_name FROM mock_principals WHERE organization_id = ? AND id = ?",
       organizationId,
@@ -282,6 +291,8 @@ export class MockUltraEasy implements UltraEasyClient {
     spaceId: string,
     actionType: string,
   ): Promise<boolean> {
+    if (authorityId === MAINTENANCE_SCHEDULE_TRIGGER.id)
+      return SCHEDULE_TRIGGER_ACTIONS.has(actionType);
     const role = await this.roleOf(organizationId, authorityId, spaceId);
     return role !== null && (REQUIRED_ROLES[actionType] ?? []).includes(role);
   }

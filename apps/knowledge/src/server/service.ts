@@ -65,6 +65,7 @@ import type {
   UltraEasyError,
   WorkflowRunView,
 } from "../ultra-easy/client.ts";
+import { manualMaintenanceKey, startSpaceMaintenance } from "./maintenance.ts";
 import { forbidden, KnowledgeServiceError, notFound, platformError, storeError } from "./errors.ts";
 
 type ServiceResult<T> = Result.ResultAsync<T, KnowledgeServiceError>;
@@ -1643,42 +1644,24 @@ export class KnowledgeService {
     return Result.succeed({ status: submitted.value.status });
   }
 
-  /** Manual trigger of `knowledge.maintain_space` (scheduler trigger is post-MVP). */
+  /** Manual trigger of `knowledge.maintain_space` (the weekly Cron Trigger shares the start path, #184). */
   async runMaintenance(spaceKey: string): ServiceResult<{ runId: string; status: string }> {
     const loaded = await this.loadSpace(spaceKey);
     if (Result.isFailure(loaded)) return loaded;
     const { space } = loaded.value;
     if (!hasSpaceCapability(this.context, space.id, "knowledge.space.administer"))
       return Result.fail(forbidden());
-    const runs = await fromPlatform(
-      this.ultraEasy.listRuns({
-        organizationId: this.organizationId,
-        spaceIds: [space.id],
-        limit: 50,
-      }),
-    );
-    if (Result.isFailure(runs)) return runs;
-    const active = runs.value.find(
-      (run) =>
-        run.actionType === "knowledge.maintain_space" &&
-        (run.status === "running" ||
-          run.status === "waiting_input" ||
-          run.status === "waiting_approval"),
-    );
-    if (active) return Result.succeed({ runId: active.id, status: active.status });
     const started = await fromPlatform(
-      this.ultraEasy.startAction({
+      startSpaceMaintenance({
+        ultraEasy: this.ultraEasy,
         organizationId: this.organizationId,
+        spaceId: space.id,
         actor: this.me,
-        actionType: "knowledge.maintain_space",
-        resource: { type: "knowledge_space", id: space.id },
-        input: { spaceId: space.id },
-        correlation: { spaceId: space.id },
-        idempotencyKey: `maintain:${space.id}:${newId("m")}`,
+        idempotencyKey: manualMaintenanceKey(space.id),
       }),
     );
     if (Result.isFailure(started)) return started;
-    return Result.succeed({ runId: started.value.run.id, status: started.value.run.status });
+    return Result.succeed({ runId: started.value.runId, status: started.value.status });
   }
 
   // ---------------------------------------------------------------------------
