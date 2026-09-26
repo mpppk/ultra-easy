@@ -180,6 +180,15 @@ export type PolicyBindingView = {
 export interface UltraEasyClient {
   // Authorization (ultra-easy / OpenFGA relationships)
   listPrincipals(organizationId: string): Result.ResultAsync<PrincipalRef[], UltraEasyError>;
+  /**
+   * Directory entry for a user the trusted IdP (Auth0) just authenticated
+   * (just-in-time provisioning; refreshes the display name). Grants nothing:
+   * access still comes from relationships only.
+   */
+  ensurePrincipal(input: {
+    organizationId: string;
+    principal: PrincipalRef;
+  }): Result.ResultAsync<void, UltraEasyError>;
   spaceRoles(input: {
     organizationId: string;
     principalId: string;

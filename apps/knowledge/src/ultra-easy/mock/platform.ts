@@ -488,6 +488,13 @@ export class MockUltraEasy implements UltraEasyClient {
   }
 
   /** Seeding helper for the demo directory (not part of the public port). */
+  ensurePrincipal(input: { organizationId: string; principal: PrincipalRef }) {
+    return this.guard(async () => {
+      await this.upsertPrincipal(input.organizationId, input.principal);
+      return Result.succeed(undefined);
+    });
+  }
+
   async upsertPrincipal(organizationId: string, principal: PrincipalRef) {
     await this.run(
       `INSERT INTO mock_principals (organization_id, id, display_name) VALUES (?, ?, ?)

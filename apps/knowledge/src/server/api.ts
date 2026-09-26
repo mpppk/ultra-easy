@@ -10,9 +10,17 @@ import type { KnowledgeRuntime } from "./runtime.ts";
 import { ensureDemoSeed } from "./seed.ts";
 import { KnowledgeService } from "./service.ts";
 import {
+  clearLoginTransactionCookie,
   clearSessionCookie,
+  LOGIN_TRANSACTION_COOKIE,
+  loginTransactionCookie,
+  openLoginTransaction,
   openSession,
+  pkceChallenge,
+  randomToken,
   readCookie,
+  safeReturnPath,
+  sealLoginTransaction,
   sealSession,
   SESSION_COOKIE,
   sessionCookie,
@@ -359,6 +367,105 @@ route(
   },
 );
 
+function redirect(location: string, cookies: string[] = []): Response {
+  const headers = new Headers({ location, "cache-control": "no-store" });
+  for (const cookie of cookies) headers.append("set-cookie", cookie);
+  return new Response(null, { status: 302, headers });
+}
+
+/**
+ * `/api/auth/*`: sign-in mode, Auth0 login / callback and sign-out (#182).
+ * Returns null for any other path.
+ */
+async function handleAuth(
+  request: Request,
+  url: URL,
+  runtime: KnowledgeRuntime,
+): Promise<Response | null> {
+  if (!url.pathname.startsWith("/api/auth/")) return null;
+  const auth = runtime.auth;
+  const callbackUrl = `${url.origin}/api/auth/callback`;
+
+  if (url.pathname === "/api/auth/config" && request.method === "GET") {
+    return Response.json({ mode: auth.mode });
+  }
+
+  if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+    // POST + client header (checked above): a cross-site page cannot sign the user out.
+    return Response.json(
+      {
+        redirectTo: auth.mode === "auth0" ? auth.auth0.logoutUrl(`${url.origin}/login`) : "/login",
+      },
+      { headers: { "set-cookie": clearSessionCookie(true), "cache-control": "no-store" } },
+    );
+  }
+
+  if (auth.mode !== "auth0") return new Response("Not Found", { status: 404 });
+
+  if (url.pathname === "/api/auth/login" && request.method === "GET") {
+    const state = randomToken();
+    const nonce = randomToken();
+    const codeVerifier = randomToken(48);
+    const transaction = await sealLoginTransaction(
+      {
+        state,
+        nonce,
+        codeVerifier,
+        returnTo: safeReturnPath(url.searchParams.get("returnTo")),
+      },
+      runtime.sessionSecret,
+    );
+    return redirect(
+      auth.auth0.authorizeUrl({
+        redirectUri: callbackUrl,
+        state,
+        nonce,
+        codeChallenge: await pkceChallenge(codeVerifier),
+      }),
+      [loginTransactionCookie(transaction)],
+    );
+  }
+
+  if (url.pathname === "/api/auth/callback" && request.method === "GET") {
+    const failed = (code: string) =>
+      redirect(`/login?error=${encodeURIComponent(code)}`, [clearLoginTransactionCookie()]);
+    const sealed = readCookie(request, LOGIN_TRANSACTION_COOKIE);
+    const transaction = sealed ? await openLoginTransaction(sealed, runtime.sessionSecret) : null;
+    const state = url.searchParams.get("state");
+    // The state must match the transaction this browser started (login CSRF).
+    if (!transaction || !state || state !== transaction.state) return failed("invalid_state");
+    if (url.searchParams.get("error")) {
+      return failed(
+        url.searchParams.get("error") === "access_denied" ? "access_denied" : "auth0_error",
+      );
+    }
+    const code = url.searchParams.get("code");
+    if (!code) return failed("invalid_request");
+    const principal = await auth.auth0.signIn({
+      code,
+      codeVerifier: transaction.codeVerifier,
+      redirectUri: callbackUrl,
+      nonce: transaction.nonce,
+    });
+    if (Result.isFailure(principal)) return failed(principal.error.code);
+    const registered = await runtime.ultraEasy.ensurePrincipal({
+      organizationId: runtime.organizationId,
+      principal: principal.value,
+    });
+    if (Result.isFailure(registered)) return failed("platform_unavailable");
+    const session = await sealSession(
+      { principalId: principal.value.id, organizationId: runtime.organizationId },
+      runtime.sessionSecret,
+    );
+    return redirect(transaction.returnTo, [
+      clearLoginTransactionCookie(),
+      sessionCookie(session, true),
+    ]);
+  }
+
+  return new Response("Not Found", { status: 404 });
+}
+
 const SEED_ONCE = new WeakSet<object>();
 
 /** Entry point for `/api/*` on the Knowledge worker. */
@@ -378,6 +485,9 @@ export async function handleKnowledgeApi(
     const seeded = await ensureDemoSeed(runtime);
     if (Result.isSuccess(seeded)) SEED_ONCE.add(runtime.repos);
   }
+
+  const auth = await handleAuth(request, url, runtime);
+  if (auth) return auth;
 
   // Demo sign-in: choose a fixture principal (local / demo mode only).
   if (url.pathname === "/api/demo/session") {
