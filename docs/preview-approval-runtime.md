@@ -80,12 +80,31 @@ arbitrary `actor`, which pollutes the force-cancel audit (#97). Two layers apply
 1. **Shared token (enforced by the app).** Every `/api/preview/*` handler requires the header
    `x-preview-harness-token` to match the Worker secret `PREVIEW_HARNESS_TOKEN` (constant-time
    comparison). Missing / wrong token → 401; secret not set → 403 `preview_harness_locked`, so a
-   fresh preview is locked until the secret exists. Set it once on the `ultra-easy` Worker (preview
-   versions share Worker secrets; production ignores it because the harness is disabled there):
+   fresh preview is locked until the secret exists. Production ignores the secret because the
+   harness is disabled there.
+
+   The token is the `PREVIEW_HARNESS_TOKEN` item (category Password) in the `ultra-easy` 1Password
+   vault. Create it once if it does not exist yet (the generated value is never printed):
 
    ```bash
-   op read op://ultra-easy/PREVIEW_HARNESS_TOKEN/password | npx wrangler secret put PREVIEW_HARNESS_TOKEN
+   op item create --vault ultra-easy --category password --title PREVIEW_HARNESS_TOKEN \
+     --generate-password='letters,digits,40' >/dev/null
    ```
+
+   Secrets belong to Worker _versions_: each `wrangler versions upload` copies the secrets of the
+   latest version, and an existing version's secrets cannot be changed. Set the secret with
+   `wrangler versions secret put`, which creates a new version (with its own Preview URL) from the
+   latest one without deploying it to production. Run it from the repository root with `--name`,
+   because the root has no Wrangler configuration:
+
+   ```bash
+   op read op://ultra-easy/PREVIEW_HARNESS_TOKEN/password \
+     | bunx wrangler versions secret put PREVIEW_HARNESS_TOKEN --name ultra-easy
+   ```
+
+   Use the Preview URL of the version this command prints; older Preview URLs keep their old
+   token. Later preview uploads inherit the secret. `wrangler secret put` also works, but only while
+   the latest version is the deployed one, and it deploys a new production version.
 
    The preview pages ask for the token (kept in `sessionStorage` only) and send it with each call.
 
