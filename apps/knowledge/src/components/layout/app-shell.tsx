@@ -287,7 +287,9 @@ function UserMenu({ me, onChange }: { me: MeView; onChange: () => void }) {
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={() =>
-            void apiSend("DELETE", "/api/demo/session").then(() => window.location.assign("/login"))
+            void apiSend<{ redirectTo: string }>("POST", "/api/auth/logout").then((result) =>
+              window.location.assign(result.redirectTo),
+            )
           }
         >
           Sign out

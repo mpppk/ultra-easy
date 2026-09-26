@@ -16,15 +16,21 @@
     "crons": ["0 0 * * 1"],
   },
   "vars": {
-    // "demo": fixture principals selectable in the UI (local / demo only).
-    // "auth0": trusted Auth0 session only (not wired yet, fails closed).
-    "KNOWLEDGE_AUTH_MODE": "demo",
+    // "auth0": trusted Auth0 session only (#182). "demo" (fixture principals) is
+    // turned on by the local dev server alone (vite.config.ts), never deployed.
+    "KNOWLEDGE_AUTH_MODE": "auth0",
+    "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
+    // Single-organization staging tenant with public signup disabled (same as
+    // approval-api). With Auth0 Organizations use AUTH0_ORGANIZATION_CLAIM_VALUE.
+    "AUTH0_TENANT_IS_ORGANIZATION": "true",
     // "mock": the in-app stand-in for the ultra-easy public API (Workflow Engine
     // is still being built, #154-#165). Replace with a Service Binding later.
     "ULTRA_EASY_MODE": "mock",
     "KNOWLEDGE_ORGANIZATION_ID": "org_acme",
   },
-  // Secrets (wrangler secret put): SESSION_SECRET, KNOWLEDGE_MCP_TOKEN.
+  // Secrets (wrangler secret put, 1Password `ultra-easy`): SESSION_SECRET,
+  // KNOWLEDGE_MCP_TOKEN, AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET (Auth0 Regular Web
+  // Application; callback https://<host>/api/auth/callback, logout https://<host>/login).
   "d1_databases": [
     {
       // Knowledge-owned data (pages, revisions, snapshots, search, effects).

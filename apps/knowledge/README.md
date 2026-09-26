@@ -99,7 +99,7 @@ vp -C apps/knowledge run db:migrate:local   # both local D1 databases
 vp -C apps/knowledge run dev                # http://localhost:3001
 ```
 
-Sign in at `/login` with a demo principal (seeded on first request):
+`vp dev` runs in demo mode: sign in at `/login` with a demo principal (seeded on first request):
 
 | Principal | Engineering | Other spaces                         |
 | --------- | ----------- | ------------------------------------ |
@@ -112,21 +112,47 @@ Sign in at `/login` with a demo principal (seeded on first request):
 
 The user menu has local demo controls: switch principal, simulate notifier / search-index outages.
 
+## Sign-in (Auth0)
+
+Deployed, the Worker runs with `KNOWLEDGE_AUTH_MODE=auth0` (`wrangler.jsonc`). Demo mode is switched on only by
+the local dev server (`vite.config.ts` overrides the var for `vp dev`), so every `/api/demo/*` endpoint returns 404
+and the principal switcher / fault toggles are hidden in a deployment.
+
+- `/login` → `GET /api/auth/login` → Auth0 Universal Login (Authorization Code + PKCE, `state` and `nonce` kept in
+  a 10-minute encrypted `SameSite=Lax` cookie scoped to `/api/auth`).
+- `GET /api/auth/callback` checks `state`, exchanges the code (confidential client), verifies the ID token (RS256,
+  tenant JWKS, `iss`, `aud`, `nonce`) and the organization membership, then seals `user:<sub>` (same mapping as
+  approval-api) into the encrypted HttpOnly `SameSite=Strict` session. The principal and organization come from the
+  verified token and the deployment config only, never from the browser.
+- The user is registered in the ultra-easy principal directory on sign-in (JIT). That grants nothing: space
+  access still comes from ultra-easy relationships (creating a space makes you its owner).
+- `POST /api/auth/logout` clears the session and returns the Auth0 logout URL.
+
+Auth0 setup: a Regular Web Application on the tenant with Allowed Callback URL
+`https://<host>/api/auth/callback` and Allowed Logout URL `https://<host>/login`. Organization membership is
+verified like approval-api: `AUTH0_ORGANIZATION_CLAIM_VALUE` (+ `AUTH0_ORGANIZATION_CLAIM`, default `org_id`; also
+sent as `organization` to `/authorize`) or `AUTH0_TENANT_IS_ORGANIZATION=true` for a single-organization tenant
+with public signup disabled. To try Auth0 locally, put the secrets in `apps/knowledge/.dev.vars`, run
+`KNOWLEDGE_AUTH_MODE=auth0 vp -C apps/knowledge run dev` and allow `http://localhost:3001/api/auth/callback`.
+
 Tests: `vp -C apps/knowledge test` (API scenario + UI foundation), `vp -C apps/knowledge run test:e2e`
 (Playwright on a fresh local D1; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to reuse an installed Chromium).
 
 ## Configuration
 
-| Name                                     | Meaning                                                                 |
-| ---------------------------------------- | ----------------------------------------------------------------------- |
-| `KNOWLEDGE_AUTH_MODE`                    | `demo` (fixture principals). `auth0` is not wired yet and fails closed. |
-| `ULTRA_EASY_MODE`                        | `mock` (only implementation today).                                     |
-| `KNOWLEDGE_ORGANIZATION_ID`              | organization of the workspace (`org_acme`).                             |
-| `SESSION_SECRET` / `KNOWLEDGE_MCP_TOKEN` | secrets; demo mode falls back to well-known local values.               |
+| Name                                                              | Meaning                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `KNOWLEDGE_AUTH_MODE`                                             | `auth0` (deployed). `demo` only via the local dev server. Unset fails closed.   |
+| `AUTH0_DOMAIN`                                                    | Auth0 tenant domain (var).                                                      |
+| `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET`                         | Regular Web Application credentials (secrets).                                  |
+| `AUTH0_ORGANIZATION_CLAIM_VALUE` / `AUTH0_TENANT_IS_ORGANIZATION` | organization membership check (one is required in `auth0` mode).                |
+| `ULTRA_EASY_MODE`                                                 | `mock` (only implementation today).                                             |
+| `KNOWLEDGE_ORGANIZATION_ID`                                       | organization of the workspace (`org_acme`).                                     |
+| `SESSION_SECRET` (32+ chars) / `KNOWLEDGE_MCP_TOKEN`              | secrets; required in `auth0` mode (demo falls back to well-known local values). |
 
 D1 databases are auto-provisioned on the first `wrangler deploy` (`bootstrap` script), then migrations run before
 every deploy (`deploy` script).
 
 ## Not in this MVP
 
-Auth0 sign-in (demo principals only), the real ultra-easy public API / Service Binding, rich-text / collaborative editing, semantic search.
+The real ultra-easy public API / Service Binding, rich-text / collaborative editing, semantic search.

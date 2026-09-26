@@ -34,7 +34,7 @@ beforeEach(() => {
   platformDb = sqliteD1WithMigrations(MOCK_MIGRATIONS);
   clock = Date.parse("2026-09-25T09:00:00.000Z");
   const created = createRuntime(
-    { KNOWLEDGE_DB: knowledgeDb, ULTRA_EASY_MOCK_DB: platformDb },
+    { KNOWLEDGE_DB: knowledgeDb, ULTRA_EASY_MOCK_DB: platformDb, KNOWLEDGE_AUTH_MODE: "demo" },
     // strictly increasing clock keeps "latest" ordering deterministic
     { now: () => new Date((clock += 1000)).toISOString() },
   );

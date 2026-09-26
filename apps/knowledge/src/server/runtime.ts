@@ -7,20 +7,33 @@ import {
 } from "@app/knowledge-d1";
 
 import { handleMcpRequest } from "../mcp/server.ts";
+import { Auth0Client, readAuth0Config, type Auth0Dependencies } from "./auth0.ts";
 import { streamableHttpDownstream } from "../ultra-easy/mock/downstream.ts";
 import { MockUltraEasy } from "../ultra-easy/mock/platform.ts";
 
 export type KnowledgeEnv = {
   KNOWLEDGE_DB: D1DatabaseLike;
   ULTRA_EASY_MOCK_DB: D1DatabaseLike;
-  /** "demo" (fixture principals, local/demo only) | "auth0" (not wired yet: fails closed). */
+  /**
+   * "auth0" (trusted Auth0 session, the deployed default) | "demo" (fixture
+   * principals; enabled only by the local dev server, see vite.config.ts).
+   * Unset or unknown fails closed.
+   */
   KNOWLEDGE_AUTH_MODE?: string;
   /** "mock" until the ultra-easy Workflow Engine public API exists. */
   ULTRA_EASY_MODE?: string;
   KNOWLEDGE_ORGANIZATION_ID?: string;
   SESSION_SECRET?: string;
   KNOWLEDGE_MCP_TOKEN?: string;
+  AUTH0_DOMAIN?: string;
+  AUTH0_CLIENT_ID?: string;
+  AUTH0_CLIENT_SECRET?: string;
+  AUTH0_ORGANIZATION_CLAIM?: string;
+  AUTH0_ORGANIZATION_CLAIM_VALUE?: string;
+  AUTH0_TENANT_IS_ORGANIZATION?: string;
 };
+
+export type KnowledgeAuth = { mode: "demo" } | { mode: "auth0"; auth0: Auth0Client };
 
 export type KnowledgeRuntime = {
   repos: KnowledgeRepositories;
@@ -28,6 +41,7 @@ export type KnowledgeRuntime = {
   now: () => string;
   organizationId: string;
   demo: boolean;
+  auth: KnowledgeAuth;
   sessionSecret: string;
   mcp: (request: Request) => Promise<Response>;
 };
@@ -47,13 +61,27 @@ export const MOCK_APPROVAL_BASE_PATH = "/mock/ultra-easy/approvals";
 
 export function createRuntime(
   env: KnowledgeEnv,
-  options: { now?: () => string } = {},
+  options: { now?: () => string; auth0?: Auth0Dependencies } = {},
 ): Result.Result<KnowledgeRuntime, RuntimeConfigError> {
-  const demo = (env.KNOWLEDGE_AUTH_MODE ?? "demo") === "demo";
+  const mode = env.KNOWLEDGE_AUTH_MODE?.trim();
+  if (mode !== "demo" && mode !== "auth0") {
+    return Result.fail(new RuntimeConfigError('KNOWLEDGE_AUTH_MODE must be "auth0" or "demo"'));
+  }
+  const demo = mode === "demo";
+  let auth: KnowledgeAuth = { mode: "demo" };
   if (!demo) {
-    // Auth0 sign-in is not wired into the example app yet: fail closed rather
-    // than trusting anything the browser sends.
-    return Result.fail(new RuntimeConfigError("KNOWLEDGE_AUTH_MODE=auth0 is not available yet"));
+    // Outside demo mode nothing falls back to the well-known local values.
+    if ((env.SESSION_SECRET?.length ?? 0) < 32) {
+      return Result.fail(new RuntimeConfigError("SESSION_SECRET (32+ chars) is required"));
+    }
+    if (!env.KNOWLEDGE_MCP_TOKEN) {
+      return Result.fail(new RuntimeConfigError("KNOWLEDGE_MCP_TOKEN is required"));
+    }
+    const config = readAuth0Config(env);
+    if (Result.isFailure(config)) {
+      return Result.fail(new RuntimeConfigError(config.error.message));
+    }
+    auth = { mode: "auth0", auth0: new Auth0Client(config.value, options.auth0) };
   }
   if ((env.ULTRA_EASY_MODE ?? "mock") !== "mock") {
     return Result.fail(new RuntimeConfigError("only ULTRA_EASY_MODE=mock is implemented"));
@@ -84,6 +112,7 @@ export function createRuntime(
     now,
     organizationId: env.KNOWLEDGE_ORGANIZATION_ID || "org_acme",
     demo,
+    auth,
     sessionSecret: env.SESSION_SECRET || DEMO_SESSION_SECRET,
     mcp,
   });
