@@ -150,8 +150,22 @@ Tests: `vp -C apps/knowledge test` (API scenario + UI foundation), `vp -C apps/k
 | `KNOWLEDGE_ORGANIZATION_ID`                                       | organization of the workspace (`org_acme`).                                     |
 | `SESSION_SECRET` (32+ chars) / `KNOWLEDGE_MCP_TOKEN`              | secrets; required in `auth0` mode (demo falls back to well-known local values). |
 
-D1 databases are auto-provisioned on the first `wrangler deploy` (`bootstrap` script), then migrations run before
-every deploy (`deploy` script).
+## Deployment
+
+Deployed at <https://ultra-easy-knowledge.niboshi.workers.dev> (Worker `ultra-easy-knowledge`, first deployed for
+#185). It always runs `KNOWLEDGE_AUTH_MODE=auth0`; until the Auth0 client secrets exist every endpoint answers
+`503 misconfigured` (fail closed), and the demo endpoints never exist there.
+
+- First deploy (done once): `vp -C apps/knowledge run bootstrap` auto-provisions `KNOWLEDGE_DB` /
+  `ULTRA_EASY_MOCK_DB` on `wrangler deploy`, then applies both migration sets.
+- Secrets (`wrangler secret put`, keep them in 1Password `ultra-easy`): `SESSION_SECRET` (32+ chars) and
+  `KNOWLEDGE_MCP_TOKEN` are set; rotating them only signs everyone out / changes the internal MCP token.
+  `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` come from the Auth0 Regular Web Application (callback
+  `https://ultra-easy-knowledge.niboshi.workers.dev/api/auth/callback`, logout `…/login`).
+- CD: run the **deploy-knowledge** workflow (Actions tab, `main` only). It reruns `check.yml` on the commit, then
+  `vp -C apps/knowledge run deploy` (migrate → deploy) with the `staging` GitHub environment's
+  `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`. Migrations must stay backward compatible with the running
+  revision.
 
 ## Not in this MVP
 
