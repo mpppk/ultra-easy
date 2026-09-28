@@ -3,6 +3,7 @@ import { Result } from "@praha/byethrow";
 import { DEFAULT_APPROVAL_DECISION_RATE_LIMIT, sha256CanonicalJson } from "@app/approval-core";
 import type {
   ActionRequestId,
+  ClientId,
   JsonValue,
   OrganizationId,
   PrincipalRef,
@@ -42,6 +43,12 @@ export interface PublicHttpIdentityProvider {
     actionType?: string;
     resourceType?: string;
   }): Result.ResultAsync<PrincipalRef, HttpTrustedContextError>;
+  /** Verified application identity for audit correlation, when available. */
+  authenticateWithClient?(input: {
+    request: Request;
+    organizationId: OrganizationId;
+    operation: PublicApiOperation;
+  }): Result.ResultAsync<{ principal: PrincipalRef; clientId: ClientId }, HttpTrustedContextError>;
 }
 
 /**
@@ -712,6 +719,29 @@ export function createPublicHttpApi(input: {
         });
         if (user instanceof Response) return user;
 
+        let clientId: ClientId | undefined;
+        if (input.identityProvider.authenticateWithClient) {
+          const identified = await input.identityProvider.authenticateWithClient({
+            request,
+            organizationId,
+            operation: "approval_decision.submit",
+          });
+          if (Result.isFailure(identified)) {
+            return problem({
+              status: identified.error.status,
+              code: identified.error.code,
+              title: "Forbidden",
+            });
+          }
+          if (
+            identified.value.principal.type !== "user" ||
+            String(identified.value.principal.id) !== String(user)
+          ) {
+            return problem({ status: 403, code: "invalid_caller", title: "Forbidden" });
+          }
+          clientId = identified.value.clientId;
+        }
+
         const decisionTask = await input.readRepository.getApprovalTask({
           organizationId,
           taskId,
@@ -794,6 +824,7 @@ export function createPublicHttpApi(input: {
               organizationId,
               taskId,
               userId: user,
+              ...(clientId ? { clientId } : {}),
               decision: body.decision,
               ...(body.comment !== undefined ? { comment: body.comment } : {}),
               now: input.clock.now(),

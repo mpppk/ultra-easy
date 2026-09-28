@@ -4,6 +4,7 @@ import type {
   ActionRequestId,
   ApprovalDecisionValue,
   ApprovalTaskId,
+  ClientId,
   JsonValue,
   OrganizationId,
   UserId,
@@ -38,6 +39,8 @@ export type ApprovalCommand = {
   taskId?: ApprovalTaskId;
   type: ApprovalCommandType;
   status: ApprovalCommandStatus;
+  /** Verified application used for this user decision. */
+  clientId?: ClientId;
   error?: PublicApiProblem;
   createdAt: string;
   appliedAt?: string;
@@ -292,6 +295,7 @@ export class ApprovalDecisionCommandService {
     organizationId: OrganizationId;
     taskId: ApprovalTaskId;
     userId: UserId;
+    clientId?: ClientId;
     decision: ApprovalDecisionValue;
     comment?: string;
     now: string;
@@ -329,6 +333,7 @@ export class ApprovalDecisionCommandService {
       taskId: input.taskId,
       type: input.decision,
       status: "pending",
+      ...(input.clientId ? { clientId: input.clientId } : {}),
       createdAt: input.now,
     };
     const created = await this.commandRepository.createPending({

@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import { parseBrand, type OrganizationId } from "@app/approval-core";
+import type { OrganizationId } from "@app/approval-core";
 import {
   HttpTrustedContextError,
   type HttpTrustedContextProvider,
@@ -44,18 +44,12 @@ export class StagingTrustedContextProvider implements HttpTrustedContextProvider
     });
     if (Result.isFailure(authenticated)) return authenticated;
     const { principal } = authenticated.value;
-    const clientId = parseBrand("ClientId", authenticated.value.clientId);
-    if (Result.isFailure(clientId)) {
-      return Result.fail(
-        new HttpTrustedContextError(403, "client_not_registered", "client IDが不正です"),
-      );
-    }
     return Result.succeed({
       actor: principal,
       authority: { principal },
       origin: {
         type: "api",
-        clientId: clientId.value,
+        clientId: authenticated.value.clientId,
         ...(principal.type === "user" ? { caller: principal } : {}),
       },
       organization: { id: input.organizationId },

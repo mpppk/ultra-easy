@@ -61,6 +61,7 @@ type CommandRow = {
   command_type: "approve" | "reject";
   status: ApprovalCommandStatus;
   actor_user_id: string | null;
+  client_id: string | null;
   comment: string | null;
   error_json: string | null;
   created_at: string;
@@ -70,7 +71,7 @@ type CommandRow = {
 };
 
 const COMMAND_COLUMNS = `command_id, organization_id, action_request_id, task_id, command_type,
-                  status, actor_user_id, comment, error_json, created_at, applied_at,
+                  status, actor_user_id, client_id, comment, error_json, created_at, applied_at,
                   attempt_count, next_attempt_at`;
 
 type IdempotencyRow = {
@@ -204,6 +205,8 @@ function commandRecord(
     if (Result.isFailure(parsed)) return parsed;
     actorUserId = parsed.value;
   }
+  const clientId = row.client_id === null ? null : storedBrand("ClientId", row.client_id, rowError);
+  if (clientId !== null && Result.isFailure(clientId)) return clientId;
   return Result.succeed({
     command: {
       id: row.command_id,
@@ -212,6 +215,7 @@ function commandRecord(
       ...(taskId !== undefined ? { taskId } : {}),
       type: row.command_type,
       status: row.status,
+      ...(clientId !== null ? { clientId: clientId.value } : {}),
       ...(error !== undefined ? { error } : {}),
       createdAt: row.created_at,
       ...(row.applied_at !== null ? { appliedAt: row.applied_at } : {}),
@@ -687,8 +691,8 @@ export class D1PublicApiRepository
         .prepare(
           `INSERT OR IGNORE INTO approval_commands (
              command_id, organization_id, action_request_id, task_id, command_type,
-             status, actor_user_id, comment, error_json, created_at, applied_at
-           ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, NULL, ?, NULL)`,
+             status, actor_user_id, client_id, comment, error_json, created_at, applied_at
+           ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, NULL, ?, NULL)`,
         )
         .bind(
           record.command.id,
@@ -697,6 +701,7 @@ export class D1PublicApiRepository
           record.command.taskId ?? null,
           record.command.type,
           record.actorUserId ?? null,
+          record.command.clientId ?? null,
           record.comment ?? null,
           record.command.createdAt,
         ),

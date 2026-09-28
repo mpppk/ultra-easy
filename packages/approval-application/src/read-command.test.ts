@@ -408,6 +408,14 @@ function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
         }
         return Promise.resolve(Result.succeed(identity.viewer));
       },
+      authenticateWithClient() {
+        return Promise.resolve(
+          Result.succeed({
+            principal: identity.viewer,
+            clientId: branded("web-client"),
+          }),
+        );
+      },
     },
     operatorAccess: {
       canReadAll({ principal }) {
@@ -1143,5 +1151,16 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
       ),
     );
     expect(decision.status).toBe(403);
+  });
+
+  it("#193: Decision commandに検証済みclient IDを残す", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "decision-client-audit");
+    expect(harness.commandRepository.records.get(commandId)?.command.clientId).toBe("web-client");
+    const response = await harness.api.fetch(
+      request(`/v1/organizations/org%3Am6/approval-commands/${encodeURIComponent(commandId)}`),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ clientId: "web-client" });
   });
 });

@@ -115,6 +115,7 @@ function database(): SqliteD1Database {
     "0015_approval_command_delivery.sql",
     "0016_runtime_projection_version.sql",
     "0018_approval_task_candidates.sql",
+    "0026_approval_command_client_id.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
   }
@@ -332,6 +333,7 @@ describe("D1PublicApiRepository", () => {
         taskId,
         type: "approve",
         status: "pending",
+        clientId: branded("knowledge-client"),
         createdAt: "2026-09-19T00:00:02.000Z",
       },
       actorUserId: alice,
@@ -348,6 +350,7 @@ describe("D1PublicApiRepository", () => {
     });
     assert(Result.isSuccess(claimed));
     expect(claimed.value?.command.id).toBe("command:m6-d1");
+    expect(claimed.value?.command.clientId).toBe("knowledge-client");
     const contended = await repository.claim({
       organizationId,
       commandId: "command:m6-d1",

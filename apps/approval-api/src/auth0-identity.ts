@@ -8,7 +8,7 @@ import {
 } from "jose";
 import { parseBrand } from "@app/approval-core";
 
-import type { OrganizationId, PrincipalRef } from "@app/approval-core";
+import type { ClientId, OrganizationId, PrincipalRef } from "@app/approval-core";
 import {
   HttpTrustedContextError,
   type AuthorizationAdminCaller,
@@ -249,7 +249,7 @@ export class Auth0IdentityProvider
     operation: PublicApiOperation;
     actionType?: string;
     resourceType?: string;
-  }): Result.ResultAsync<{ principal: PrincipalRef; clientId: string }, HttpTrustedContextError> {
+  }): Result.ResultAsync<{ principal: PrincipalRef; clientId: ClientId }, HttpTrustedContextError> {
     const verified = await this.verify(input.request, input.organizationId);
     if (Result.isFailure(verified)) return verified;
     const clientId = verified.value.payload.azp;
@@ -260,6 +260,10 @@ export class Auth0IdentityProvider
     if (!grant) {
       return contextError(403, "client_not_registered", "clientが登録されていません");
     }
+    const brandedClientId = parseBrand("ClientId", clientId);
+    if (Result.isFailure(brandedClientId)) {
+      return contextError(403, "client_not_registered", "client IDが不正です");
+    }
     const required = PUBLIC_API_OPERATION_SCOPES[input.operation];
     if (!verified.value.scopes.has(required)) {
       return contextError(403, "insufficient_scope", `この操作には${required} scopeが必要です`);
@@ -267,7 +271,7 @@ export class Auth0IdentityProvider
     if (!clientAllows(grant, input)) {
       return contextError(403, "client_operation_not_allowed", "clientの許可範囲外です");
     }
-    return Result.succeed({ principal: verified.value.principal, clientId });
+    return Result.succeed({ principal: verified.value.principal, clientId: brandedClientId.value });
   }
 }
 
