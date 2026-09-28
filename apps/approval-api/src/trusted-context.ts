@@ -1,6 +1,6 @@
 import { Result } from "@praha/byethrow";
 
-import type { OrganizationId } from "@app/approval-core";
+import { parseBrand, type OrganizationId } from "@app/approval-core";
 import {
   HttpTrustedContextError,
   type HttpTrustedContextProvider,
@@ -21,6 +21,8 @@ export class StagingTrustedContextProvider implements HttpTrustedContextProvider
   async resolve(input: {
     request: Request;
     organizationId: OrganizationId;
+    actionType?: string;
+    resourceType?: string;
     delegationGrantId?: string;
     clientReference?: string;
   }): Result.ResultAsync<TrustedActionRequestContext, HttpTrustedContextError> {
@@ -33,17 +35,29 @@ export class StagingTrustedContextProvider implements HttpTrustedContextProvider
         ),
       );
     }
-    const authenticated = await this.identity.authenticate({
+    const authenticated = await this.identity.authenticateWithClient({
       request: input.request,
       organizationId: input.organizationId,
       operation: "action_request.submit",
+      ...(input.actionType ? { actionType: input.actionType } : {}),
+      ...(input.resourceType ? { resourceType: input.resourceType } : {}),
     });
     if (Result.isFailure(authenticated)) return authenticated;
-    const principal = authenticated.value;
+    const { principal } = authenticated.value;
+    const clientId = parseBrand("ClientId", authenticated.value.clientId);
+    if (Result.isFailure(clientId)) {
+      return Result.fail(
+        new HttpTrustedContextError(403, "client_not_registered", "client IDが不正です"),
+      );
+    }
     return Result.succeed({
       actor: principal,
       authority: { principal },
-      origin: { type: "api" },
+      origin: {
+        type: "api",
+        clientId: clientId.value,
+        ...(principal.type === "user" ? { caller: principal } : {}),
+      },
       organization: { id: input.organizationId },
       now: new Date().toISOString(),
     });

@@ -16,6 +16,10 @@ const validEnv = {
   AUTH0_DOMAIN: "tenant.example.auth0.com",
   AUTH0_API_AUDIENCE: "https://ultra-easy/approval-api",
   AUTH0_ORGANIZATION_ID: "organization:staging",
+  AUTH0_WEB_CLIENT_ID: "web-client",
+  AUTH0_AGENT_CLIENT_ID: "agent-client",
+  AUTH0_KNOWLEDGE_CLIENT_ID: "knowledge-client",
+  AUTH0_KNOWLEDGE_AGENT_CLIENT_ID: "knowledge-agent-client",
   AUTH0_TENANT_IS_ORGANIZATION: "true",
   OPENFGA_API_URL: "https://api.us1.fga.dev",
   OPENFGA_STORE_ID: "store",
@@ -54,6 +58,15 @@ describe("#84 validateApprovalApiConfig", () => {
       "AUTH0_ORGANIZATION_CLAIM_VALUE|AUTH0_TENANT_IS_ORGANIZATION",
     ]);
   });
+
+  it("client registryのID重複を拒否する", () => {
+    const result = validateApprovalApiConfig({
+      ...validEnv,
+      AUTH0_KNOWLEDGE_CLIENT_ID: " web-client ",
+    });
+    assert(Result.isFailure(result));
+    expect(result.error.keys).toContain("AUTH0_*_CLIENT_ID (must be distinct)");
+  });
 });
 
 describe("#84 wrangler environments", () => {
@@ -62,12 +75,23 @@ describe("#84 wrangler environments", () => {
   const PROVISIONED_AT_CUTOVER = [
     "AUTH0_DOMAIN",
     "AUTH0_API_AUDIENCE",
+    "AUTH0_WEB_CLIENT_ID",
+    "AUTH0_AGENT_CLIENT_ID",
+    "AUTH0_KNOWLEDGE_CLIENT_ID",
+    "AUTH0_KNOWLEDGE_AGENT_CLIENT_ID",
     "OPENFGA_STORE_ID",
     "OPENFGA_AUTHORIZATION_MODEL_ID",
     "FGA_CLIENT_ID",
     "FGA_CLIENT_SECRET",
   ];
-  const SECRETS = ["FGA_CLIENT_ID", "FGA_CLIENT_SECRET"];
+  const SECRETS = [
+    "AUTH0_WEB_CLIENT_ID",
+    "AUTH0_AGENT_CLIENT_ID",
+    "AUTH0_KNOWLEDGE_CLIENT_ID",
+    "AUTH0_KNOWLEDGE_AGENT_CLIENT_ID",
+    "FGA_CLIENT_ID",
+    "FGA_CLIENT_SECRET",
+  ];
 
   for (const [environment, workerName] of [
     [undefined, "ultra-easy-approval-api"],

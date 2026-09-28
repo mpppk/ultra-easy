@@ -15,6 +15,15 @@ Production domain + custom-domain cutover are follow-ups.
   unset until the production domain is fixed (#70 follow-up).
 - M2M: `ultra-easy-agent` (client credentials), authorized for the API with
   `read:action-requests` / `write:action-requests`.
+- Client registry (#193): set `AUTH0_WEB_CLIENT_ID`, `AUTH0_AGENT_CLIENT_ID`,
+  `AUTH0_KNOWLEDGE_CLIENT_ID`, and `AUTH0_KNOWLEDGE_AGENT_CLIENT_ID` on the approval API
+  deployment to the four Auth0 application client IDs. The first two have unrestricted
+  first-party grants; Knowledge user tokens are limited to `knowledge.*` actions on
+  `knowledge_page` / `knowledge_space`, and the Knowledge M2M agent to
+  `knowledge.maintain_space` on `knowledge_space`. Unregistered clients receive 403
+  `client_not_registered`. The Knowledge Regular Web Application needs a user client
+  grant for the approval API with `read:action-requests` / `write:action-requests`;
+  its separate M2M Application needs a client credentials grant for those scopes.
 - Staging humans use password-realm grant against
   `Username-Password-Authentication` (staging-only; test users
   `staging-alice@example.com` / `staging-bob@example.com`). Passwords live

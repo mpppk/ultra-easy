@@ -145,6 +145,8 @@ Tests: `vp -C apps/knowledge test` (API scenario + UI foundation), `vp -C apps/k
 | `KNOWLEDGE_AUTH_MODE`                                             | `auth0` (deployed). `demo` only via the local dev server. Unset fails closed.   |
 | `AUTH0_DOMAIN`                                                    | Auth0 tenant domain (var).                                                      |
 | `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET`                         | Regular Web Application credentials (secrets).                                  |
+| `AUTH0_API_AUDIENCE`                                              | approval API audience (`https://ultra-easy/approval-api`).                      |
+| `AUTH0_AGENT_CLIENT_ID` / `AUTH0_AGENT_CLIENT_SECRET`             | Knowledge M2M Application credentials for weekly maintenance (secrets).         |
 | `AUTH0_ORGANIZATION_CLAIM_VALUE` / `AUTH0_TENANT_IS_ORGANIZATION` | organization membership check (one is required in `auth0` mode).                |
 | `ULTRA_EASY_MODE`                                                 | `mock` (only implementation today).                                             |
 | `KNOWLEDGE_ORGANIZATION_ID`                                       | organization of the workspace (`org_acme`).                                     |
@@ -162,6 +164,11 @@ Deployed at <https://ultra-easy-knowledge.niboshi.workers.dev> (Worker `ultra-ea
   `KNOWLEDGE_MCP_TOKEN` are set; rotating them only signs everyone out / changes the internal MCP token.
   `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` come from the Auth0 Regular Web Application (callback
   `https://ultra-easy-knowledge.niboshi.workers.dev/api/auth/callback`, logout `…/login`).
+  It needs user access to the approval API with `read:action-requests` and `write:action-requests`.
+  `AUTH0_AGENT_CLIENT_ID` / `AUTH0_AGENT_CLIENT_SECRET` come from a separate M2M Application with
+  client credentials access to the same API and scopes. The API registry must include both client IDs.
+  Login stores the verified API access token in the encrypted session cookie. The cookie expires with
+  that token; no refresh token is requested. Weekly maintenance uses the verified M2M agent principal.
 - CD: run the **deploy-knowledge** workflow (Actions tab, `main` only). It reruns `check.yml` on the commit, then
   `vp -C apps/knowledge run deploy` (migrate → deploy) with the `staging` GitHub environment's
   `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`. Migrations must stay backward compatible with the running

@@ -16,6 +16,7 @@ import {
   type PublicApiOperation,
   type PublicHttpIdentityProvider,
 } from "@app/approval-application";
+import { clientAllows, type ClientRegistry } from "./client-registry.ts";
 
 /**
  * 組織所属の検証方法。tokenのclaim（Auth0 Organizationsの`org_id`等）で検証するか、
@@ -34,6 +35,7 @@ export type Auth0IdentityConfig = {
   audience: string;
   organizationId: OrganizationId;
   membership?: Auth0OrganizationMembership;
+  clients: ClientRegistry;
 };
 
 /** 操作ごとに必要なAPI scope（`scope` claimまたはRBACの`permissions` claim）。 */
@@ -115,6 +117,9 @@ function principalFromPayload(
         : payload.sub.slice(0, -"@clients".length);
     if (grantType !== CLIENT_CREDENTIALS_GRANT_TYPE || !machineSubject || clientId.length === 0) {
       return contextError(401, "unsupported_token_type", "client tokenの種別が一致しません");
+    }
+    if (payload.sub !== `${clientId}@clients`) {
+      return contextError(401, "unsupported_token_type", "client IDとsubが一致しません");
     }
     const agentId = parseBrand("AgentId", `agent:${clientId}`);
     return Result.isFailure(agentId)
@@ -229,14 +234,40 @@ export class Auth0IdentityProvider
     request: Request;
     organizationId: OrganizationId;
     operation: PublicApiOperation;
+    actionType?: string;
+    resourceType?: string;
   }): Result.ResultAsync<PrincipalRef, HttpTrustedContextError> {
+    const authenticated = await this.authenticateWithClient(input);
+    return Result.isFailure(authenticated)
+      ? authenticated
+      : Result.succeed(authenticated.value.principal);
+  }
+
+  async authenticateWithClient(input: {
+    request: Request;
+    organizationId: OrganizationId;
+    operation: PublicApiOperation;
+    actionType?: string;
+    resourceType?: string;
+  }): Result.ResultAsync<{ principal: PrincipalRef; clientId: string }, HttpTrustedContextError> {
     const verified = await this.verify(input.request, input.organizationId);
     if (Result.isFailure(verified)) return verified;
+    const clientId = verified.value.payload.azp;
+    if (typeof clientId !== "string" || clientId.length === 0) {
+      return contextError(403, "client_not_registered", "tokenのclient IDが登録されていません");
+    }
+    const grant = this.config.clients.get(clientId);
+    if (!grant) {
+      return contextError(403, "client_not_registered", "clientが登録されていません");
+    }
     const required = PUBLIC_API_OPERATION_SCOPES[input.operation];
     if (!verified.value.scopes.has(required)) {
       return contextError(403, "insufficient_scope", `この操作には${required} scopeが必要です`);
     }
-    return Result.succeed(verified.value.principal);
+    if (!clientAllows(grant, input)) {
+      return contextError(403, "client_operation_not_allowed", "clientの許可範囲外です");
+    }
+    return Result.succeed({ principal: verified.value.principal, clientId });
   }
 }
 

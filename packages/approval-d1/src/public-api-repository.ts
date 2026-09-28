@@ -326,6 +326,9 @@ export class D1PublicApiRepository
       ...(plan.plan.evaluationSnapshot.origin.caller
         ? { caller: plan.plan.evaluationSnapshot.origin.caller }
         : {}),
+      ...(plan.plan.evaluationSnapshot.origin.clientId
+        ? { clientId: plan.plan.evaluationSnapshot.origin.clientId }
+        : {}),
       action: {
         type: plan.plan.action.type,
         resource: plan.plan.action.resource,

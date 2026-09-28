@@ -15,6 +15,7 @@ import type {
 import {
   ApprovalDecisionCommandProcessor,
   ApprovalDecisionCommandService,
+  HttpTrustedContextError,
   PublicApiRepositoryError,
   createPublicHttpApi,
 } from "./index.ts";
@@ -352,6 +353,7 @@ function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
   const identity = {
     viewer: { type: "user", id: alice } as PrincipalRef,
     operators: new Set<string>(),
+    deniedActionTypes: new Set<string>(),
   };
   const readRepository = new FakeReadRepository();
   const commandRepository = new FakeCommandRepository();
@@ -396,7 +398,14 @@ function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
     readRepository,
     decisionService,
     identityProvider: {
-      authenticate() {
+      authenticate(input) {
+        if (input.actionType && identity.deniedActionTypes.has(input.actionType)) {
+          return Promise.resolve(
+            Result.fail(
+              new HttpTrustedContextError(403, "client_operation_not_allowed", "client restricted"),
+            ),
+          );
+        }
         return Promise.resolve(Result.succeed(identity.viewer));
       },
     },
@@ -1101,5 +1110,38 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     const inbox = await harness.api.fetch(request("/v1/organizations/org%3Am6/me/approval-tasks"));
     expect(inbox.status).toBe(403);
     expect(harness.commandRepository.records.size).toBe(0);
+  });
+
+  it("#193: clientのaction制限を読み取り・inbox・decisionにも適用する", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "before-client-restriction");
+    harness.identity.deniedActionTypes.add(String(actionView.action.type));
+    const encodedAction = encodeURIComponent(String(actionRequestId));
+    for (const path of [
+      `/v1/organizations/org%3Am6/action-requests/${encodedAction}`,
+      `/v1/organizations/org%3Am6/action-requests/${encodedAction}/tasks`,
+      `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}`,
+      `/v1/organizations/org%3Am6/approval-commands/${encodeURIComponent(commandId)}`,
+    ]) {
+      const response = await harness.api.fetch(request(path));
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "client_operation_not_allowed",
+      });
+    }
+    const inbox = await harness.api.fetch(request("/v1/organizations/org%3Am6/me/approval-tasks"));
+    expect(inbox.status).toBe(200);
+    await expect(inbox.json()).resolves.toMatchObject({ items: [] });
+    const decision = await harness.api.fetch(
+      request(
+        `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}/decisions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "idempotency-key": "denied-client" },
+          body: JSON.stringify({ decision: "approve" }),
+        },
+      ),
+    );
+    expect(decision.status).toBe(403);
   });
 });

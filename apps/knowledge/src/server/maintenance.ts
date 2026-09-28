@@ -87,9 +87,17 @@ export type ScheduledMaintenanceOutcome = {
  * never stops the sweep.
  */
 export async function runScheduledMaintenance(
-  runtime: Pick<KnowledgeRuntime, "repos" | "ultraEasy" | "organizationId">,
+  runtime: Pick<KnowledgeRuntime, "repos" | "ultraEasy" | "organizationId" | "auth">,
   scheduledAt: Date,
-): Result.ResultAsync<ScheduledMaintenanceOutcome[], { code: "store_unavailable" }> {
+): Result.ResultAsync<
+  ScheduledMaintenanceOutcome[],
+  { code: "store_unavailable" | "agent_auth_failed" }
+> {
+  const actor =
+    runtime.auth.mode === "auth0"
+      ? await runtime.auth.auth0.agentAccess()
+      : Result.succeed({ principal: MAINTENANCE_SCHEDULE_TRIGGER });
+  if (Result.isFailure(actor)) return Result.fail({ code: "agent_auth_failed" });
   const spaces = await runtime.repos.spaces.listAll(runtime.organizationId);
   if (Result.isFailure(spaces)) return Result.fail({ code: "store_unavailable" });
   const outcomes: ScheduledMaintenanceOutcome[] = [];
@@ -98,7 +106,7 @@ export async function runScheduledMaintenance(
       ultraEasy: runtime.ultraEasy,
       organizationId: runtime.organizationId,
       spaceId: space.id,
-      actor: MAINTENANCE_SCHEDULE_TRIGGER,
+      actor: actor.value.principal,
       idempotencyKey: scheduledMaintenanceKey(space.id, scheduledAt),
     });
     outcomes.push(

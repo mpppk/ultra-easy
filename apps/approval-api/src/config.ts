@@ -17,6 +17,10 @@ export const REQUIRED_SETTINGS = [
   "AUTH0_DOMAIN",
   "AUTH0_API_AUDIENCE",
   "AUTH0_ORGANIZATION_ID",
+  "AUTH0_WEB_CLIENT_ID",
+  "AUTH0_AGENT_CLIENT_ID",
+  "AUTH0_KNOWLEDGE_CLIENT_ID",
+  "AUTH0_KNOWLEDGE_AGENT_CLIENT_ID",
   "OPENFGA_API_URL",
   "OPENFGA_STORE_ID",
   "OPENFGA_AUTHORIZATION_MODEL_ID",
@@ -62,6 +66,21 @@ export function validateApprovalApiConfig(
   if (present(env.OPENFGA_API_URL) && !URL.canParse(String(env.OPENFGA_API_URL))) {
     keys.push("OPENFGA_API_URL");
   }
+  const clientKeys = [
+    "AUTH0_WEB_CLIENT_ID",
+    "AUTH0_AGENT_CLIENT_ID",
+    "AUTH0_KNOWLEDGE_CLIENT_ID",
+    "AUTH0_KNOWLEDGE_AGENT_CLIENT_ID",
+  ] as const;
+  for (const name of clientKeys) {
+    if (present(env[name]) && Result.isFailure(parseBrand("ClientId", env[name]))) keys.push(name);
+  }
+  const clientIds = clientKeys
+    .map((name) => env[name])
+    .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    .map((id) => id.trim());
+  if (new Set(clientIds).size !== clientIds.length)
+    keys.push("AUTH0_*_CLIENT_ID (must be distinct)");
   const mode = env.ACTION_EXECUTION_MODE;
   if (mode !== undefined && mode !== "execute" && mode !== "approval_only") {
     keys.push("ACTION_EXECUTION_MODE");

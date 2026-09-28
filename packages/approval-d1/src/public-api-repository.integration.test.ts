@@ -121,10 +121,13 @@ function database(): SqliteD1Database {
   return new SqliteD1Database(sqlite);
 }
 
-async function approvalPlan(): Promise<MaterializedApprovalPlan> {
+async function approvalPlan(
+  origin?: PolicyEvaluationContext["origin"],
+): Promise<MaterializedApprovalPlan> {
   const request = createTicketActionRequest();
   const context: PolicyEvaluationContext = {
     ...request,
+    ...(origin ? { origin } : {}),
     actor: { type: "user", id: alice },
     authority: { principal: { type: "user", id: alice } },
     organization: { id: organizationId },
@@ -204,7 +207,11 @@ function runtimeState(plan: MaterializedApprovalPlan): ApprovalRuntimeState {
 describe("D1PublicApiRepository", () => {
   it("ActionRequest / task / inboxを既存projectionから再構成する", async () => {
     const db = database();
-    const plan = await approvalPlan();
+    const plan = await approvalPlan({
+      type: "api",
+      clientId: branded("knowledge-client"),
+      caller: { type: "user", id: alice },
+    });
     const saved = await new D1MaterializedPlanRepository(db).save(plan);
     expect(saved.type).toBe("created");
     const projected = await new D1ApprovalRuntimeProjectionRepository(db).replace({
@@ -221,6 +228,8 @@ describe("D1PublicApiRepository", () => {
     assert(Result.isSuccess(action));
     expect(action.value).toMatchObject({
       id: String(plan.actionRequestId),
+      clientId: "knowledge-client",
+      caller: { type: "user", id: alice },
       status: "pending_approval",
       approval: { required: true, activeTaskCount: 1 },
     });

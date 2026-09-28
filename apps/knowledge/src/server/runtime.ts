@@ -28,6 +28,9 @@ export type KnowledgeEnv = {
   AUTH0_DOMAIN?: string;
   AUTH0_CLIENT_ID?: string;
   AUTH0_CLIENT_SECRET?: string;
+  AUTH0_API_AUDIENCE?: string;
+  AUTH0_AGENT_CLIENT_ID?: string;
+  AUTH0_AGENT_CLIENT_SECRET?: string;
   AUTH0_ORGANIZATION_CLAIM?: string;
   AUTH0_ORGANIZATION_CLAIM_VALUE?: string;
   AUTH0_TENANT_IS_ORGANIZATION?: string;
@@ -97,6 +100,9 @@ export function createRuntime(
   const mcp = (request: Request) => handleMcpRequest(request, { repos, now, token });
   const ultraEasy = new MockUltraEasy({
     db: env.ULTRA_EASY_MOCK_DB,
+    ...(auth.mode === "auth0"
+      ? { maintenanceAgentId: `agent:${auth.auth0.config.agentClientId}` }
+      : {}),
     // The mock executor reaches Knowledge only through its MCP endpoint.
     downstream: streamableHttpDownstream({
       endpoint: "https://knowledge.internal/mcp",

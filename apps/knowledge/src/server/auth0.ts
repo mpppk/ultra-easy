@@ -30,12 +30,17 @@ export type Auth0Config = {
   domain: string;
   clientId: string;
   clientSecret: string;
+  approvalAudience: string;
+  agentClientId: string;
+  agentClientSecret: string;
   membership: Auth0Membership;
 };
 
 export type Auth0ErrorCode =
   | "token_exchange_failed"
   | "invalid_id_token"
+  | "invalid_access_token"
+  | "agent_token_failed"
   | "organization_membership_required";
 
 export class Auth0Error extends Error {
@@ -63,6 +68,9 @@ type Env = {
   AUTH0_DOMAIN?: string;
   AUTH0_CLIENT_ID?: string;
   AUTH0_CLIENT_SECRET?: string;
+  AUTH0_API_AUDIENCE?: string;
+  AUTH0_AGENT_CLIENT_ID?: string;
+  AUTH0_AGENT_CLIENT_SECRET?: string;
   AUTH0_ORGANIZATION_CLAIM?: string;
   AUTH0_ORGANIZATION_CLAIM_VALUE?: string;
   AUTH0_TENANT_IS_ORGANIZATION?: string;
@@ -73,9 +81,15 @@ export function readAuth0Config(env: Env): Result.Result<Auth0Config, Auth0Confi
   const domain = env.AUTH0_DOMAIN?.trim();
   const clientId = env.AUTH0_CLIENT_ID?.trim();
   const clientSecret = env.AUTH0_CLIENT_SECRET?.trim();
+  const approvalAudience = env.AUTH0_API_AUDIENCE?.trim();
+  const agentClientId = env.AUTH0_AGENT_CLIENT_ID?.trim();
+  const agentClientSecret = env.AUTH0_AGENT_CLIENT_SECRET?.trim();
   if (!domain) return Result.fail(new Auth0ConfigError("AUTH0_DOMAIN"));
   if (!clientId) return Result.fail(new Auth0ConfigError("AUTH0_CLIENT_ID"));
   if (!clientSecret) return Result.fail(new Auth0ConfigError("AUTH0_CLIENT_SECRET"));
+  if (!approvalAudience) return Result.fail(new Auth0ConfigError("AUTH0_API_AUDIENCE"));
+  if (!agentClientId) return Result.fail(new Auth0ConfigError("AUTH0_AGENT_CLIENT_ID"));
+  if (!agentClientSecret) return Result.fail(new Auth0ConfigError("AUTH0_AGENT_CLIENT_SECRET"));
   const claimValue = env.AUTH0_ORGANIZATION_CLAIM_VALUE?.trim();
   const membership: Auth0Membership | null = claimValue
     ? { type: "claim", claim: env.AUTH0_ORGANIZATION_CLAIM?.trim() || "org_id", value: claimValue }
@@ -87,10 +101,28 @@ export function readAuth0Config(env: Env): Result.Result<Auth0Config, Auth0Confi
       new Auth0ConfigError("AUTH0_ORGANIZATION_CLAIM_VALUE or AUTH0_TENANT_IS_ORGANIZATION"),
     );
   }
-  return Result.succeed({ domain, clientId, clientSecret, membership });
+  return Result.succeed({
+    domain,
+    clientId,
+    clientSecret,
+    approvalAudience,
+    agentClientId,
+    agentClientSecret,
+    membership,
+  });
 }
 
 const keyResolvers = new Map<string, JWTVerifyGetKey>();
+
+function hasApiScopes(payload: JWTPayload): boolean {
+  const scopes = new Set(typeof payload.scope === "string" ? payload.scope.split(" ") : []);
+  if (Array.isArray(payload.permissions)) {
+    for (const permission of payload.permissions) {
+      if (typeof permission === "string") scopes.add(permission);
+    }
+  }
+  return scopes.has("read:action-requests") && scopes.has("write:action-requests");
+}
 
 /** Tenant JWKS shared per isolate (jose caches keys and refetches on an unknown `kid`). */
 function tenantKeys(domain: string, fetchImplementation?: typeof globalThis.fetch) {
@@ -125,7 +157,8 @@ export class Auth0Client {
       response_type: "code",
       client_id: this.config.clientId,
       redirect_uri: input.redirectUri,
-      scope: "openid profile email",
+      scope: "openid profile email read:action-requests write:action-requests",
+      audience: this.config.approvalAudience,
       state: input.state,
       nonce: input.nonce,
       code_challenge: input.codeChallenge,
@@ -147,13 +180,81 @@ export class Auth0Client {
     return url.toString();
   }
 
-  /** Exchanges the authorization code and returns the verified principal. */
+  /** A scheduled task acts as the application's own agent, never as a stored user. */
+  async agentAccess(): Result.ResultAsync<
+    { principal: PrincipalRef; accessToken: string; expiresAt: number },
+    Auth0Error
+  > {
+    const fetchImplementation = this.deps.fetch ?? globalThis.fetch;
+    const response = await Result.try({
+      try: () =>
+        fetchImplementation(`https://${this.config.domain}/oauth/token`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: this.config.agentClientId,
+            client_secret: this.config.agentClientSecret,
+            audience: this.config.approvalAudience,
+            scope: "read:action-requests write:action-requests",
+          }),
+        }),
+      catch: () => new Auth0Error("agent_token_failed"),
+    });
+    if (Result.isFailure(response)) return response;
+    if (!response.value.ok) return Result.fail(new Auth0Error("agent_token_failed"));
+    const body = await Result.try({
+      try: (): Promise<unknown> => response.value.json(),
+      catch: () => new Auth0Error("agent_token_failed"),
+    });
+    if (Result.isFailure(body)) return body;
+    const token =
+      typeof body.value === "object" && body.value !== null
+        ? (body.value as { access_token?: unknown }).access_token
+        : undefined;
+    if (typeof token !== "string") return Result.fail(new Auth0Error("agent_token_failed"));
+    const key = this.deps.key ?? tenantKeys(this.config.domain, this.deps.fetch);
+    const verified = await Result.try({
+      try: () =>
+        jwtVerify(token, key, {
+          issuer: this.issuer,
+          audience: this.config.approvalAudience,
+          algorithms: ["RS256"],
+        }),
+      catch: () => new Auth0Error("agent_token_failed"),
+    });
+    if (Result.isFailure(verified)) return verified;
+    const payload = verified.value.payload;
+    if (
+      payload.gty !== "client-credentials" ||
+      payload.sub !== `${this.config.agentClientId}@clients` ||
+      payload.azp !== this.config.agentClientId ||
+      typeof payload.exp !== "number" ||
+      !hasApiScopes(payload) ||
+      (this.config.membership.type === "claim" &&
+        payload[this.config.membership.claim] !== this.config.membership.value)
+    )
+      return Result.fail(new Auth0Error("agent_token_failed"));
+    return Result.succeed({
+      principal: {
+        id: `agent:${this.config.agentClientId}`,
+        displayName: "Knowledge maintenance agent",
+      },
+      accessToken: token,
+      expiresAt: payload.exp * 1000,
+    });
+  }
+
+  /** Exchanges the authorization code and verifies both the identity and API access tokens. */
   async signIn(input: {
     code: string;
     codeVerifier: string;
     redirectUri: string;
     nonce: string;
-  }): Result.ResultAsync<PrincipalRef, Auth0Error> {
+  }): Result.ResultAsync<
+    { principal: PrincipalRef; accessToken: string; expiresAt: number },
+    Auth0Error
+  > {
     const fetchImplementation = this.deps.fetch ?? globalThis.fetch;
     const response = await Result.try({
       try: () =>
@@ -183,7 +284,39 @@ export class Auth0Client {
         ? (body.value as { id_token?: unknown }).id_token
         : undefined;
     if (typeof idToken !== "string") return Result.fail(new Auth0Error("token_exchange_failed"));
-    return this.verifyIdToken(idToken, input.nonce);
+    const accessToken = (body.value as { access_token?: unknown }).access_token;
+    if (typeof accessToken !== "string") return Result.fail(new Auth0Error("invalid_access_token"));
+    const principal = await this.verifyIdToken(idToken, input.nonce);
+    if (Result.isFailure(principal)) return principal;
+    const key = this.deps.key ?? tenantKeys(this.config.domain, this.deps.fetch);
+    const verified = await Result.try({
+      try: () =>
+        jwtVerify(accessToken, key, {
+          issuer: this.issuer,
+          audience: this.config.approvalAudience,
+          algorithms: ["RS256"],
+        }),
+      catch: () => new Auth0Error("invalid_access_token"),
+    });
+    if (Result.isFailure(verified)) return verified;
+    const payload = verified.value.payload;
+    if (
+      typeof payload.sub !== "string" ||
+      principal.value.id !== `user:${payload.sub}` ||
+      payload.azp !== this.config.clientId ||
+      typeof payload.exp !== "number" ||
+      payload.exp * 1000 <= Date.now() ||
+      !hasApiScopes(payload) ||
+      (this.config.membership.type === "claim" &&
+        payload[this.config.membership.claim] !== this.config.membership.value)
+    ) {
+      return Result.fail(new Auth0Error("invalid_access_token"));
+    }
+    return Result.succeed({
+      principal: principal.value,
+      accessToken,
+      expiresAt: payload.exp * 1000,
+    });
   }
 
   private async verifyIdToken(

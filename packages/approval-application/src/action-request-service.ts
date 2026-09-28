@@ -74,6 +74,7 @@ export type ActionRequestView = {
   actor: PrincipalRef;
   authorityPrincipal: PrincipalRef;
   caller?: PrincipalRef;
+  clientId?: ActionRequest["origin"]["clientId"];
   action: Action;
   origin: ActionRequest["origin"]["type"];
   status: ActionRequestPublicStatus;
@@ -359,6 +360,7 @@ function requestView(input: {
     actor: input.request.actor,
     authorityPrincipal: input.request.authority.principal,
     ...(input.request.origin.caller ? { caller: input.request.origin.caller } : {}),
+    ...(input.request.origin.clientId ? { clientId: input.request.origin.clientId } : {}),
     action: input.request.action,
     origin: input.request.origin.type,
     status,

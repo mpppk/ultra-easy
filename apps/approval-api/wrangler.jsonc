@@ -13,6 +13,9 @@
   "vars": {
     "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
     "AUTH0_API_AUDIENCE": "https://ultra-easy/approval-api",
+    // #193: Set the four Auth0 application client IDs as deployment vars before rollout:
+    // AUTH0_WEB_CLIENT_ID / AUTH0_AGENT_CLIENT_ID /
+    // AUTH0_KNOWLEDGE_CLIENT_ID / AUTH0_KNOWLEDGE_AGENT_CLIENT_ID.
     "AUTH0_ORGANIZATION_ID": "organization:staging",
     // #82: staging tenantはAuth0 Organizationsを使わない単一組織tenantのため、tenant全体を
     // organization:stagingのmemberとして明示的に信頼する。前提: DB connectionの

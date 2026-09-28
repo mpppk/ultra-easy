@@ -6,6 +6,8 @@ import { migratedKnowledgeD1, sqliteD1WithMigrations } from "@app/knowledge-d1/t
 
 import type { MeView } from "../shared/api.ts";
 import { handleKnowledgeApi } from "./api.ts";
+import { runScheduledMaintenance } from "./maintenance.ts";
+import { openSession } from "./session.ts";
 import {
   createRuntime,
   type KnowledgeEnv,
@@ -36,12 +38,16 @@ const AUTH0_ENV = {
   AUTH0_DOMAIN: DOMAIN,
   AUTH0_CLIENT_ID: CLIENT_ID,
   AUTH0_CLIENT_SECRET: "client-secret",
+  AUTH0_API_AUDIENCE: "https://ultra-easy/approval-api",
+  AUTH0_AGENT_CLIENT_ID: "knowledge-agent-client",
+  AUTH0_AGENT_CLIENT_SECRET: "agent-secret",
   AUTH0_TENANT_IS_ORGANIZATION: "true",
 } satisfies Partial<KnowledgeEnv>;
 
 type TokenRequest = Record<string, string>;
 let tokenRequests: TokenRequest[];
 let idToken: (nonce: string) => Promise<string>;
+let accessToken: () => Promise<string>;
 let tokenStatus: number;
 
 function runtimeWith(
@@ -64,7 +70,13 @@ function runtimeWith(
           const body = Object.fromEntries(init.body);
           tokenRequests.push(body);
           if (tokenStatus !== 200) return new Response("{}", { status: tokenStatus });
-          return Response.json({ id_token: await idToken(currentNonce) });
+          if (body.grant_type === "client_credentials") {
+            return Response.json({ access_token: await signAgentToken() });
+          }
+          return Response.json({
+            id_token: await idToken(currentNonce),
+            access_token: await accessToken(),
+          });
         },
       },
     },
@@ -85,10 +97,42 @@ function sign(claims: Record<string, unknown>, options: { key?: CryptoKey } = {}
     .sign(options.key ?? signingKey);
 }
 
+function signAccessToken(claims: Record<string, unknown> = {}, expiresIn = "5m") {
+  return new SignJWT({
+    azp: CLIENT_ID,
+    scope: "read:action-requests write:action-requests",
+    ...claims,
+  })
+    .setProtectedHeader({ alg: "RS256" })
+    .setIssuer(`https://${DOMAIN}/`)
+    .setAudience("https://ultra-easy/approval-api")
+    .setSubject("auth0|alice")
+    .setIssuedAt()
+    .setExpirationTime(expiresIn)
+    .sign(signingKey);
+}
+
+function signAgentToken(claims: Record<string, unknown> = {}) {
+  return new SignJWT({
+    azp: AUTH0_ENV.AUTH0_AGENT_CLIENT_ID,
+    gty: "client-credentials",
+    scope: "read:action-requests write:action-requests",
+    ...claims,
+  })
+    .setProtectedHeader({ alg: "RS256" })
+    .setIssuer(`https://${DOMAIN}/`)
+    .setAudience("https://ultra-easy/approval-api")
+    .setSubject(`${AUTH0_ENV.AUTH0_AGENT_CLIENT_ID}@clients`)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(signingKey);
+}
+
 beforeEach(() => {
   tokenRequests = [];
   tokenStatus = 200;
   idToken = (nonce) => sign({ nonce, name: "Alice Auth0", email: "alice@example.com" });
+  accessToken = () => signAccessToken();
   const created = runtimeWith(AUTH0_ENV);
   assert(Result.isSuccess(created));
   runtime = created.value;
@@ -136,7 +180,8 @@ describe("Auth0 sign-in (#182)", () => {
       response_type: "code",
       client_id: CLIENT_ID,
       redirect_uri: `${ORIGIN}/api/auth/callback`,
-      scope: "openid profile email",
+      scope: "openid profile email read:action-requests write:action-requests",
+      audience: "https://ultra-easy/approval-api",
       code_challenge_method: "S256",
     });
     expect(authorize.searchParams.get("state")?.length).toBeGreaterThan(20);
@@ -152,6 +197,9 @@ describe("Auth0 sign-in (#182)", () => {
     expect(jar.get("ue_knowledge_auth")).toBe("");
     const session = jar.get("ue_knowledge_session") ?? "";
     expect(session.length).toBeGreaterThan(20);
+    const opened = await openSession(session, AUTH0_ENV.SESSION_SECRET);
+    expect(opened?.accessToken).toBeTruthy();
+    expect(session).not.toContain(opened?.accessToken ?? "missing-token");
     expect(callback.headers.getSetCookie().join("\n")).toContain(
       "HttpOnly; Secure; SameSite=Strict",
     );
@@ -183,6 +231,66 @@ describe("Auth0 sign-in (#182)", () => {
       body: JSON.stringify({ key: "alice", name: "Alice", description: "" }),
     });
     expect(created.status).toBe(201);
+  });
+
+  it("rejects a mismatched API access token and bounds the session to token expiry", async () => {
+    accessToken = () => signAccessToken({ azp: "other-client" });
+    const wrongClient = await completeLogin();
+    expect(wrongClient.headers.get("location")).toBe("/login?error=invalid_access_token");
+    expect(cookies(wrongClient).has("ue_knowledge_session")).toBe(false);
+
+    accessToken = () => signAccessToken({}, "60s");
+    const callback = await completeLogin();
+    expect(callback.headers.get("location")).toBe("/spaces");
+    const cookieHeader =
+      callback.headers
+        .getSetCookie()
+        .find((cookie) => cookie.startsWith("ue_knowledge_session=")) ?? "";
+    const maxAge = Number(/Max-Age=(\d+)/.exec(cookieHeader)?.[1]);
+    expect(maxAge).toBeGreaterThan(0);
+    expect(maxAge).toBeLessThanOrEqual(60);
+    const sealed = cookies(callback).get("ue_knowledge_session") ?? "";
+    const opened = await openSession(sealed, AUTH0_ENV.SESSION_SECRET);
+    assert(opened);
+    expect(await openSession(sealed, AUTH0_ENV.SESSION_SECRET, opened.expiresAt + 1)).toBeNull();
+  });
+
+  it("obtains a verified M2M token for the maintenance agent", async () => {
+    assert(runtime.auth.mode === "auth0");
+    const agent = await runtime.auth.auth0.agentAccess();
+    assert(Result.isSuccess(agent));
+    expect(agent.value.principal.id).toBe(`agent:${AUTH0_ENV.AUTH0_AGENT_CLIENT_ID}`);
+    expect(tokenRequests[0]).toMatchObject({
+      grant_type: "client_credentials",
+      client_id: AUTH0_ENV.AUTH0_AGENT_CLIENT_ID,
+      client_secret: AUTH0_ENV.AUTH0_AGENT_CLIENT_SECRET,
+      audience: AUTH0_ENV.AUTH0_API_AUDIENCE,
+    });
+  });
+
+  it("starts weekly maintenance with the M2M agent principal", async () => {
+    const callback = await completeLogin();
+    const session = cookies(callback).get("ue_knowledge_session") ?? "";
+    const created = await call("/api/spaces", {
+      method: "POST",
+      cookie: `ue_knowledge_session=${session}`,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: "agent-test", name: "Agent Test", description: "" }),
+    });
+    expect(created.status).toBe(201);
+    const outcomes = await runScheduledMaintenance(runtime, new Date("2026-09-28T00:00:00.000Z"));
+    assert(Result.isSuccess(outcomes));
+    expect(outcomes.value).toMatchObject([{ outcome: "started", spaceKey: "agent-test" }]);
+    const spaces = await runtime.repos.spaces.listAll(runtime.organizationId);
+    assert(Result.isSuccess(spaces));
+    const runs = await runtime.ultraEasy.listRuns({
+      organizationId: runtime.organizationId,
+      spaceIds: [spaces.value[0]!.id],
+      limit: 10,
+    });
+    assert(Result.isSuccess(runs));
+    expect(runs.value[0]?.requestedBy.id).toBe(`agent:${AUTH0_ENV.AUTH0_AGENT_CLIENT_ID}`);
+    expect(tokenRequests.at(-1)?.grant_type).toBe("client_credentials");
   });
 
   it("never redirects off-site after sign-in", async () => {
@@ -258,6 +366,7 @@ describe("Auth0 sign-in (#182)", () => {
       "/login?error=organization_membership_required",
     );
     idToken = (nonce) => sign({ nonce, org_id: "org_123" });
+    accessToken = () => signAccessToken({ org_id: "org_123" });
     expect((await completeLogin()).headers.get("location")).toBe("/spaces");
   });
 

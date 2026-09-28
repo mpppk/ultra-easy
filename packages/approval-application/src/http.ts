@@ -37,6 +37,8 @@ export interface HttpTrustedContextProvider {
   resolve(input: {
     request: Request;
     organizationId: OrganizationId;
+    actionType?: string;
+    resourceType?: string;
     delegationGrantId?: string;
     clientReference?: string;
   }): Result.ResultAsync<TrustedActionRequestContext, HttpTrustedContextError>;
@@ -249,6 +251,8 @@ export function createActionRequestHttpApi(input: {
       const trusted = await input.trustedContextProvider.resolve({
         request,
         organizationId,
+        actionType: String(body.action.type),
+        resourceType: String(body.action.resource.type),
         ...(body.delegationGrantId ? { delegationGrantId: body.delegationGrantId } : {}),
         ...(body.clientReference ? { clientReference: body.clientReference } : {}),
       });
