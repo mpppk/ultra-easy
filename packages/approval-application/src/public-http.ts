@@ -500,10 +500,29 @@ export function createPublicHttpApi(input: {
           operation: "action_request.submit",
         });
         if (principal instanceof Response) return principal;
+        let clientId: ClientId | undefined;
+        if (input.identityProvider.authenticateWithClient) {
+          const identified = await input.identityProvider.authenticateWithClient({
+            request,
+            organizationId,
+            operation: "action_request.submit",
+          });
+          if (Result.isFailure(identified)) {
+            return problem({
+              status: identified.error.status,
+              code: identified.error.code,
+              title: "Forbidden",
+            });
+          }
+          if (!samePrincipal(identified.value.principal, principal)) {
+            return problem({ status: 403, code: "invalid_caller", title: "Forbidden" });
+          }
+          clientId = identified.value.clientId;
+        }
         return idempotent({
           request,
           organizationId,
-          operation: `action-request:create:${String(principal.id)}`,
+          operation: `action-request:create:${String(principal.id)}${clientId ? `:${String(clientId)}` : ""}`,
           repository: input.idempotencyRepository,
           clock: input.clock,
           execute: () => input.actionRequestApi.fetch(request),

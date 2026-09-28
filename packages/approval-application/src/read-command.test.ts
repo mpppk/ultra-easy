@@ -352,6 +352,7 @@ class FakeSink implements ApprovalDecisionSink {
 function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
   const identity = {
     viewer: { type: "user", id: alice } as PrincipalRef,
+    clientId: "web-client",
     operators: new Set<string>(),
     deniedActionTypes: new Set<string>(),
   };
@@ -412,7 +413,7 @@ function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
         return Promise.resolve(
           Result.succeed({
             principal: identity.viewer,
-            clientId: branded("web-client"),
+            clientId: branded(identity.clientId),
           }),
         );
       },
@@ -526,6 +527,33 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     expect(second.status).toBe(201);
     expect(await second.json()).toEqual(await first.json());
     expect(harness.createCalls()).toBe(1);
+  });
+
+  it("#193: 別clientの同一user・同一keyへActionRequest作成応答をreplayしない", async () => {
+    const harness = createHarness();
+    const path = "/v1/organizations/org%3Am6/action-requests";
+    const init = {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "cross-client" },
+      body: JSON.stringify({
+        action: {
+          type: "ticket.priority.change",
+          resource: { type: "ticket", id: "TICKET-1" },
+          input: { priority: "normal" },
+        },
+      }),
+    } satisfies RequestInit;
+
+    const first = await harness.api.fetch(request(path, init));
+    harness.identity.clientId = "knowledge-client";
+    const second = await harness.api.fetch(request(path, init));
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(((await first.json()) as { id: string }).id).not.toBe(
+      ((await second.json()) as { id: string }).id,
+    );
+    expect(harness.createCalls()).toBe(2);
   });
 
   function statusSequenceApi(statuses: number[], harness: ReturnType<typeof createHarness>) {
