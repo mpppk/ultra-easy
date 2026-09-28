@@ -219,12 +219,23 @@ export class Auth0IdentityProvider
   ): Result.ResultAsync<AuthorizationAdminCaller, HttpTrustedContextError> {
     const verified = await this.verify(request, this.config.organizationId);
     if (Result.isFailure(verified)) return verified;
-    const { principal } = verified.value;
+    const { principal, payload } = verified.value;
     if (principal.type !== "user") {
       return contextError(
         403,
         "machine_principal_not_allowed",
         "管理Consoleはuser principalのみ利用できます",
+      );
+    }
+    const clientId = payload.azp;
+    if (typeof clientId !== "string" || !this.config.clients.has(clientId)) {
+      return contextError(403, "client_not_registered", "clientが登録されていません");
+    }
+    if (this.config.clients.get(clientId)?.operations !== "*") {
+      return contextError(
+        403,
+        "client_operation_not_allowed",
+        "管理Consoleはfirst-party clientのみ利用できます",
       );
     }
     return Result.succeed({ organizationId: this.config.organizationId, principal });

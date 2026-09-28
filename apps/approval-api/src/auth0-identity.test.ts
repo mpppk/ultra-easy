@@ -216,6 +216,25 @@ describe("Auth0IdentityProvider", () => {
     const anonymous = await provider.resolve(requestWith(null));
     assert(Result.isFailure(anonymous));
     expect(anonymous.error.status).toBe(401);
+
+    const unknownClient = await provider.resolve(
+      requestWith(await sign({ sub: "auth0|staging-alice", azp: "unknown-client" })),
+    );
+    assert(Result.isFailure(unknownClient));
+    expect(unknownClient.error.code).toBe("client_not_registered");
+
+    const knowledge = await harness(
+      { type: "tenant" },
+      readClientRegistry({
+        AUTH0_WEB_CLIENT_ID: "web-client",
+        AUTH0_KNOWLEDGE_CLIENT_ID: "knowledge-client",
+      }),
+    );
+    const externalAdmin = await knowledge.provider.resolve(
+      requestWith(await knowledge.sign({ sub: "auth0|staging-alice", azp: "knowledge-client" })),
+    );
+    assert(Result.isFailure(externalAdmin));
+    expect(externalAdmin.error.code).toBe("client_operation_not_allowed");
   });
 
   it("#193: 未登録client、許可外operation / action / resource、期限切れを拒否する", async () => {
