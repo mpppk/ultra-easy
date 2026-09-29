@@ -2,6 +2,7 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import { PageContainer, PageHeader, PageSection } from "#components/layout/page";
+import { WorkflowAccessGate } from "#components/workflow/access-gate";
 import { Badge } from "#components/ui/badge";
 import { Button } from "#components/ui/button";
 import { Input } from "#components/ui/input";
@@ -21,7 +22,11 @@ import type {
 } from "#/components/workflow/studio-api.ts";
 
 export const Route = createFileRoute("/workflows/")({
-  component: WorkflowStudioHome,
+  component: () => (
+    <WorkflowAccessGate>
+      <WorkflowStudioHome />
+    </WorkflowAccessGate>
+  ),
 });
 
 function WorkflowStudioHome() {

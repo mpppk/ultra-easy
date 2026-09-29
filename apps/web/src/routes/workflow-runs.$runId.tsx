@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { WorkflowGraph } from "@app/workflow-core";
 
 import { PageContainer, PageHeader, PageSection } from "#components/layout/page";
+import { WorkflowAccessGate } from "#components/workflow/access-gate";
 import { Badge } from "#components/ui/badge";
 import { Button } from "#components/ui/button";
 import { Input } from "#components/ui/input";
@@ -21,7 +22,11 @@ import type { ActionView, RunView } from "#/components/workflow/studio-api.ts";
 import { WorkflowCanvas, type NodeOverlay } from "#components/workflow/workflow-canvas";
 
 export const Route = createFileRoute("/workflow-runs/$runId")({
-  component: WorkflowRunPage,
+  component: () => (
+    <WorkflowAccessGate>
+      <WorkflowRunPage />
+    </WorkflowAccessGate>
+  ),
 });
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);

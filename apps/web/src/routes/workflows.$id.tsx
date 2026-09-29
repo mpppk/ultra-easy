@@ -12,6 +12,7 @@ import type {
 } from "@app/workflow-core";
 
 import { PageContainer, PageHeader, PageSection } from "#components/layout/page";
+import { WorkflowAccessGate } from "#components/workflow/access-gate";
 import { Badge } from "#components/ui/badge";
 import { Button } from "#components/ui/button";
 import { Input } from "#components/ui/input";
@@ -37,7 +38,11 @@ import type { StudioCatalog } from "#/components/workflow/studio-api.ts";
 import { WorkflowCanvas, type NodeOverlay } from "#components/workflow/workflow-canvas";
 
 export const Route = createFileRoute("/workflows/$id")({
-  component: WorkflowEditor,
+  component: () => (
+    <WorkflowAccessGate>
+      <WorkflowEditor />
+    </WorkflowAccessGate>
+  ),
 });
 
 function fieldSuggestions(definition: WorkflowDefinition, catalog: StudioCatalog | null): string[] {
