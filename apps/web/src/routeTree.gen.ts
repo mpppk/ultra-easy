@@ -15,6 +15,9 @@ import { Route as AdminAuthorizationRouteImport } from './routes/admin.authoriza
 import { Route as ApiActionRequestsRouteImport } from './routes/api.action-requests'
 import { Route as PreviewApprovalRuntimeRouteImport } from './routes/preview.approval-runtime'
 import { Route as PreviewOperatorDashboardRouteImport } from './routes/preview.operator-dashboard'
+import { Route as WorkflowRunsRunIdRouteImport } from './routes/workflow-runs.$runId'
+import { Route as WorkflowsIndexRouteImport } from './routes/workflows.index'
+import { Route as WorkflowsIdRouteImport } from './routes/workflows.$id'
 import { Route as AdminAuthorizationIndexRouteImport } from './routes/admin.authorization.index'
 import { Route as AdminAuthorizationAuditRouteImport } from './routes/admin.authorization.audit'
 import { Route as AdminAuthorizationExplorerRouteImport } from './routes/admin.authorization.explorer'
@@ -25,6 +28,7 @@ import { Route as ApiAuthLoginRouteImport } from './routes/api.auth.login'
 import { Route as ApiAuthLogoutRouteImport } from './routes/api.auth.logout'
 import { Route as ApiPreviewApprovalRunsRouteImport } from './routes/api.preview.approval-runs'
 import { Route as ApiPreviewOperatorDashboardRouteImport } from './routes/api.preview.operator-dashboard'
+import { Route as ApiWorkflowSplatRouteImport } from './routes/api.workflow.$'
 import { Route as PreviewWorkflowRunsRunIdRouteImport } from './routes/preview.workflow-runs.$runId'
 import { Route as PreviewWorkflowsIndexRouteImport } from './routes/preview.workflows.index'
 import { Route as PreviewWorkflowsIdRouteImport } from './routes/preview.workflows.$id'
@@ -65,6 +69,21 @@ const PreviewOperatorDashboardRoute =
     path: '/preview/operator-dashboard',
     getParentRoute: () => rootRouteImport,
   } as any)
+const WorkflowRunsRunIdRoute = WorkflowRunsRunIdRouteImport.update({
+  id: '/workflow-runs/$runId',
+  path: '/workflow-runs/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
+  id: '/workflows/',
+  path: '/workflows/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkflowsIdRoute = WorkflowsIdRouteImport.update({
+  id: '/workflows/$id',
+  path: '/workflows/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminAuthorizationIndexRoute = AdminAuthorizationIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -118,6 +137,11 @@ const ApiPreviewOperatorDashboardRoute =
     path: '/api/preview/operator-dashboard',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiWorkflowSplatRoute = ApiWorkflowSplatRouteImport.update({
+  id: '/api/workflow/$',
+  path: '/api/workflow/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PreviewWorkflowRunsRunIdRoute =
   PreviewWorkflowRunsRunIdRouteImport.update({
     id: '/preview/workflow-runs/$runId',
@@ -171,6 +195,9 @@ export interface FileRoutesByFullPath {
   '/api/action-requests': typeof ApiActionRequestsRouteWithChildren
   '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
   '/preview/operator-dashboard': typeof PreviewOperatorDashboardRoute
+  '/workflow-runs/$runId': typeof WorkflowRunsRunIdRoute
+  '/workflows/$id': typeof WorkflowsIdRoute
+  '/workflows/': typeof WorkflowsIndexRoute
   '/admin/authorization/audit': typeof AdminAuthorizationAuditRoute
   '/admin/authorization/explorer': typeof AdminAuthorizationExplorerRoute
   '/admin/authorization/model': typeof AdminAuthorizationModelRoute
@@ -180,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
+  '/api/workflow/$': typeof ApiWorkflowSplatRoute
   '/preview/workflow-runs/$runId': typeof PreviewWorkflowRunsRunIdRoute
   '/preview/workflows/$id': typeof PreviewWorkflowsIdRoute
   '/admin/authorization/': typeof AdminAuthorizationIndexRoute
@@ -196,6 +224,9 @@ export interface FileRoutesByTo {
   '/api/action-requests': typeof ApiActionRequestsRouteWithChildren
   '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
   '/preview/operator-dashboard': typeof PreviewOperatorDashboardRoute
+  '/workflow-runs/$runId': typeof WorkflowRunsRunIdRoute
+  '/workflows/$id': typeof WorkflowsIdRoute
+  '/workflows': typeof WorkflowsIndexRoute
   '/admin/authorization/audit': typeof AdminAuthorizationAuditRoute
   '/admin/authorization/explorer': typeof AdminAuthorizationExplorerRoute
   '/admin/authorization/model': typeof AdminAuthorizationModelRoute
@@ -205,6 +236,7 @@ export interface FileRoutesByTo {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
+  '/api/workflow/$': typeof ApiWorkflowSplatRoute
   '/preview/workflow-runs/$runId': typeof PreviewWorkflowRunsRunIdRoute
   '/preview/workflows/$id': typeof PreviewWorkflowsIdRoute
   '/admin/authorization': typeof AdminAuthorizationIndexRoute
@@ -223,6 +255,9 @@ export interface FileRoutesById {
   '/api/action-requests': typeof ApiActionRequestsRouteWithChildren
   '/preview/approval-runtime': typeof PreviewApprovalRuntimeRoute
   '/preview/operator-dashboard': typeof PreviewOperatorDashboardRoute
+  '/workflow-runs/$runId': typeof WorkflowRunsRunIdRoute
+  '/workflows/$id': typeof WorkflowsIdRoute
+  '/workflows/': typeof WorkflowsIndexRoute
   '/admin/authorization/audit': typeof AdminAuthorizationAuditRoute
   '/admin/authorization/explorer': typeof AdminAuthorizationExplorerRoute
   '/admin/authorization/model': typeof AdminAuthorizationModelRoute
@@ -232,6 +267,7 @@ export interface FileRoutesById {
   '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/preview/approval-runs': typeof ApiPreviewApprovalRunsRouteWithChildren
   '/api/preview/operator-dashboard': typeof ApiPreviewOperatorDashboardRoute
+  '/api/workflow/$': typeof ApiWorkflowSplatRoute
   '/preview/workflow-runs/$runId': typeof PreviewWorkflowRunsRunIdRoute
   '/preview/workflows/$id': typeof PreviewWorkflowsIdRoute
   '/admin/authorization/': typeof AdminAuthorizationIndexRoute
@@ -251,6 +287,9 @@ export interface FileRouteTypes {
     | '/api/action-requests'
     | '/preview/approval-runtime'
     | '/preview/operator-dashboard'
+    | '/workflow-runs/$runId'
+    | '/workflows/$id'
+    | '/workflows/'
     | '/admin/authorization/audit'
     | '/admin/authorization/explorer'
     | '/admin/authorization/model'
@@ -260,6 +299,7 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/preview/approval-runs'
     | '/api/preview/operator-dashboard'
+    | '/api/workflow/$'
     | '/preview/workflow-runs/$runId'
     | '/preview/workflows/$id'
     | '/admin/authorization/'
@@ -276,6 +316,9 @@ export interface FileRouteTypes {
     | '/api/action-requests'
     | '/preview/approval-runtime'
     | '/preview/operator-dashboard'
+    | '/workflow-runs/$runId'
+    | '/workflows/$id'
+    | '/workflows'
     | '/admin/authorization/audit'
     | '/admin/authorization/explorer'
     | '/admin/authorization/model'
@@ -285,6 +328,7 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/preview/approval-runs'
     | '/api/preview/operator-dashboard'
+    | '/api/workflow/$'
     | '/preview/workflow-runs/$runId'
     | '/preview/workflows/$id'
     | '/admin/authorization'
@@ -302,6 +346,9 @@ export interface FileRouteTypes {
     | '/api/action-requests'
     | '/preview/approval-runtime'
     | '/preview/operator-dashboard'
+    | '/workflow-runs/$runId'
+    | '/workflows/$id'
+    | '/workflows/'
     | '/admin/authorization/audit'
     | '/admin/authorization/explorer'
     | '/admin/authorization/model'
@@ -311,6 +358,7 @@ export interface FileRouteTypes {
     | '/api/auth/logout'
     | '/api/preview/approval-runs'
     | '/api/preview/operator-dashboard'
+    | '/api/workflow/$'
     | '/preview/workflow-runs/$runId'
     | '/preview/workflows/$id'
     | '/admin/authorization/'
@@ -329,10 +377,14 @@ export interface RootRouteChildren {
   ApiActionRequestsRoute: typeof ApiActionRequestsRouteWithChildren
   PreviewApprovalRuntimeRoute: typeof PreviewApprovalRuntimeRoute
   PreviewOperatorDashboardRoute: typeof PreviewOperatorDashboardRoute
+  WorkflowRunsRunIdRoute: typeof WorkflowRunsRunIdRoute
+  WorkflowsIdRoute: typeof WorkflowsIdRoute
+  WorkflowsIndexRoute: typeof WorkflowsIndexRoute
   ApiAuthLoginRoute: typeof ApiAuthLoginRoute
   ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
   ApiPreviewApprovalRunsRoute: typeof ApiPreviewApprovalRunsRouteWithChildren
   ApiPreviewOperatorDashboardRoute: typeof ApiPreviewOperatorDashboardRoute
+  ApiWorkflowSplatRoute: typeof ApiWorkflowSplatRoute
   PreviewWorkflowRunsRunIdRoute: typeof PreviewWorkflowRunsRunIdRoute
   PreviewWorkflowsIdRoute: typeof PreviewWorkflowsIdRoute
   PreviewWorkflowsIndexRoute: typeof PreviewWorkflowsIndexRoute
@@ -382,6 +434,27 @@ declare module '@tanstack/react-router' {
       path: '/preview/operator-dashboard'
       fullPath: '/preview/operator-dashboard'
       preLoaderRoute: typeof PreviewOperatorDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workflow-runs/$runId': {
+      id: '/workflow-runs/$runId'
+      path: '/workflow-runs/$runId'
+      fullPath: '/workflow-runs/$runId'
+      preLoaderRoute: typeof WorkflowRunsRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workflows/': {
+      id: '/workflows/'
+      path: '/workflows'
+      fullPath: '/workflows/'
+      preLoaderRoute: typeof WorkflowsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workflows/$id': {
+      id: '/workflows/$id'
+      path: '/workflows/$id'
+      fullPath: '/workflows/$id'
+      preLoaderRoute: typeof WorkflowsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/authorization/': {
@@ -452,6 +525,13 @@ declare module '@tanstack/react-router' {
       path: '/api/preview/operator-dashboard'
       fullPath: '/api/preview/operator-dashboard'
       preLoaderRoute: typeof ApiPreviewOperatorDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/workflow/$': {
+      id: '/api/workflow/$'
+      path: '/api/workflow/$'
+      fullPath: '/api/workflow/$'
+      preLoaderRoute: typeof ApiWorkflowSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/preview/workflow-runs/$runId': {
@@ -582,10 +662,14 @@ const rootRouteChildren: RootRouteChildren = {
   ApiActionRequestsRoute: ApiActionRequestsRouteWithChildren,
   PreviewApprovalRuntimeRoute: PreviewApprovalRuntimeRoute,
   PreviewOperatorDashboardRoute: PreviewOperatorDashboardRoute,
+  WorkflowRunsRunIdRoute: WorkflowRunsRunIdRoute,
+  WorkflowsIdRoute: WorkflowsIdRoute,
+  WorkflowsIndexRoute: WorkflowsIndexRoute,
   ApiAuthLoginRoute: ApiAuthLoginRoute,
   ApiAuthLogoutRoute: ApiAuthLogoutRoute,
   ApiPreviewApprovalRunsRoute: ApiPreviewApprovalRunsRouteWithChildren,
   ApiPreviewOperatorDashboardRoute: ApiPreviewOperatorDashboardRoute,
+  ApiWorkflowSplatRoute: ApiWorkflowSplatRoute,
   PreviewWorkflowRunsRunIdRoute: PreviewWorkflowRunsRunIdRoute,
   PreviewWorkflowsIdRoute: PreviewWorkflowsIdRoute,
   PreviewWorkflowsIndexRoute: PreviewWorkflowsIndexRoute,

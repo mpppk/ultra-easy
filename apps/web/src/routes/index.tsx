@@ -16,6 +16,12 @@ export const Route = createFileRoute("/")({ component: Home });
 
 const surfaces = [
   {
+    to: "/workflows",
+    title: "Workflow Studio",
+    description: "Create, publish, run, and monitor governed Workflows.",
+    badge: "production",
+  },
+  {
     to: "/preview/approval-runtime",
     title: "Approval runtime (preview)",
     description: "Preview harness for the approval workflow runtime.",

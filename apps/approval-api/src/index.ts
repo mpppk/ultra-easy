@@ -1,7 +1,8 @@
 import { Result } from "@praha/byethrow";
+import { WorkflowEntrypoint } from "cloudflare:workers";
+import type { WorkflowEvent, WorkflowStep } from "cloudflare:workers";
 
 import {
-  ActionRequestApplicationService,
   ApprovalDecisionCommandProcessor,
   ApprovalDecisionCommandService,
   createActionRequestHttpApi,
@@ -12,17 +13,12 @@ import {
   withHttpAccessLog,
 } from "@app/approval-application";
 import {
-  newIdentifier,
   parseBrand,
   safeLogRecord,
   systemCorrelation,
   type OrganizationId,
 } from "@app/approval-core";
-import {
-  createD1ActionRequestPersistence,
-  D1FixedWindowRateLimiter,
-  D1PublicApiRepository,
-} from "@app/approval-d1";
+import { D1FixedWindowRateLimiter, D1PublicApiRepository } from "@app/approval-d1";
 import {
   ActionWorkflow,
   createSlackNotificationSink,
@@ -34,8 +30,6 @@ import {
   readOperatorAlertThresholds,
   retentionScheduledTask,
   runScheduledTasks,
-  ServiceBindingActionAuthorizer,
-  type ActionServiceBinding,
   type ActionWorkflowEnv,
   type ActionWorkflowParams,
   type NotificationQueueMessage,
@@ -52,19 +46,44 @@ import {
 import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-identity.ts";
 import { readClientRegistry } from "./client-registry.ts";
 import { handleOperatorDashboard } from "./operator-dashboard.ts";
-import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
-import { createActionExecutorRegistry } from "./executor-registry.ts";
-import { StagingSchemaResolver } from "./staging-schema-resolver.ts";
 import { StagingTrustedContextProvider } from "./trusted-context.ts";
 import { approvalApiConfig, type ApprovalApiConfigError } from "./config.ts";
 import { WorkflowDecisionSink } from "./decision-sink.ts";
 import { StagingActionAuthorizer } from "./staging-authorizer.ts";
 import { StagingActionExecutor } from "./staging-executor.ts";
 import { relationshipCoordinator } from "./relationship-mutation.ts";
+import {
+  productionCapabilityPolicy,
+  productionWorkflowPlatform,
+  type ProductionWorkflowEnv,
+} from "./workflow-platform.ts";
+import {
+  runWorkflowRunner,
+  sweepDueWorkflowRuns,
+  type WorkflowRunnerParams,
+} from "@app/workflow-runtime-cloudflare";
+import {
+  createProductionWorkflowStudioApi,
+  PRODUCTION_WORKFLOW_STUDIO_PREFIX,
+} from "./workflow-studio.ts";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
+export class WorkflowRunner extends WorkflowEntrypoint<ApprovalApiEnv, WorkflowRunnerParams> {
+  async run(event: WorkflowEvent<WorkflowRunnerParams>, step: WorkflowStep) {
+    const organizationId = deploymentOrganizationId(this.env);
+    if (!organizationId || String(event.payload.organizationId) !== String(organizationId)) {
+      return { type: "failed" as const, code: "organization_mismatch", message: "Forbidden" };
+    }
+    return runWorkflowRunner({
+      runtime: productionWorkflowPlatform(this.env, organizationId).runtime,
+      event,
+      step,
+    });
+  }
+}
 
-type ApprovalApiEnv = ActionWorkflowEnv &
+type ApprovalApiEnv = ProductionWorkflowEnv &
+  ActionWorkflowEnv &
   FgaMetricsEnv & {
     /** Non-secret Git revision the FGA model was published from (Model view). */
     AUTHORIZATION_MODEL_SOURCE_REVISION?: string;
@@ -135,11 +154,7 @@ async function sweepPendingDecisions(
     : Result.succeed({ processed: pending.value.length });
 }
 
-function buildApi(input: {
-  env: ApprovalApiEnv;
-  authorizerBinding: ActionServiceBinding;
-  organizationId: OrganizationId;
-}): {
+function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }): {
   fetch(request: Request): Promise<Response>;
 } {
   const env = input.env;
@@ -158,15 +173,7 @@ function buildApi(input: {
   const decisionService = new ApprovalDecisionCommandService(readRepository, readRepository, {
     next: () => `command:${crypto.randomUUID()}`,
   });
-  const authorizer = new ServiceBindingActionAuthorizer(input.authorizerBinding, organizationId);
-  const service = new ActionRequestApplicationService({
-    ...createD1ActionRequestPersistence(env.DB, organizationId),
-    schemaResolver: new StagingSchemaResolver(),
-    authorizer,
-    executor: createActionExecutorRegistry(env),
-    workflowStarter: new CloudflareActionWorkflowStarter(env.ACTION_WORKFLOW),
-    idGenerator: { next: () => newIdentifier("ActionRequestId", "action") },
-  });
+  const service = productionWorkflowPlatform(env, organizationId).service;
   const rateLimiter = new D1FixedWindowRateLimiter(env.DB);
   const actionRequestApi = createActionRequestHttpApi({
     service,
@@ -176,6 +183,15 @@ function buildApi(input: {
   });
   const processor = decisionProcessor(env);
   const adminApi = buildAdminAuthorizationApi({ env, identity, organizationId, service });
+  const workflowStudio = createProductionWorkflowStudioApi({
+    env,
+    platform: productionWorkflowPlatform(env, organizationId),
+    capabilityPolicy: productionCapabilityPolicy(env),
+    llmModel: env.WORKFLOW_LLM_MODEL || "@cf/qwen/qwen2.5-coder-32b-instruct",
+    identity,
+    access: adminAccess,
+    organizationId,
+  });
   const publicApi = createPublicHttpApi({
     actionRequestApi,
     readRepository,
@@ -254,6 +270,7 @@ function buildApi(input: {
             ),
         });
       }
+      if (workflowStudio.handles(request)) return workflowStudio.fetch(request);
       return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
     },
   };
@@ -280,6 +297,7 @@ async function reconcileRelationships(
 const APPROVAL_API_ROUTES = [
   ...PUBLIC_HTTP_ROUTES,
   ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
+  `${PRODUCTION_WORKFLOW_STUDIO_PREFIX}/*`,
   "/operator/dashboard",
 ];
 
@@ -314,19 +332,11 @@ async function handleFetch(request: Request, env: ApprovalApiEnv): Promise<Respo
     );
   }
   try {
-    const authorizerBinding = env.ACTION_AUTHORIZER;
-    const executorBinding = env.ACTION_EXECUTOR;
-    if (!authorizerBinding || !executorBinding) {
-      return Response.json(
-        { error: "ACTION_AUTHORIZER/ACTION_EXECUTOR bindingがありません" },
-        { status: 500 },
-      );
-    }
     const organizationId = deploymentOrganizationId(env);
     if (!organizationId) {
       return Response.json({ error: "AUTH0_ORGANIZATION_IDが不正です" }, { status: 500 });
     }
-    return buildApi({ env, authorizerBinding, organizationId }).fetch(request);
+    return buildApi({ env, organizationId }).fetch(request);
   } catch {
     // 例外messageは応答にもlogにも含めない（#93）。access logがinternal_errorの500を記録する。
     return Response.json(
@@ -391,6 +401,19 @@ export default {
             }),
         },
         { name: "sweep_pending_decisions", run: (now) => sweepPendingDecisions(env, now) },
+        {
+          name: "sweep_workflow_runs",
+          run: async (now) => {
+            const organizationId = deploymentOrganizationId(env);
+            if (!organizationId) return Result.fail({ code: "invalid_organization_id" });
+            const platform = productionWorkflowPlatform(env, organizationId);
+            return sweepDueWorkflowRuns({
+              runs: platform.repositories.runs,
+              runtime: platform.runtime,
+              now,
+            });
+          },
+        },
         { name: "reconcile_relationships", run: () => reconcileRelationships(env) },
         retentionScheduledTask(env.DB),
       ],

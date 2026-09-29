@@ -2,6 +2,8 @@ import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import type { ActionRequest, RelationName } from "@app/approval-core";
+import { D1PublishedActionDefinitionResolver } from "@app/approval-d1";
+import { WORKFLOW_EXECUTOR_KEY } from "@app/workflow-application";
 import {
   DEFAULT_FGA_API_URL,
   OpenFgaActionAuthorizer,
@@ -12,6 +14,10 @@ import { parseBrand } from "@app/approval-core";
 import { telemetrySinkFromEnv, type TelemetryEnv } from "@app/approval-runtime-cloudflare";
 
 import { stagingActionRelation } from "./action-relations.ts";
+import {
+  authorizationAdminAccessChecker,
+  type AdminAuthorizationEnv,
+} from "./admin-authorization.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -63,18 +69,6 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
     const relation: RelationName | null = stagingActionRelation(
       (body.request as unknown as ActionRequest).action,
     );
-    if (!relation) {
-      // Unmapped action (or a governed action on an unexpected resource): deny
-      // without calling the provider. Approval can never turn this into allow.
-      return Response.json(
-        {
-          type: "deny",
-          code: "action_relation_unmapped",
-          reason: `Action typeに対応するrelationがありません: ${actionType}`,
-        },
-        { status: 200 },
-      );
-    }
 
     const storeId = env["OPENFGA_STORE_ID"];
     const modelId = env["OPENFGA_AUTHORIZATION_MODEL_ID"];
@@ -97,6 +91,73 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
     );
     if (Result.isFailure(organizationId)) {
       return errorBody("invalid_organization_id", "organizationIdが不正です", false, 400);
+    }
+    if (env["AUTH0_ORGANIZATION_ID"] !== String(organizationId.value)) {
+      return errorBody(
+        "organization_mismatch",
+        "deployment organizationと一致しません",
+        false,
+        403,
+      );
+    }
+    if (!relation) {
+      const type = parseBrand("ActionType", actionType);
+      const userId = parseBrand("UserId", principal.id);
+      if (
+        action?.resource.type === "workflow_subject" &&
+        Result.isSuccess(type) &&
+        principal.type === "user" &&
+        Result.isSuccess(userId)
+      ) {
+        const definition = await new D1PublishedActionDefinitionResolver(
+          (this.env as AdminAuthorizationEnv).DB,
+          organizationId.value,
+        ).resolve(type.value);
+        if (Result.isFailure(definition)) {
+          return errorBody(definition.error.code, "Action Catalogを確認できません", true, 503);
+        }
+        if (definition.value?.executorKey === WORKFLOW_EXECUTOR_KEY) {
+          const allowed = await authorizationAdminAccessChecker(
+            this.env as AdminAuthorizationEnv,
+            organizationId.value,
+          ).check({
+            caller: {
+              organizationId: organizationId.value,
+              principal: { type: "user", id: userId.value },
+            },
+            permission: "editor",
+          });
+          if (Result.isFailure(allowed)) {
+            return errorBody(
+              "workflow_authorization_unavailable",
+              "認可を確認できません",
+              true,
+              503,
+            );
+          }
+          return allowed.value
+            ? Response.json({
+                type: "allow",
+                evidence: {
+                  evaluatedAt,
+                  provider: "openfga",
+                  authorizationModelId: modelId,
+                  consistency: "higher_consistency",
+                },
+              })
+            : Response.json({
+                type: "deny",
+                code: "workflow_editor_required",
+                reason: "Workflowの実行にはeditor権限が必要です",
+              });
+        }
+      }
+      // Unmapped actions remain denied. Approval cannot turn this into allow.
+      return Response.json({
+        type: "deny",
+        code: "action_relation_unmapped",
+        reason: `Action typeに対応するrelationがありません: ${actionType}`,
+      });
     }
     // Workflow再認可経路ではServiceBindingActionAuthorizerがx-ue-action-request-idを付与する。
     // 存在する場合のみFGA latency/error telemetryをemitする（submit時は未採番のため対象外）。

@@ -122,10 +122,20 @@ export class StudioApiError extends Error {
   }
 }
 
-async function call<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-  const response = await previewFetch(`/api/preview/workflow/${path}`, {
-    method: init.method ?? "GET",
-    headers: { "content-type": "application/json" },
+async function call<T>(
+  base: string,
+  fetcher: (path: string, init?: RequestInit) => Promise<Response>,
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  const method = init.method ?? "GET";
+  const response = await fetcher(`${base}/${path}`, {
+    method,
+    credentials: "same-origin",
+    headers: {
+      "content-type": "application/json",
+      ...(method === "GET" ? {} : { "x-ue-console": "1" }),
+    },
     ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
   });
   const text = await response.text();
@@ -146,62 +156,73 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
 
 const enc = encodeURIComponent;
 
-export const studioApi = {
-  bootstrap: () => call<{ actions: number }>("bootstrap", { method: "POST" }),
-  catalog: () => call<StudioCatalog>("catalog"),
-  definitions: () => call<{ definitions: DefinitionSummary[] }>("definitions"),
-  definition: (id: string) => call<DefinitionDetail>(`definitions/${enc(id)}`),
-  validate: (id: string, definition: WorkflowDefinition) =>
-    call<ValidationResponse>(`definitions/${enc(id)}/validate`, {
-      method: "POST",
-      body: { definition },
-    }),
-  saveDraft: (id: string, definition: WorkflowDefinition, expectedRevision: number | null) =>
-    call<{ revision: number; issues: WorkflowValidationIssue[]; capabilities: CapabilityReview[] }>(
-      `definitions/${enc(id)}`,
-      { method: "PUT", body: { definition, expectedRevision } },
-    ),
-  publish: (id: string, definition: WorkflowDefinition, actionType?: string) =>
-    call<{
-      version: WorkflowVersion;
-      composite?: { definition: { actionType: string; version: number } };
-    }>(`definitions/${enc(id)}/publish`, {
-      method: "POST",
-      body: { definition, ...(actionType ? { actionType } : {}) },
-    }),
-  projection: (id: string, input: unknown, version?: number) =>
-    call<ApprovalProjection>(`definitions/${enc(id)}/projection`, {
-      method: "POST",
-      body: { input, ...(version ? { version } : {}) },
-    }),
-  programs: () => call<{ programs: ProgramNodeVersion[] }>("programs"),
-  draftProgram: (input: Record<string, unknown>) =>
-    call<ProgramDraft>("programs/draft", { method: "POST", body: input }),
-  publishProgram: (draft: ProgramDraft, samples: unknown[]) =>
-    call<{
-      version: ProgramNodeVersion;
-      reference: { programId: string; version: number; sourceDigest: string };
-    }>("programs/publish", { method: "POST", body: { draft, samples } }),
-  startRun: (actionType: string, input: unknown, resourceId?: string) =>
-    call<{ actionRequestId: string; status: string }>("runs", {
-      method: "POST",
-      body: { actionType, input, ...(resourceId ? { resourceId } : {}) },
-    }),
-  runs: () => call<{ runs: RunSummary[] }>("runs"),
-  run: (runId: string) => call<RunView>(`runs/${enc(runId)}`),
-  advance: (runId: string) =>
-    call<WorkflowAdvanceResult>(`runs/${enc(runId)}/advance`, { method: "POST" }),
-  cancel: (runId: string) =>
-    call<WorkflowAdvanceResult>(`runs/${enc(runId)}/cancel`, { method: "POST" }),
-  provideInput: (runId: string, effectId: string, value: unknown) =>
-    call<WorkflowAdvanceResult>(`runs/${enc(runId)}/effects/${enc(effectId)}/input`, {
-      method: "POST",
-      body: { value },
-    }),
-  action: (actionRequestId: string) => call<ActionView>(`actions/${enc(actionRequestId)}`),
-  decide: (actionRequestId: string, decision: "approve" | "reject") =>
-    call<{ accepted: boolean; userId: string }>(`actions/${enc(actionRequestId)}/decision`, {
-      method: "POST",
-      body: { decision },
-    }),
-};
+function createStudioApi(
+  base: string,
+  fetcher: (path: string, init?: RequestInit) => Promise<Response>,
+) {
+  const request = <T>(path: string, init: { method?: string; body?: unknown } = {}) =>
+    call<T>(base, fetcher, path, init);
+  return {
+    bootstrap: () => request<{ actions: number }>("bootstrap", { method: "POST" }),
+    catalog: () => request<StudioCatalog>("catalog"),
+    definitions: () => request<{ definitions: DefinitionSummary[] }>("definitions"),
+    definition: (id: string) => request<DefinitionDetail>(`definitions/${enc(id)}`),
+    validate: (id: string, definition: WorkflowDefinition) =>
+      request<ValidationResponse>(`definitions/${enc(id)}/validate`, {
+        method: "POST",
+        body: { definition },
+      }),
+    saveDraft: (id: string, definition: WorkflowDefinition, expectedRevision: number | null) =>
+      request<{
+        revision: number;
+        issues: WorkflowValidationIssue[];
+        capabilities: CapabilityReview[];
+      }>(`definitions/${enc(id)}`, { method: "PUT", body: { definition, expectedRevision } }),
+    publish: (id: string, definition: WorkflowDefinition, actionType?: string) =>
+      request<{
+        version: WorkflowVersion;
+        composite?: { definition: { actionType: string; version: number } };
+      }>(`definitions/${enc(id)}/publish`, {
+        method: "POST",
+        body: { definition, ...(actionType ? { actionType } : {}) },
+      }),
+    projection: (id: string, input: unknown, version?: number) =>
+      request<ApprovalProjection>(`definitions/${enc(id)}/projection`, {
+        method: "POST",
+        body: { input, ...(version ? { version } : {}) },
+      }),
+    programs: () => request<{ programs: ProgramNodeVersion[] }>("programs"),
+    draftProgram: (input: Record<string, unknown>) =>
+      request<ProgramDraft>("programs/draft", { method: "POST", body: input }),
+    publishProgram: (draft: ProgramDraft, samples: unknown[]) =>
+      request<{
+        version: ProgramNodeVersion;
+        reference: { programId: string; version: number; sourceDigest: string };
+      }>("programs/publish", { method: "POST", body: { draft, samples } }),
+    startRun: (actionType: string, input: unknown, resourceId?: string) =>
+      request<{ actionRequestId: string; status: string }>("runs", {
+        method: "POST",
+        body: { actionType, input, ...(resourceId ? { resourceId } : {}) },
+      }),
+    runs: () => request<{ runs: RunSummary[] }>("runs"),
+    run: (runId: string) => request<RunView>(`runs/${enc(runId)}`),
+    advance: (runId: string) =>
+      request<WorkflowAdvanceResult>(`runs/${enc(runId)}/advance`, { method: "POST" }),
+    cancel: (runId: string) =>
+      request<WorkflowAdvanceResult>(`runs/${enc(runId)}/cancel`, { method: "POST" }),
+    provideInput: (runId: string, effectId: string, value: unknown) =>
+      request<WorkflowAdvanceResult>(`runs/${enc(runId)}/effects/${enc(effectId)}/input`, {
+        method: "POST",
+        body: { value },
+      }),
+    action: (actionRequestId: string) => request<ActionView>(`actions/${enc(actionRequestId)}`),
+    decide: (actionRequestId: string, decision: "approve" | "reject") =>
+      request<{ accepted: boolean; userId: string }>(`actions/${enc(actionRequestId)}/decision`, {
+        method: "POST",
+        body: { decision },
+      }),
+  };
+}
+
+export const studioApi = createStudioApi("/api/preview/workflow", previewFetch);
+export const productionStudioApi = createStudioApi("/api/workflow", fetch);

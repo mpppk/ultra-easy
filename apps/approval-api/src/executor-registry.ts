@@ -69,7 +69,14 @@ class UnavailableActionExecutor implements ActionExecutor {
 export function createActionExecutorRegistry(
   env: ActionExecutorRegistryEnv,
 ): ActionExecutorRegistry {
-  return new ActionExecutorRegistry({
+  return new ActionExecutorRegistry(createPrimitiveActionExecutors(env));
+}
+
+/** WorkflowPlatformにも同じprimitive executor集合を渡す。 */
+export function createPrimitiveActionExecutors(
+  env: ActionExecutorRegistryEnv,
+): Record<string, ActionExecutor> {
+  return {
     [String(GOVERNANCE_EXECUTOR_KEY)]: new GovernanceActionExecutor(
       new D1GovernanceRepository(env.DB),
       new CloudflareWorkflowCancellationControl(
@@ -82,5 +89,5 @@ export function createActionExecutorRegistry(
       relationshipExecutor(env) ??
       new UnavailableActionExecutor("fga_not_configured", "FGA接続設定がありません"),
     [STAGING_EXECUTOR_KEY]: new StagingSinkActionExecutor(),
-  });
+  };
 }

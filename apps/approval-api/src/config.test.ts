@@ -12,6 +12,8 @@ const validEnv = {
   ACTION_AUTHORIZER: binding,
   ACTION_EXECUTOR: binding,
   ACTION_WORKFLOW: binding,
+  WORKFLOW_RUNNER: binding,
+  AI: binding,
   NOTIFICATION_QUEUE: binding,
   AUTH0_DOMAIN: "tenant.example.auth0.com",
   AUTH0_API_AUDIENCE: "https://ultra-easy/approval-api",
@@ -108,6 +110,7 @@ describe("#84 wrangler environments", () => {
         ...bindings(config.d1_databases),
         ...bindings(config.services),
         ...bindings(config.workflows),
+        ...(config.ai ? [config.ai.binding] : []),
         ...bindings(config.queues.producers),
       ]);
       for (const name of REQUIRED_BINDINGS) expect(declared, name).toContain(name);
