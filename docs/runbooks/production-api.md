@@ -44,8 +44,9 @@ Production domain + custom-domain cutover are follow-ups.
   - `AUTH0_TENANT_IS_ORGANIZATION=true`: explicit opt-in that trusts every
     user/client of the tenant as a member. Staging only. **Precondition: public
     signup is disabled on `Username-Password-Authentication`** (Auth0 dashboard →
-    Authentication → Database → Disable Sign Ups), otherwise anyone could mint a
-    member token.
+    Authentication → Database → Disable Sign Ups), and social connections that
+    permit self-service registration (such as Google) are disabled for every
+    application in the tenant. Otherwise anyone could mint a member token.
   - Neither set → every request is 403 `organization_membership_unverified`.
 - Scopes (#82) are checked per operation (`scope` or RBAC `permissions`):
   reads need `read:action-requests`; submit and decisions need
