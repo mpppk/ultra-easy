@@ -196,6 +196,8 @@ function platformError(error: unknown): UltraEasyError {
 
 export type MockUltraEasyDependencies = {
   db: D1DatabaseLike;
+  /** Identity authenticated through the M2M client credentials flow. */
+  maintenanceAgentId?: string;
   downstream: McpDownstream;
   now: () => string;
   /** Base path of the mock Approval UI (deep links). */
@@ -291,7 +293,10 @@ export class MockUltraEasy implements UltraEasyClient {
     spaceId: string,
     actionType: string,
   ): Promise<boolean> {
-    if (authorityId === MAINTENANCE_SCHEDULE_TRIGGER.id)
+    if (
+      authorityId === MAINTENANCE_SCHEDULE_TRIGGER.id ||
+      (this.deps.maintenanceAgentId !== undefined && authorityId === this.deps.maintenanceAgentId)
+    )
       return SCHEDULE_TRIGGER_ACTIONS.has(actionType);
     const role = await this.roleOf(organizationId, authorityId, spaceId);
     return role !== null && (REQUIRED_ROLES[actionType] ?? []).includes(role);

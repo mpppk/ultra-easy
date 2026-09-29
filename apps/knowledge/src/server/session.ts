@@ -8,7 +8,12 @@ import { Result } from "@praha/byethrow";
 export const SESSION_COOKIE = "ue_knowledge_session";
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 
-export type KnowledgeSession = { principalId: string; organizationId: string; expiresAt: number };
+export type KnowledgeSession = {
+  principalId: string;
+  organizationId: string;
+  expiresAt: number;
+  accessToken?: string;
+};
 
 function base64Url(bytes: Uint8Array): string {
   let binary = "";
@@ -69,11 +74,14 @@ async function open(value: string, secret: string): Promise<Record<string, unkno
 }
 
 export async function sealSession(
-  session: Omit<KnowledgeSession, "expiresAt">,
+  session: Omit<KnowledgeSession, "expiresAt"> & { expiresAt?: number },
   secret: string,
   nowMs: number = Date.now(),
 ): Promise<string> {
-  const payload: KnowledgeSession = { ...session, expiresAt: nowMs + SESSION_TTL_SECONDS * 1000 };
+  const payload: KnowledgeSession = {
+    ...session,
+    expiresAt: Math.min(session.expiresAt ?? Infinity, nowMs + SESSION_TTL_SECONDS * 1000),
+  };
   return seal(payload, secret);
 }
 
@@ -88,6 +96,7 @@ export async function openSession(
     typeof session.principalId !== "string" ||
     typeof session.organizationId !== "string" ||
     typeof session.expiresAt !== "number" ||
+    (session.accessToken !== undefined && typeof session.accessToken !== "string") ||
     session.expiresAt <= nowMs
   ) {
     return null;
@@ -96,6 +105,7 @@ export async function openSession(
     principalId: session.principalId,
     organizationId: session.organizationId,
     expiresAt: session.expiresAt,
+    ...(typeof session.accessToken === "string" ? { accessToken: session.accessToken } : {}),
   };
 }
 
@@ -187,8 +197,12 @@ export function readCookie(request: Request, name: string): string | null {
   return null;
 }
 
-export function sessionCookie(value: string, secure: boolean): string {
-  return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly;${secure ? " Secure;" : ""} SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}`;
+export function sessionCookie(value: string, secure: boolean, expiresAt?: number): string {
+  const maxAge =
+    expiresAt === undefined
+      ? SESSION_TTL_SECONDS
+      : Math.max(0, Math.min(SESSION_TTL_SECONDS, Math.floor((expiresAt - Date.now()) / 1000)));
+  return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly;${secure ? " Secure;" : ""} SameSite=Strict; Max-Age=${maxAge}`;
 }
 
 export function clearSessionCookie(secure: boolean): string {

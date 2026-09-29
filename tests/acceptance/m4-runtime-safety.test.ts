@@ -9,10 +9,12 @@ import {
   ApprovalUserAlreadyDecidedError,
   UnsupportedInterpreterSemanticsVersionError,
 } from "@app/approval-core";
+import type { ClientId } from "@app/approval-core";
 
 import {
   alice,
   bob,
+  branded,
   decision,
   directStep,
   MutableResolver,
@@ -38,6 +40,11 @@ describe("M4 Durable Approval Runtime / safety", () => {
       },
       "distinct",
     );
+    p.evaluationSnapshot.origin = {
+      type: "api",
+      clientId: branded<ClientId>("knowledge-client"),
+      caller: { type: "user", id: alice },
+    };
     const started = await memory.start({ plan: p, startedAt });
     assert(Result.isSuccess(started));
     const firstApproved = await memory.decide({
@@ -64,6 +71,11 @@ describe("M4 Durable Approval Runtime / safety", () => {
     });
     resolver.set(business.target, [alice, bob]);
     const deniedPlan = plan(business, "self-deny");
+    deniedPlan.evaluationSnapshot.origin = {
+      type: "api",
+      clientId: branded<ClientId>("knowledge-client"),
+      caller: { type: "user", id: alice },
+    };
     const deniedStarted = await deniedRuntime.start({ plan: deniedPlan, startedAt });
     assert(Result.isSuccess(deniedStarted));
     expect(deniedStarted.value.tasks[0]?.candidateUserIds.map(String)).toEqual(["user:bob"]);

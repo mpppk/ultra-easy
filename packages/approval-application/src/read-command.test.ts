@@ -15,6 +15,7 @@ import type {
 import {
   ApprovalDecisionCommandProcessor,
   ApprovalDecisionCommandService,
+  HttpTrustedContextError,
   PublicApiRepositoryError,
   createPublicHttpApi,
 } from "./index.ts";
@@ -351,7 +352,9 @@ class FakeSink implements ApprovalDecisionSink {
 function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
   const identity = {
     viewer: { type: "user", id: alice } as PrincipalRef,
+    clientId: "web-client",
     operators: new Set<string>(),
+    deniedActionTypes: new Set<string>(),
   };
   const readRepository = new FakeReadRepository();
   const commandRepository = new FakeCommandRepository();
@@ -396,8 +399,23 @@ function createHarness(options: { rateLimitPolicy?: RateLimitPolicy } = {}) {
     readRepository,
     decisionService,
     identityProvider: {
-      authenticate() {
+      authenticate(input) {
+        if (input.actionType && identity.deniedActionTypes.has(input.actionType)) {
+          return Promise.resolve(
+            Result.fail(
+              new HttpTrustedContextError(403, "client_operation_not_allowed", "client restricted"),
+            ),
+          );
+        }
         return Promise.resolve(Result.succeed(identity.viewer));
+      },
+      authenticateWithClient() {
+        return Promise.resolve(
+          Result.succeed({
+            principal: identity.viewer,
+            clientId: branded(identity.clientId),
+          }),
+        );
       },
     },
     operatorAccess: {
@@ -509,6 +527,33 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     expect(second.status).toBe(201);
     expect(await second.json()).toEqual(await first.json());
     expect(harness.createCalls()).toBe(1);
+  });
+
+  it("#193: 別clientの同一user・同一keyへActionRequest作成応答をreplayしない", async () => {
+    const harness = createHarness();
+    const path = "/v1/organizations/org%3Am6/action-requests";
+    const init = {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "cross-client" },
+      body: JSON.stringify({
+        action: {
+          type: "ticket.priority.change",
+          resource: { type: "ticket", id: "TICKET-1" },
+          input: { priority: "normal" },
+        },
+      }),
+    } satisfies RequestInit;
+
+    const first = await harness.api.fetch(request(path, init));
+    harness.identity.clientId = "knowledge-client";
+    const second = await harness.api.fetch(request(path, init));
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(((await first.json()) as { id: string }).id).not.toBe(
+      ((await second.json()) as { id: string }).id,
+    );
+    expect(harness.createCalls()).toBe(2);
   });
 
   function statusSequenceApi(statuses: number[], harness: ReturnType<typeof createHarness>) {
@@ -1101,5 +1146,49 @@ describe("M6-2 Read API / Decision command / Idempotency", () => {
     const inbox = await harness.api.fetch(request("/v1/organizations/org%3Am6/me/approval-tasks"));
     expect(inbox.status).toBe(403);
     expect(harness.commandRepository.records.size).toBe(0);
+  });
+
+  it("#193: clientのaction制限を読み取り・inbox・decisionにも適用する", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "before-client-restriction");
+    harness.identity.deniedActionTypes.add(String(actionView.action.type));
+    const encodedAction = encodeURIComponent(String(actionRequestId));
+    for (const path of [
+      `/v1/organizations/org%3Am6/action-requests/${encodedAction}`,
+      `/v1/organizations/org%3Am6/action-requests/${encodedAction}/tasks`,
+      `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}`,
+      `/v1/organizations/org%3Am6/approval-commands/${encodeURIComponent(commandId)}`,
+    ]) {
+      const response = await harness.api.fetch(request(path));
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "client_operation_not_allowed",
+      });
+    }
+    const inbox = await harness.api.fetch(request("/v1/organizations/org%3Am6/me/approval-tasks"));
+    expect(inbox.status).toBe(200);
+    await expect(inbox.json()).resolves.toMatchObject({ items: [] });
+    const decision = await harness.api.fetch(
+      request(
+        `/v1/organizations/org%3Am6/approval-tasks/${encodeURIComponent(String(taskId))}/decisions`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", "idempotency-key": "denied-client" },
+          body: JSON.stringify({ decision: "approve" }),
+        },
+      ),
+    );
+    expect(decision.status).toBe(403);
+  });
+
+  it("#193: Decision commandに検証済みclient IDを残す", async () => {
+    const harness = createHarness();
+    const commandId = await acceptDecision(harness, "decision-client-audit");
+    expect(harness.commandRepository.records.get(commandId)?.command.clientId).toBe("web-client");
+    const response = await harness.api.fetch(
+      request(`/v1/organizations/org%3Am6/approval-commands/${encodeURIComponent(commandId)}`),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ clientId: "web-client" });
   });
 });

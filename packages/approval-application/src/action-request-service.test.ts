@@ -214,6 +214,7 @@ function createHarness(
     approvalRequired?: boolean;
     rateLimitPolicy?: RateLimitPolicy;
     telemetry?: MemoryTelemetrySink;
+    origin?: TrustedActionRequestContext["origin"];
   } = {},
 ) {
   const authorizer = new FakeAuthorizer(input.allowed ?? true);
@@ -242,7 +243,12 @@ function createHarness(
   const trustedContextProvider: HttpTrustedContextProvider = {
     resolve() {
       trustedContextCalls += 1;
-      return Promise.resolve(Result.succeed(trustedContext));
+      return Promise.resolve(
+        Result.succeed({
+          ...trustedContext,
+          ...(input.origin ? { origin: input.origin } : {}),
+        }),
+      );
     },
   };
   const api = createActionRequestHttpApi({
@@ -282,6 +288,29 @@ function request(body: unknown): Request {
 }
 
 describe("M6-1 ActionRequest unified entrypoint", () => {
+  it("#193: ActionRequestのaudit eventにcallerとclient IDを残す", async () => {
+    const harness = createHarness({
+      origin: {
+        type: "api",
+        clientId: branded("knowledge-client"),
+        caller: { type: "user", id: alice },
+      },
+    });
+    const response = await harness.api.fetch(request({ action }));
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      caller: { type: "user", id: alice },
+      clientId: "knowledge-client",
+    });
+    const received = harness.eventRepository.records.find(
+      (record) => record.event.type === "action.received",
+    );
+    expect(received?.event).toMatchObject({
+      type: "action.received",
+      caller: { type: "user", id: alice },
+      clientId: "knowledge-client",
+    });
+  });
   it("AC-M6-001: callerは同じPOSTだけを使い、Policy結果でimmediate executeになる", async () => {
     const harness = createHarness({ approvalRequired: false });
 

@@ -63,7 +63,12 @@ async function resolveCaller(
 ): Result.ResultAsync<Caller | null, KnowledgeServiceError> {
   const cookie = readCookie(request, SESSION_COOKIE);
   const session = cookie ? await openSession(cookie, runtime.sessionSecret) : null;
-  if (!session || session.organizationId !== runtime.organizationId) return Result.succeed(null);
+  if (
+    !session ||
+    session.organizationId !== runtime.organizationId ||
+    (runtime.auth.mode === "auth0" && !session.accessToken)
+  )
+    return Result.succeed(null);
   const principals = await runtime.ultraEasy.listPrincipals(runtime.organizationId);
   if (Result.isFailure(principals)) {
     return Result.fail(
@@ -441,25 +446,30 @@ async function handleAuth(
     }
     const code = url.searchParams.get("code");
     if (!code) return failed("invalid_request");
-    const principal = await auth.auth0.signIn({
+    const signedIn = await auth.auth0.signIn({
       code,
       codeVerifier: transaction.codeVerifier,
       redirectUri: callbackUrl,
       nonce: transaction.nonce,
     });
-    if (Result.isFailure(principal)) return failed(principal.error.code);
+    if (Result.isFailure(signedIn)) return failed(signedIn.error.code);
     const registered = await runtime.ultraEasy.ensurePrincipal({
       organizationId: runtime.organizationId,
-      principal: principal.value,
+      principal: signedIn.value.principal,
     });
     if (Result.isFailure(registered)) return failed("platform_unavailable");
     const session = await sealSession(
-      { principalId: principal.value.id, organizationId: runtime.organizationId },
+      {
+        principalId: signedIn.value.principal.id,
+        organizationId: runtime.organizationId,
+        accessToken: signedIn.value.accessToken,
+        expiresAt: signedIn.value.expiresAt,
+      },
       runtime.sessionSecret,
     );
     return redirect(transaction.returnTo, [
       clearLoginTransactionCookie(),
-      sessionCookie(session, true),
+      sessionCookie(session, true, signedIn.value.expiresAt),
     ]);
   }
 

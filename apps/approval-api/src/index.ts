@@ -50,6 +50,7 @@ import {
   buildAdminAuthorizationApi,
 } from "./admin-authorization.ts";
 import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-identity.ts";
+import { readClientRegistry } from "./client-registry.ts";
 import { handleOperatorDashboard } from "./operator-dashboard.ts";
 import { CloudflareActionWorkflowStarter } from "./workflow-starter.ts";
 import { createActionExecutorRegistry } from "./executor-registry.ts";
@@ -81,6 +82,10 @@ type ApprovalApiEnv = ActionWorkflowEnv &
      * （public signupを無効にした単一組織tenant向けの明示opt-in）。どちらも無ければ全て403。
      */
     AUTH0_TENANT_IS_ORGANIZATION?: string;
+    AUTH0_WEB_CLIENT_ID?: string;
+    AUTH0_AGENT_CLIENT_ID?: string;
+    AUTH0_KNOWLEDGE_CLIENT_ID?: string;
+    AUTH0_KNOWLEDGE_AGENT_CLIENT_ID?: string;
     /** wrangler secret put のみ。平文commit禁止。未設定時は配信をskip (no-op成功) する。 */
     SLACK_WEBHOOK_URL?: string;
     /** alert閾値override (staging drill用 --var)。未設定・不正値はbaselineへfallback。 */
@@ -145,6 +150,7 @@ function buildApi(input: {
     domain: env.AUTH0_DOMAIN,
     audience: env.AUTH0_API_AUDIENCE,
     organizationId,
+    clients: readClientRegistry(env),
     ...(membership ? { membership } : {}),
   });
   const adminAccess = authorizationAdminAccessChecker(env, organizationId);

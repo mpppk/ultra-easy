@@ -115,16 +115,20 @@ function database(): SqliteD1Database {
     "0015_approval_command_delivery.sql",
     "0016_runtime_projection_version.sql",
     "0018_approval_task_candidates.sql",
+    "0026_approval_command_client_id.sql",
   ]) {
     sqlite.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), "utf8"));
   }
   return new SqliteD1Database(sqlite);
 }
 
-async function approvalPlan(): Promise<MaterializedApprovalPlan> {
+async function approvalPlan(
+  origin?: PolicyEvaluationContext["origin"],
+): Promise<MaterializedApprovalPlan> {
   const request = createTicketActionRequest();
   const context: PolicyEvaluationContext = {
     ...request,
+    ...(origin ? { origin } : {}),
     actor: { type: "user", id: alice },
     authority: { principal: { type: "user", id: alice } },
     organization: { id: organizationId },
@@ -204,7 +208,11 @@ function runtimeState(plan: MaterializedApprovalPlan): ApprovalRuntimeState {
 describe("D1PublicApiRepository", () => {
   it("ActionRequest / task / inboxを既存projectionから再構成する", async () => {
     const db = database();
-    const plan = await approvalPlan();
+    const plan = await approvalPlan({
+      type: "api",
+      clientId: branded("knowledge-client"),
+      caller: { type: "user", id: alice },
+    });
     const saved = await new D1MaterializedPlanRepository(db).save(plan);
     expect(saved.type).toBe("created");
     const projected = await new D1ApprovalRuntimeProjectionRepository(db).replace({
@@ -221,6 +229,8 @@ describe("D1PublicApiRepository", () => {
     assert(Result.isSuccess(action));
     expect(action.value).toMatchObject({
       id: String(plan.actionRequestId),
+      clientId: "knowledge-client",
+      caller: { type: "user", id: alice },
       status: "pending_approval",
       approval: { required: true, activeTaskCount: 1 },
     });
@@ -323,6 +333,7 @@ describe("D1PublicApiRepository", () => {
         taskId,
         type: "approve",
         status: "pending",
+        clientId: branded("knowledge-client"),
         createdAt: "2026-09-19T00:00:02.000Z",
       },
       actorUserId: alice,
@@ -339,6 +350,7 @@ describe("D1PublicApiRepository", () => {
     });
     assert(Result.isSuccess(claimed));
     expect(claimed.value?.command.id).toBe("command:m6-d1");
+    expect(claimed.value?.command.clientId).toBe("knowledge-client");
     const contended = await repository.claim({
       organizationId,
       commandId: "command:m6-d1",

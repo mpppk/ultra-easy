@@ -4,6 +4,7 @@ import type { AuthorizationEvidence } from "./authorization.ts";
 import type {
   ActionFingerprint,
   ActionRequestId,
+  ClientId,
   ApprovalBindingFingerprint,
   ApprovalPlanChecksum,
   ApprovalStepKey,
@@ -43,6 +44,7 @@ export type ActionEvent =
       actor: PrincipalRef;
       authority: PrincipalRef;
       caller?: PrincipalRef;
+      clientId?: ClientId;
       delegationChain?: DelegationHop[];
       actionFingerprint: ActionFingerprint;
       /** 呼び出し元が監査相関のために渡した任意の参照値（HTTPの`clientReference`）。 */
@@ -281,6 +283,9 @@ export function actionPlanAuditEvents(input: {
     authority: plan.evaluationSnapshot.authority.principal,
     ...(plan.evaluationSnapshot.origin.caller
       ? { caller: plan.evaluationSnapshot.origin.caller }
+      : {}),
+    ...(plan.evaluationSnapshot.origin.clientId
+      ? { clientId: plan.evaluationSnapshot.origin.clientId }
       : {}),
     ...(plan.evaluationSnapshot.authority.delegation
       ? { delegationChain: plan.evaluationSnapshot.authority.delegation.chain }

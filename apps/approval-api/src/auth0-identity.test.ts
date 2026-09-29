@@ -10,25 +10,39 @@ import {
   readAuth0OrganizationMembership,
   type Auth0OrganizationMembership,
 } from "./auth0-identity.ts";
+import { readClientRegistry, type ClientRegistry } from "./client-registry.ts";
+import { StagingTrustedContextProvider } from "./trusted-context.ts";
 
 const organizationId = "organization:staging" as OrganizationId;
 const domain = "dev-67c6cfj2y51bmeyf.us.auth0.com";
 const audience = "https://ultra-easy/approval-api";
 const allScopes = "openid read:action-requests write:action-requests";
 
-async function harness(membership: Auth0OrganizationMembership | null = { type: "tenant" }) {
+async function harness(
+  membership: Auth0OrganizationMembership | null = { type: "tenant" },
+  clients: ClientRegistry = new Map([
+    ["web-client", { operations: "*", actionTypes: "*", resourceTypes: "*" }],
+    ["ci-client", { operations: "*", actionTypes: "*", resourceTypes: "*" }],
+  ]),
+) {
   const pair = await generateKeyPair("RS256");
   const publicJwk = { ...(await exportJWK(pair.publicKey)), kid: "test-key" };
   const provider = new Auth0IdentityProvider(
-    { domain, audience, organizationId, ...(membership ? { membership } : {}) },
+    {
+      domain,
+      audience,
+      organizationId,
+      clients,
+      ...(membership ? { membership } : {}),
+    },
     createLocalJWKSet({ keys: [publicJwk] }),
   );
-  const sign = (claims: Record<string, unknown>) =>
-    new SignJWT({ scope: allScopes, ...claims })
+  const sign = (claims: Record<string, unknown>, expiresAt = new Date("2030-01-01T00:00:00Z")) =>
+    new SignJWT({ scope: allScopes, azp: "web-client", ...claims })
       .setProtectedHeader({ alg: "RS256", kid: "test-key" })
       .setIssuer(`https://${domain}/`)
       .setAudience(audience)
-      .setExpirationTime(new Date("2030-01-01T00:00:00Z"))
+      .setExpirationTime(expiresAt)
       .sign(pair.privateKey);
   return { provider, sign };
 }
@@ -192,7 +206,9 @@ describe("Auth0IdentityProvider", () => {
     });
 
     const machine = await provider.resolve(
-      requestWith(await sign({ sub: "client-1@clients", gty: "client-credentials" })),
+      requestWith(
+        await sign({ sub: "client-1@clients", azp: "client-1", gty: "client-credentials" }),
+      ),
     );
     assert(Result.isFailure(machine));
     expect(machine.error).toMatchObject({ status: 403, code: "machine_principal_not_allowed" });
@@ -200,6 +216,118 @@ describe("Auth0IdentityProvider", () => {
     const anonymous = await provider.resolve(requestWith(null));
     assert(Result.isFailure(anonymous));
     expect(anonymous.error.status).toBe(401);
+
+    const unknownClient = await provider.resolve(
+      requestWith(await sign({ sub: "auth0|staging-alice", azp: "unknown-client" })),
+    );
+    assert(Result.isFailure(unknownClient));
+    expect(unknownClient.error.code).toBe("client_not_registered");
+
+    const knowledge = await harness(
+      { type: "tenant" },
+      readClientRegistry({
+        AUTH0_WEB_CLIENT_ID: "web-client",
+        AUTH0_KNOWLEDGE_CLIENT_ID: "knowledge-client",
+      }),
+    );
+    const externalAdmin = await knowledge.provider.resolve(
+      requestWith(await knowledge.sign({ sub: "auth0|staging-alice", azp: "knowledge-client" })),
+    );
+    assert(Result.isFailure(externalAdmin));
+    expect(externalAdmin.error.code).toBe("client_operation_not_allowed");
+  });
+
+  it("#193: 未登録client、許可外operation / action / resource、期限切れを拒否する", async () => {
+    const registry = readClientRegistry({
+      AUTH0_WEB_CLIENT_ID: "web-client",
+      AUTH0_AGENT_CLIENT_ID: "ci-client",
+      AUTH0_KNOWLEDGE_CLIENT_ID: "knowledge-client",
+    });
+    const { provider, sign } = await harness({ type: "tenant" }, registry);
+    const check = async (
+      claims: Record<string, unknown>,
+      operation: "action_request.read" | "action_request.submit" | "approval_decision.submit",
+      actionType?: string,
+      resourceType?: string,
+    ) =>
+      provider.authenticate({
+        request: requestWith(await sign({ sub: "auth0|alice", ...claims })),
+        organizationId,
+        operation,
+        ...(actionType ? { actionType } : {}),
+        ...(resourceType ? { resourceType } : {}),
+      });
+    const unknown = await check({ azp: "unknown-client" }, "action_request.read");
+    assert(Result.isFailure(unknown));
+    expect(unknown.error.code).toBe("client_not_registered");
+
+    const allowed = await check(
+      { azp: "knowledge-client" },
+      "action_request.submit",
+      "knowledge.publish_document",
+      "knowledge_page",
+    );
+    expect(Result.isSuccess(allowed)).toBe(true);
+    for (const [actionType, resourceType] of [
+      ["billing.pay", "knowledge_page"],
+      ["knowledge.publish_document", "billing_account"],
+    ]) {
+      const denied = await check(
+        { azp: "knowledge-client" },
+        "action_request.submit",
+        actionType,
+        resourceType,
+      );
+      assert(Result.isFailure(denied));
+      expect(denied.error.code).toBe("client_operation_not_allowed");
+    }
+
+    const agentDecision = await check(
+      {
+        azp: "knowledge-client",
+        sub: "knowledge-client@clients",
+        gty: "client-credentials",
+      },
+      "approval_decision.submit",
+    );
+    assert(Result.isSuccess(agentDecision));
+    expect(agentDecision.value.type).toBe("agent"); // HTTP decision boundary rejects agent principals.
+
+    const expired = await provider.authenticate({
+      request: requestWith(await sign({ sub: "auth0|alice" }, new Date("2020-01-01T00:00:00Z"))),
+      organizationId,
+      operation: "action_request.read",
+    });
+    assert(Result.isFailure(expired));
+    expect(expired.error.status).toBe(401);
+  });
+
+  it("#193: direct userのtrusted contextにcallerとclientを記録する", async () => {
+    const { provider, sign } = await harness();
+    const trusted = await new StagingTrustedContextProvider(provider).resolve({
+      request: requestWith(await sign({ sub: "auth0|alice" })),
+      organizationId,
+      actionType: "knowledge.publish_document",
+      resourceType: "knowledge_page",
+    });
+    assert(Result.isSuccess(trusted));
+    expect(trusted.value.origin).toEqual({
+      type: "api",
+      clientId: "web-client",
+      caller: { type: "user", id: "user:auth0|alice" },
+    });
+    expect(trusted.value.actor).toEqual(trusted.value.authority.principal);
+  });
+
+  it("#193: delegation grant付きの提出を拒否する", async () => {
+    const { provider, sign } = await harness();
+    const trusted = await new StagingTrustedContextProvider(provider).resolve({
+      request: requestWith(await sign({ sub: "auth0|alice" })),
+      organizationId,
+      delegationGrantId: "expired-grant",
+    });
+    assert(Result.isFailure(trusted));
+    expect(trusted.error).toMatchObject({ status: 403, code: "delegation_not_supported" });
   });
 
   it("membership設定はclaim値を優先し、tenant信頼は明示opt-inのときだけ有効にする", () => {
@@ -236,7 +364,12 @@ describe("auth0KeyResolver (#90)", () => {
       return Response.json({ keys: [publicJwk] });
     }) as typeof globalThis.fetch);
 
-    const token = await new SignJWT({ scope: allScopes, sub: "auth0|alice", gty: "password" })
+    const token = await new SignJWT({
+      scope: allScopes,
+      sub: "auth0|alice",
+      gty: "password",
+      azp: "web-client",
+    })
       .setProtectedHeader({ alg: "RS256", kid: "cache-key" })
       .setIssuer(`https://${isolateDomain}/`)
       .setAudience(audience)
@@ -250,6 +383,9 @@ describe("auth0KeyResolver (#90)", () => {
         audience,
         organizationId,
         membership: { type: "tenant" },
+        clients: new Map([
+          ["web-client", { operations: "*", actionTypes: "*", resourceTypes: "*" }],
+        ]),
       });
       const principal = await provider.authenticate({
         request: requestWith(token),

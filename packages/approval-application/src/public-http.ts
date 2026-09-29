@@ -3,6 +3,7 @@ import { Result } from "@praha/byethrow";
 import { DEFAULT_APPROVAL_DECISION_RATE_LIMIT, sha256CanonicalJson } from "@app/approval-core";
 import type {
   ActionRequestId,
+  ClientId,
   JsonValue,
   OrganizationId,
   PrincipalRef,
@@ -39,7 +40,15 @@ export interface PublicHttpIdentityProvider {
     request: Request;
     organizationId: OrganizationId;
     operation: PublicApiOperation;
+    actionType?: string;
+    resourceType?: string;
   }): Result.ResultAsync<PrincipalRef, HttpTrustedContextError>;
+  /** Verified application identity for audit correlation, when available. */
+  authenticateWithClient?(input: {
+    request: Request;
+    organizationId: OrganizationId;
+    operation: PublicApiOperation;
+  }): Result.ResultAsync<{ principal: PrincipalRef; clientId: ClientId }, HttpTrustedContextError>;
 }
 
 /**
@@ -319,6 +328,8 @@ async function authenticate(input: {
   request: Request;
   organizationId: OrganizationId;
   operation: PublicApiOperation;
+  actionType?: string;
+  resourceType?: string;
 }): Promise<PrincipalRef | Response> {
   const identity = await input.identityProvider.authenticate(input);
   if (Result.isFailure(identity)) {
@@ -330,6 +341,24 @@ async function authenticate(input: {
     });
   }
   return identity.value;
+}
+
+async function authorizeAction(input: {
+  identityProvider: PublicHttpIdentityProvider;
+  request: Request;
+  organizationId: OrganizationId;
+  operation: PublicApiOperation;
+  action: ActionRequestView;
+}): Promise<Response | null> {
+  const result = await authenticate({
+    identityProvider: input.identityProvider,
+    request: input.request,
+    organizationId: input.organizationId,
+    operation: input.operation,
+    actionType: String(input.action.action.type),
+    resourceType: String(input.action.action.resource.type),
+  });
+  return result instanceof Response ? result : null;
 }
 
 async function authenticateUser(input: {
@@ -471,10 +500,29 @@ export function createPublicHttpApi(input: {
           operation: "action_request.submit",
         });
         if (principal instanceof Response) return principal;
+        let clientId: ClientId | undefined;
+        if (input.identityProvider.authenticateWithClient) {
+          const identified = await input.identityProvider.authenticateWithClient({
+            request,
+            organizationId,
+            operation: "action_request.submit",
+          });
+          if (Result.isFailure(identified)) {
+            return problem({
+              status: identified.error.status,
+              code: identified.error.code,
+              title: "Forbidden",
+            });
+          }
+          if (!samePrincipal(identified.value.principal, principal)) {
+            return problem({ status: 403, code: "invalid_caller", title: "Forbidden" });
+          }
+          clientId = identified.value.clientId;
+        }
         return idempotent({
           request,
           organizationId,
-          operation: `action-request:create:${String(principal.id)}`,
+          operation: `action-request:create:${String(principal.id)}${clientId ? `:${String(clientId)}` : ""}`,
           repository: input.idempotencyRepository,
           clock: input.clock,
           execute: () => input.actionRequestApi.fetch(request),
@@ -503,7 +551,15 @@ export function createPublicHttpApi(input: {
           readRepository: input.readRepository,
           ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
         });
-        return loaded instanceof Response ? loaded : responseJson(loaded);
+        if (loaded instanceof Response) return loaded;
+        const restricted = await authorizeAction({
+          identityProvider: input.identityProvider,
+          request,
+          organizationId,
+          operation: "action_request.read",
+          action: loaded,
+        });
+        return restricted ?? responseJson(loaded);
       }
 
       const actionTasksMatch = routeParameters(
@@ -530,6 +586,15 @@ export function createPublicHttpApi(input: {
           ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
         });
         if (action instanceof Response) return action;
+
+        const restricted = await authorizeAction({
+          identityProvider: input.identityProvider,
+          request,
+          organizationId,
+          operation: "action_request.read",
+          action,
+        });
+        if (restricted) return restricted;
 
         const limit = parseLimit(url);
         if (limit === null) {
@@ -588,9 +653,25 @@ export function createPublicHttpApi(input: {
             ? { resourceType: url.searchParams.get("resourceType") ?? undefined }
             : {}),
         });
-        return Result.isFailure(tasks)
-          ? repositoryErrorResponse(tasks.error)
-          : responseJson(tasks.value);
+        if (Result.isFailure(tasks)) return repositoryErrorResponse(tasks.error);
+        const visible: ApprovalTaskView[] = [];
+        for (const task of tasks.value.items) {
+          const loaded = await input.readRepository.getActionRequest({
+            organizationId,
+            actionRequestId: task.actionRequestId,
+          });
+          if (Result.isFailure(loaded)) return repositoryErrorResponse(loaded.error);
+          if (!loaded.value) continue;
+          const restricted = await authorizeAction({
+            identityProvider: input.identityProvider,
+            request,
+            organizationId,
+            operation: "action_request.read",
+            action: loaded.value,
+          });
+          if (!restricted) visible.push(task);
+        }
+        return responseJson({ ...tasks.value, items: visible });
       }
 
       const taskMatch = routeParameters(
@@ -629,6 +710,14 @@ export function createPublicHttpApi(input: {
           ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
         });
         if (action instanceof Response) return action.status === 404 ? taskNotFound : action;
+        const restricted = await authorizeAction({
+          identityProvider: input.identityProvider,
+          request,
+          organizationId,
+          operation: "action_request.read",
+          action,
+        });
+        if (restricted) return restricted;
         return responseJson(task.value);
       }
 
@@ -648,6 +737,57 @@ export function createPublicHttpApi(input: {
           operation: "approval_decision.submit",
         });
         if (user instanceof Response) return user;
+
+        let clientId: ClientId | undefined;
+        if (input.identityProvider.authenticateWithClient) {
+          const identified = await input.identityProvider.authenticateWithClient({
+            request,
+            organizationId,
+            operation: "approval_decision.submit",
+          });
+          if (Result.isFailure(identified)) {
+            return problem({
+              status: identified.error.status,
+              code: identified.error.code,
+              title: "Forbidden",
+            });
+          }
+          if (
+            identified.value.principal.type !== "user" ||
+            String(identified.value.principal.id) !== String(user)
+          ) {
+            return problem({ status: 403, code: "invalid_caller", title: "Forbidden" });
+          }
+          clientId = identified.value.clientId;
+        }
+
+        const decisionTask = await input.readRepository.getApprovalTask({
+          organizationId,
+          taskId,
+          viewerUserId: user,
+        });
+        if (Result.isFailure(decisionTask)) return repositoryErrorResponse(decisionTask.error);
+        if (!decisionTask.value) {
+          return problem({
+            status: 404,
+            code: "approval_task_not_found",
+            title: "Approval task not found",
+          });
+        }
+        const decisionAction = await input.readRepository.getActionRequest({
+          organizationId,
+          actionRequestId: decisionTask.value.actionRequestId,
+        });
+        if (Result.isFailure(decisionAction)) return repositoryErrorResponse(decisionAction.error);
+        if (!decisionAction.value) return actionRequestNotFound();
+        const restricted = await authorizeAction({
+          identityProvider: input.identityProvider,
+          request,
+          organizationId,
+          operation: "approval_decision.submit",
+          action: decisionAction.value,
+        });
+        if (restricted) return restricted;
 
         return idempotent({
           request,
@@ -703,6 +843,7 @@ export function createPublicHttpApi(input: {
               organizationId,
               taskId,
               userId: user,
+              ...(clientId ? { clientId } : {}),
               decision: body.decision,
               ...(body.comment !== undefined ? { comment: body.comment } : {}),
               now: input.clock.now(),
@@ -745,6 +886,20 @@ export function createPublicHttpApi(input: {
         });
         if (Result.isFailure(record)) return commandErrorResponse(record.error);
         if (!record.value) return commandNotFound;
+        const commandAction = await input.readRepository.getActionRequest({
+          organizationId,
+          actionRequestId: record.value.command.actionRequestId,
+        });
+        if (Result.isFailure(commandAction)) return repositoryErrorResponse(commandAction.error);
+        if (!commandAction.value) return commandNotFound;
+        const restricted = await authorizeAction({
+          identityProvider: input.identityProvider,
+          request,
+          organizationId,
+          operation: "action_request.read",
+          action: commandAction.value,
+        });
+        if (restricted) return restricted;
         // Decision commandは発行者本人とoperatorだけが読める。
         const issuer =
           record.value.actorUserId !== undefined &&
