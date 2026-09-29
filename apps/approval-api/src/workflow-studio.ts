@@ -67,7 +67,14 @@ export function createProductionWorkflowStudioApi(input: {
         capabilityPolicy: input.capabilityPolicy,
         llmModel: input.llmModel,
       });
-      return response ?? problem(404, "not_found", "Not Found");
+      if (!response) return problem(404, "not_found", "Not Found");
+      // Repository/provider details belong in telemetry, never in the public response.
+      if (response.status >= 500) {
+        return problem(503, "workflow_studio_unavailable", "Workflow Studio unavailable");
+      }
+      const headers = new Headers(response.headers);
+      headers.set("cache-control", "no-store");
+      return new Response(response.body, { status: response.status, headers });
     },
   };
 }
