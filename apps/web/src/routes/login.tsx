@@ -10,12 +10,19 @@ import { Input } from "#components/ui/input";
 import { ConsoleApiError, consolePost } from "#lib/console-client";
 
 export const Route = createFileRoute("/login")({
-  validateSearch: (search: Record<string, unknown>) => ({
-    redirect:
-      typeof search.redirect === "string" && search.redirect.startsWith("/admin/")
-        ? search.redirect
-        : "/admin/authorization",
-  }),
+  validateSearch: (search: Record<string, unknown>) => {
+    const target = search.redirect;
+    return {
+      redirect:
+        typeof target === "string" &&
+        (target.startsWith("/admin/") ||
+          target === "/workflows" ||
+          target.startsWith("/workflows/") ||
+          target.startsWith("/workflow-runs/"))
+          ? target
+          : "/admin/authorization",
+    };
+  },
   component: Login,
 });
 

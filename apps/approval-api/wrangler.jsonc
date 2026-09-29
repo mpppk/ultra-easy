@@ -4,6 +4,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-15",
   "workers_dev": true,
+  "rules": [
+    {
+      "type": "CompiledWasm",
+      "globs": ["**/*.wasm"],
+      "fallthrough": true,
+    },
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -11,6 +18,8 @@
     },
   ],
   "vars": {
+    "WORKFLOW_LLM_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
+    "WORKFLOW_CODE_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
     "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
     "AUTH0_API_AUDIENCE": "https://ultra-easy/approval-api",
     // #193: Set the four Auth0 application client IDs as deployment vars before rollout:
@@ -96,6 +105,8 @@
     //            ANALYTICS_ENGINE_API_TOKEN（`wrangler secret put <NAME> --env production`）
     "production": {
       "vars": {
+        "WORKFLOW_LLM_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
+        "WORKFLOW_CODE_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
         "AUTH0_ORGANIZATION_ID": "organization:production",
         // 本番はAuth0 Organizationsのorg_id claim一致を必須にする（tenant全体は信頼しない）。
         "AUTH0_ORGANIZATION_CLAIM": "org_id",
@@ -158,7 +169,13 @@
           "name": "ultra-easy-action-workflow",
           "class_name": "ActionWorkflow",
         },
+        {
+          "binding": "WORKFLOW_RUNNER",
+          "name": "ultra-easy-workflow-runner",
+          "class_name": "WorkflowRunner",
+        },
       ],
+      "ai": { "binding": "AI" },
     },
   },
   "triggers": {
@@ -170,5 +187,11 @@
       "name": "ultra-easy-action-workflow-staging",
       "class_name": "ActionWorkflow",
     },
+    {
+      "binding": "WORKFLOW_RUNNER",
+      "name": "ultra-easy-workflow-runner-staging",
+      "class_name": "WorkflowRunner",
+    },
   ],
+  "ai": { "binding": "AI" },
 }

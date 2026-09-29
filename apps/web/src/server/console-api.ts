@@ -26,6 +26,7 @@ export const CSRF_HEADER = "x-ue-console";
 
 const API_ORIGIN = "https://approval-api.internal";
 const ADMIN_PREFIX = "/api/admin/authorization";
+const WORKFLOW_PREFIX = "/api/workflow";
 const RELATIONSHIP_ACTION_TYPE = "authorization.relationship.update";
 
 function problem(status: number, code: string, title: string, headers?: HeadersInit): Response {
@@ -77,6 +78,33 @@ export async function proxyAdminRequest(request: Request, env: ConsoleWebEnv): P
   const response = await upstream(env, path, token, {
     method: request.method,
     ...(request.method === "POST"
+      ? { body: await request.text(), headers: { "content-type": "application/json" } }
+      : {}),
+  });
+  return passthrough(response);
+}
+
+/** Authenticated Workflow Studio proxy; the API verifies tenant and FGA permission. */
+export async function proxyWorkflowStudioRequest(
+  request: Request,
+  env: ConsoleWebEnv,
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith(`${WORKFLOW_PREFIX}/`)) {
+    return problem(404, "not_found", "Not Found");
+  }
+  if (!["GET", "POST", "PUT"].includes(request.method)) {
+    return problem(405, "method_not_allowed", "Method Not Allowed");
+  }
+  if (request.method !== "GET" && !csrfOk(request)) {
+    return problem(403, "csrf_header_required", "Console header required");
+  }
+  const token = await accessToken(request, env);
+  if (!token) return problem(401, "session_required", "Sign in required");
+  const path = `/v1/admin/workflow${url.pathname.slice(WORKFLOW_PREFIX.length)}${url.search}`;
+  const response = await upstream(env, path, token, {
+    method: request.method,
+    ...(request.method !== "GET"
       ? { body: await request.text(), headers: { "content-type": "application/json" } }
       : {}),
   });

@@ -5,6 +5,7 @@ import {
   logout,
   proxyAdminRequest,
   proxyCreateActionRequest,
+  proxyWorkflowStudioRequest,
   type ConsoleWebEnv,
 } from "./console-api.ts";
 import { openSession, SESSION_COOKIE, sealSession } from "./session.ts";
@@ -131,6 +132,44 @@ describe("console proxy (AC-M9-001 / credential boundary)", () => {
       "https://approval-api.internal/v1/admin/authorization/session",
       "https://approval-api.internal/v1/organizations/organization%3Astaging/action-requests",
     ]);
+  });
+});
+
+describe("production Workflow Studio proxy", () => {
+  it("requires a session and forwards only its server-side bearer", async () => {
+    const seen: Seen[] = [];
+    const anonymous = await proxyWorkflowStudioRequest(
+      new Request("https://web.example/api/workflow/definitions"),
+      env(seen),
+    );
+    expect(anonymous.status).toBe(401);
+    expect(seen).toHaveLength(0);
+
+    const response = await proxyWorkflowStudioRequest(
+      new Request("https://web.example/api/workflow/definitions", {
+        headers: { cookie: await sessionCookieHeader() },
+      }),
+      env(seen),
+    );
+    expect(response.status).toBe(201);
+    expect(seen[0]).toMatchObject({
+      url: "https://approval-api.internal/v1/admin/workflow/definitions",
+      authorization: "Bearer access-token-1",
+    });
+  });
+
+  it("requires the CSRF header on draft edits", async () => {
+    const seen: Seen[] = [];
+    const denied = await proxyWorkflowStudioRequest(
+      new Request("https://web.example/api/workflow/definitions/wf%3Atest", {
+        method: "PUT",
+        headers: { cookie: await sessionCookieHeader() },
+        body: "{}",
+      }),
+      env(seen),
+    );
+    expect(denied.status).toBe(403);
+    expect(seen).toHaveLength(0);
   });
 });
 
