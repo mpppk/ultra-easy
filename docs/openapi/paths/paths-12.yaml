@@ -1,0 +1,85 @@
+/v1/organizations/{organizationId}/me/human-inputs:
+  get:
+    tags: [HumanInputs]
+    operationId: listMyHumanInputs
+    summary: 自分に割り当てられた待機中のHuman Inputを取得する
+    description: user principalのみ。read:action-requests scopeと親ActionRequestのclient scopeを確認する。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    - name: cursor
+      in: query
+      schema:
+        type: string
+      description: 前の応答のnextCursorをそのまま渡す。
+    responses:
+      '200':
+        description: 担当者に割り当てられた待機中のHuman Input。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-09.yaml#/PublicHumanInputPage
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+/v1/organizations/{organizationId}/workflow-runs/{runId}/human-inputs/{effectId}/answer:
+  post:
+    tags: [HumanInputs]
+    operationId: answerHumanInput
+    summary: 担当者が待機中のHuman Inputに回答する
+    description: user principalのみ。write:action-requests scopeと親ActionRequestのclient scopeを確認する。同じIdempotency-Keyとbodyの再送は同じ結果を返す。別回答は409。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: effectId
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-09.yaml#/HumanInputAnswerRequest
+    responses:
+      '200':
+        description: 回答が永続化され、runのresumeが要求された。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-09.yaml#/HumanInputAnswerAccepted
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+      '409':
+        description: 回答済み、処理中、またはIdempotency-Keyの別payloadへの再利用。
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable

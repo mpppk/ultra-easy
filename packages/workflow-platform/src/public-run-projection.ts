@@ -2,7 +2,7 @@ import { Result } from "@praha/byethrow";
 
 import { PublicApiRepositoryError, type ApprovalReadRepository } from "@app/approval-application";
 import type { ActionRequestView } from "@app/approval-application";
-import type { OrganizationId } from "@app/approval-core";
+import type { OrganizationId, PrincipalRef } from "@app/approval-core";
 import { WorkflowRepositoryError } from "@app/workflow-application";
 import { allNodes, type WorkflowAuditEvent } from "@app/workflow-core";
 import { allRows, parseJson } from "@app/workflow-d1";
@@ -51,8 +51,21 @@ export type PublicWorkflowRunView = {
     candidateIds: string[];
     url: string;
   }>;
-  /** Prompt and answer are provided by the governed Human Input API (#197). */
-  humanInputs: Array<{ key: string; status: "waiting" | "answered" | "failed" | "cancelled" }>;
+  humanInputs: Array<{
+    key: string;
+    status: "waiting" | "answered" | "failed" | "cancelled";
+    assigneeId?: string;
+    prompt?: string;
+    options?: string[];
+    answerSchema?: Extract<
+      WorkflowRunRecord["state"]["effects"][string]["request"],
+      { kind: "human_input" }
+    >["answerSchema"];
+    subject?: { type: string; id: string; title: string };
+    analysis?: string;
+    answer?: import("@app/expression-core").JsonValue;
+    answeredBy?: string;
+  }>;
   failure: { code: string; message: string; nodeKey: string } | null;
   audit: Array<{ at: string; type: string; actionRequestId: string; detail: string }>;
 };
@@ -117,6 +130,7 @@ export async function projectPublicWorkflowRun(input: {
   organizationId: OrganizationId;
   record: WorkflowRunRecord;
   parent: ActionRequestView;
+  viewer?: PrincipalRef;
 }): Result.ResultAsync<PublicWorkflowRunView, PublicRunProjectionError> {
   const { organizationId, record, platform, parent } = input;
   const state = record.state;
@@ -238,17 +252,38 @@ export async function projectPublicWorkflowRun(input: {
   });
   const humanInputs = Object.values(state.effects)
     .filter((effect) => effect.request.kind === "human_input")
-    .map((effect) => ({
-      key: String(effect.id),
-      status:
-        effect.status === "completed"
-          ? ("answered" as const)
-          : effect.status === "failed"
-            ? ("failed" as const)
-            : effect.status === "cancelled"
-              ? ("cancelled" as const)
-              : ("waiting" as const),
-    }));
+    .map((effect) => {
+      const request = effect.request;
+      if (request.kind !== "human_input") return null;
+      const visible =
+        request.assignee !== undefined &&
+        input.viewer?.type === "user" &&
+        String(request.assignee.id) === String(input.viewer.id);
+      return {
+        key: String(effect.id),
+        status:
+          effect.status === "completed"
+            ? ("answered" as const)
+            : effect.status === "failed"
+              ? ("failed" as const)
+              : effect.status === "cancelled"
+                ? ("cancelled" as const)
+                : ("waiting" as const),
+        ...(visible
+          ? {
+              assigneeId: String(request.assignee?.id),
+              prompt: request.prompt,
+              ...(request.options ? { options: request.options } : {}),
+              ...(request.answerSchema ? { answerSchema: request.answerSchema } : {}),
+              ...(request.subject ? { subject: request.subject } : {}),
+              ...(request.analysis ? { analysis: request.analysis } : {}),
+              ...(effect.outcome?.type === "completed" ? { answer: effect.outcome.output } : {}),
+              ...(effect.answeredBy ? { answeredBy: String(effect.answeredBy.id) } : {}),
+            }
+          : {}),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
   const status: PublicWorkflowRunView["status"] =
     parent.status === "rejected"
       ? "rejected"

@@ -11,7 +11,7 @@ import {
 } from "@app/expression-core";
 import type { ExpressionError, FieldResolver, JsonObject, JsonValue } from "@app/expression-core";
 import { parseBrand } from "@app/approval-core";
-import type { ActionType, OrganizationId } from "@app/approval-core";
+import type { ActionType, ClientId, OrganizationId, UserPrincipalRef } from "@app/approval-core";
 
 import { DEFAULT_WORKFLOW_LIMITS, WORKFLOW_GLOBAL_LIMITS } from "./definition.ts";
 import type {
@@ -52,7 +52,14 @@ const DEFAULT_PROGRAM_MAX_EFFECTS = 16;
 export type WorkflowRunEvent =
   | { type: "effect_dispatched"; effectId: EffectId; reference?: string }
   | { type: "effect_waiting"; effectId: EffectId; reason: WaitingReason }
-  | { type: "effect_completed"; effectId: EffectId; output: JsonValue }
+  | {
+      type: "effect_completed";
+      effectId: EffectId;
+      output: JsonValue;
+      answeredBy?: UserPrincipalRef;
+      answeredViaClientId?: ClientId;
+      answerIdempotencyKey?: string;
+    }
   | {
       type: "effect_failed";
       effectId: EffectId;
@@ -827,6 +834,11 @@ class Kernel {
         nodeRun.waitingReason = event.reason;
         return Result.succeed("applied");
       case "effect_completed":
+        if (effect.request.kind === "human_input" && event.answeredBy) {
+          effect.answeredBy = event.answeredBy;
+          if (event.answeredViaClientId) effect.answeredViaClientId = event.answeredViaClientId;
+          if (event.answerIdempotencyKey) effect.answerIdempotencyKey = event.answerIdempotencyKey;
+        }
         this.completeEffect(effect, nodeRun, { type: "completed", output: event.output });
         return Result.succeed("applied");
       case "effect_failed":
@@ -955,7 +967,15 @@ class Kernel {
           : yielded.type === "timer"
             ? { kind: "timer", seconds: yielded.seconds }
             : yielded.type === "human_input"
-              ? { kind: "human_input", prompt: yielded.prompt }
+              ? {
+                  kind: "human_input",
+                  prompt: yielded.prompt,
+                  ...(yielded.assignee ? { assignee: yielded.assignee } : {}),
+                  ...(yielded.options ? { options: yielded.options } : {}),
+                  ...(yielded.answerSchema ? { answerSchema: yielded.answerSchema } : {}),
+                  ...(yielded.subject ? { subject: yielded.subject } : {}),
+                  ...(yielded.analysis ? { analysis: yielded.analysis } : {}),
+                }
               : undefined;
     if (!subRequest) return;
     this.requestEffect(nodeRun, subRequest, {

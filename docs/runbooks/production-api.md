@@ -87,9 +87,27 @@ The view contains `id`, `actionRequestId`, `actionType`, `organizationId`,
 `status`, `correlation`, `requestedBy`, timestamps, `nodes`, `childActions`,
 `approvals`, `humanInputs`, `failure`, and `audit`. Node and child status, task
 candidate IDs, and audit event types are included. Raw workflow input/variables,
-LLM outputs, sandbox state, provider errors, and event data are excluded. Until
-the governed Human Input API (#197), `humanInputs` contains only a key and status;
-it does not disclose prompts or answers.
+LLM outputs, sandbox state, provider errors, and event data are excluded.
+`humanInputs` contains only a key and status for ordinary run readers. An
+explicitly assigned user may also read the run by ID and receives that input's
+prompt, options, subject, analysis, and accepted answer. Other inputs remain
+redacted.
+
+The assigned user can list waiting inputs with
+`GET /v1/organizations/{organizationId}/me/human-inputs?limit=50` using a
+`read:action-requests` token. Each item includes `key` (the effect ID), `runId`,
+`actionRequestId`, `prompt`, `assigneeId`, optional `options` / `answerSchema` /
+`subject` / `analysis`, and `requestedAt`. Pass `nextCursor` as `cursor` to read
+the next page. The list includes only inputs assigned to the authenticated user
+and permitted by the parent ActionRequest's client scope.
+
+Answer with
+`POST /v1/organizations/{organizationId}/workflow-runs/{runId}/human-inputs/{key}/answer`,
+`Idempotency-Key: <unique key>`, a user token with `write:action-requests`, and
+`{"answer":"keep"}`. A matching retry returns the same response. A different
+answer to a completed input returns 409. The answer is persisted with a CAS
+transition and audited before the Workflow runner is resumed; the due-run
+sweeper provides fallback if the resume signal fails.
 
 Invalid IDs, limit (1–100), or correlation filters return 400. Missing and
 unreadable runs return the same 404 `workflow_run_not_found`; list results omit

@@ -24,6 +24,7 @@ tags:
 - name: Delegations
 - name: AuthorizationAdmin
 - name: WorkflowRuns
+- name: HumanInputs
 paths:
   /v1/organizations/{organizationId}/action-requests:
     $ref: ./paths/paths-01.yaml#/~1v1~1organizations~1{organizationId}~1action-requests
@@ -37,6 +38,10 @@ paths:
     $ref: ./paths/paths-11.yaml#/~1v1~1organizations~1{organizationId}~1workflow-runs
   /v1/organizations/{organizationId}/workflow-runs/{runId}:
     $ref: ./paths/paths-11.yaml#/~1v1~1organizations~1{organizationId}~1workflow-runs~1{runId}
+  /v1/organizations/{organizationId}/me/human-inputs:
+    $ref: ./paths/paths-12.yaml#/~1v1~1organizations~1{organizationId}~1me~1human-inputs
+  /v1/organizations/{organizationId}/workflow-runs/{runId}/human-inputs/{effectId}/answer:
+    $ref: ./paths/paths-12.yaml#/~1v1~1organizations~1{organizationId}~1workflow-runs~1{runId}~1human-inputs~1{effectId}~1answer
   /v1/organizations/{organizationId}/action-requests/{actionRequestId}/cancel:
     $ref: ./paths/paths-02.yaml#/~1v1~1organizations~1{organizationId}~1action-requests~1{actionRequestId}~1cancel
   /v1/organizations/{organizationId}/action-requests/{actionRequestId}/tasks:

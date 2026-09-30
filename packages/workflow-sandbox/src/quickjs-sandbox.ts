@@ -17,7 +17,12 @@ const ue = Object.freeze({
   llm: (state, model, prompt, maxOutputTokens) =>
     ({ type: "yield", state, effect: { type: "llm", model, prompt, maxOutputTokens } }),
   sleep: (state, seconds) => ({ type: "yield", state, effect: { type: "timer", seconds } }),
-  askHuman: (state, prompt) => ({ type: "yield", state, effect: { type: "human_input", prompt } }),
+  askHuman: (state, request) => ({
+    type: "yield", state,
+    effect: typeof request === "string"
+      ? { type: "human_input", prompt: request }
+      : { ...request, type: "human_input" },
+  }),
 });
 `;
 

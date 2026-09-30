@@ -71,7 +71,7 @@ function childActionView(): ActionRequestView {
   };
 }
 
-async function harness() {
+async function harness(assignee?: PrincipalRef) {
   const db = migratedSqliteD1();
   db.db
     .prepare(
@@ -141,7 +141,7 @@ async function harness() {
         "effect:input": {
           id: "effect:input",
           nodeRunId: "root:start",
-          request: { kind: "human_input", prompt: secret },
+          request: { kind: "human_input", prompt: secret, ...(assignee ? { assignee } : {}) },
           status: "requested",
           requestedAt: "2026-09-30T00:00:00.000Z",
         },
@@ -331,6 +331,22 @@ describe("public Workflow Run API", () => {
         }
       ).items,
     ).toEqual([]);
+  });
+
+  it("explicit Human Input assignee can read the run and only that user sees its prompt", async () => {
+    const { api } = await harness(charlie);
+    const path = `/v1/organizations/${organizationId}/workflow-runs/${runId}`;
+    const assigned = await api.fetch(request(path, "charlie"));
+    expect(assigned.status).toBe(200);
+    const assignedView = await assigned.json();
+    expect(assignedView).toMatchObject({
+      humanInputs: [{ key: "effect:input", assigneeId: String(charlie.id), prompt: secret }],
+    });
+    const requester = await api.fetch(request(path, "alice"));
+    expect(requester.status).toBe(200);
+    expect(JSON.stringify(await requester.json())).not.toContain(secret);
+    const unrelated = await api.fetch(request(path, "scope-denied"));
+    expect(unrelated.status).toBe(403);
   });
 
   it("別tenantのrunをIDからも一覧からも返さない", async () => {

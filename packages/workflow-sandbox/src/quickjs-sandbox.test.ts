@@ -83,6 +83,35 @@ describe("QuickJS sandbox (#160)", () => {
     });
   });
 
+  it("accepts legacy and governed Human Input requests from a Program", async () => {
+    const legacy = await run(`function main() { return ue.askHuman({}, "Continue?"); }`);
+    expect(Result.isSuccess(legacy) && legacy.value.result).toEqual({
+      type: "yield",
+      state: {},
+      effect: { type: "human_input", prompt: "Continue?" },
+    });
+    const governed = await run(`function main() {
+      return ue.askHuman({ step: 1 }, {
+        prompt: "Review page",
+        assignee: { type: "user", id: "user:bob" },
+        options: ["keep", "archive"],
+        answerSchema: { type: "string", enum: ["keep", "archive"] },
+        subject: { type: "knowledge_page", id: "page:one", title: "Page One" },
+        analysis: "Possibly stale"
+      });
+    }`);
+    expect(Result.isSuccess(governed) && governed.value.result).toMatchObject({
+      type: "yield",
+      state: { step: 1 },
+      effect: {
+        type: "human_input",
+        prompt: "Review page",
+        assignee: { type: "user", id: "user:bob" },
+        options: ["keep", "archive"],
+      },
+    });
+  });
+
   it("has no network, module, process, or timer access", async () => {
     const probe = await run(`function main() {
       return ue.complete({

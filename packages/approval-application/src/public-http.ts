@@ -212,7 +212,7 @@ function addMs(iso: string, ms: number): string {
   return new Date(Date.parse(iso) + ms).toISOString();
 }
 
-async function idempotent(input: {
+export async function idempotent(input: {
   request: Request;
   organizationId: OrganizationId;
   operation: string;

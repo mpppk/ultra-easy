@@ -1,0 +1,73 @@
+PublicHumanInput:
+  type: object
+  required: [key, runId, actionRequestId, prompt, assigneeId, status, requestedAt]
+  properties:
+    key:
+      type: string
+    runId:
+      type: string
+    actionRequestId:
+      type: string
+    prompt:
+      type: string
+    assigneeId:
+      type: string
+    options:
+      type: array
+      items:
+        type: string
+    answerSchema:
+      type: object
+      description: JsonSchemaLite。回答の形式と選択肢を制約する。
+    subject:
+      $ref: ./schemas-09.yaml#/HumanInputSubject
+    analysis:
+      type: string
+    status:
+      type: string
+      const: waiting
+    requestedAt:
+      type: string
+      format: date-time
+  additionalProperties: false
+HumanInputSubject:
+  type: object
+  required: [type, id, title]
+  properties:
+    type:
+      type: string
+    id:
+      type: string
+    title:
+      type: string
+  additionalProperties: false
+PublicHumanInputPage:
+  type: object
+  required: [items]
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-09.yaml#/PublicHumanInput
+    nextCursor:
+      type: string
+  additionalProperties: false
+HumanInputAnswerRequest:
+  type: object
+  required: [answer]
+  properties:
+    answer:
+      description: human_input EffectのoptionsまたはanswerSchemaに一致するJSON値。
+  additionalProperties: false
+HumanInputAnswerAccepted:
+  type: object
+  required: [runId, inputKey, status]
+  properties:
+    runId:
+      type: string
+    inputKey:
+      type: string
+    status:
+      type: string
+      const: answered
+  additionalProperties: false
