@@ -111,13 +111,20 @@ describe("Knowledge Application Catalog", () => {
     expect(
       catalogActionRelation([KNOWLEDGE_CATALOG], {
         type: "knowledge.page.archive",
-        resourceType: "knowledge_page",
+        resourceType: "knowledge_space",
       }),
     ).toBe("can_manage");
     expect(
       catalogActionRelation([KNOWLEDGE_CATALOG], {
-        type: "knowledge.page.archive",
+        type: "knowledge.publish_document",
         resourceType: "knowledge_space",
+      }),
+    ).toBe("can_edit");
+    // An action is authorized only on the resource type it was registered for.
+    expect(
+      catalogActionRelation([KNOWLEDGE_CATALOG], {
+        type: "knowledge.page.archive",
+        resourceType: "knowledge_page",
       }),
     ).toBeNull();
   });
@@ -237,7 +244,12 @@ describe("Knowledge review-page Program", () => {
   const program = KNOWLEDGE_CATALOG.programs[0];
   assert(program);
   const sandbox = new QuickJsSandbox(nodeQuickJsModule);
-  const input = { pageId: "page-1", ownerId: "user:owner", now: "2026-09-30T00:00:00.000Z" };
+  const input = {
+    spaceId: "space-1",
+    pageId: "page-1",
+    ownerId: "user:owner",
+    now: "2026-09-30T00:00:00.000Z",
+  };
   const run = async (resume?: { state: JsonValue; effectResult: JsonValue }) => {
     const ran = await sandbox.run({
       source: program.source,
@@ -271,8 +283,8 @@ describe("Knowledge review-page Program", () => {
       effect: {
         type: "action",
         actionType: "knowledge.page.get_published",
-        resource: { type: "knowledge_page", id: "page-1" },
-        input: {},
+        resource: { type: "knowledge_space", id: "space-1" },
+        input: { pageId: "page-1" },
       },
     });
   });
@@ -295,8 +307,8 @@ describe("Knowledge review-page Program", () => {
     expect(archive.effect).toEqual({
       type: "action",
       actionType: "knowledge.page.archive",
-      resource: { type: "knowledge_page", id: "page-1" },
-      input: { pageOwnerId: "user:owner" },
+      resource: { type: "knowledge_space", id: "space-1" },
+      input: { pageId: "page-1", pageOwnerId: "user:owner" },
     });
 
     const rejected = await run({
@@ -314,7 +326,7 @@ describe("Knowledge review-page Program", () => {
     assert(applied.type === "yield");
     expect(applied.effect).toMatchObject({
       actionType: "knowledge.page.mark_reviewed",
-      input: { outcome: "reviewed" },
+      input: { pageId: "page-1", outcome: "reviewed" },
     });
     const done = await run({
       state: applied.state,

@@ -22,23 +22,24 @@ const edge = (source: string, target: string): JsonObject => ({
 
 const KNOWLEDGE_SERVER = "knowledge";
 const SNAPSHOT_ID = { type: "string", maxLength: 64 } as const;
+const PAGE_ID = { type: "string", maxLength: 64 } as const;
 
+/**
+ * Knowledgeのprimitive Actionはすべてspace単位で認可する（resource = `knowledge_space`、
+ * role = owner / editor / viewer）。page / snapshotがそのspaceに属するかは、正本を持つ
+ * Knowledgeが照合する（MCP routeはresourceのspace IDを`spaceId`として必ず渡す）。
+ */
 function primitive(
   actionType: string,
-  resourceType: "knowledge_page" | "knowledge_space",
-  relation: string,
+  relation: "can_view" | "can_edit" | "can_manage",
   input: CatalogPrimitiveAction["input"],
 ): CatalogPrimitiveAction {
   return {
     actionType,
     version: 1,
-    resourceType,
+    resourceType: "knowledge_space",
     relation,
-    tool: {
-      server: KNOWLEDGE_SERVER,
-      name: actionType,
-      resourceIdArgument: resourceType === "knowledge_page" ? "pageId" : "spaceId",
-    },
+    tool: { server: KNOWLEDGE_SERVER, name: actionType, resourceIdArgument: "spaceId" },
     input,
   };
 }
@@ -51,10 +52,10 @@ const snapshotInput: CatalogPrimitiveAction["input"] = {
 };
 
 const PRIMITIVES: CatalogPrimitiveAction[] = [
-  primitive("knowledge.publication.get", "knowledge_page", "can_edit", snapshotInput),
+  primitive("knowledge.publication.get", "can_edit", snapshotInput),
   // visibility / sensitivityはApproval Policyが参照する。Knowledge側がsnapshotの値と一致しない
   // requestを拒否するので、入力を偽ってpolicyを回避できない。
-  primitive("knowledge.revision.publish", "knowledge_page", "can_edit", {
+  primitive("knowledge.revision.publish", "can_edit", {
     type: "object",
     properties: {
       publicationSnapshotId: SNAPSHOT_ID,
@@ -64,30 +65,34 @@ const PRIMITIVES: CatalogPrimitiveAction[] = [
     required: ["publicationSnapshotId", "visibility", "sensitivity"],
     additionalProperties: false,
   }),
-  primitive("knowledge.search.reindex", "knowledge_page", "can_edit", snapshotInput),
-  primitive("knowledge.watchers.notify", "knowledge_page", "can_edit", snapshotInput),
-  primitive("knowledge.pages.list_stale", "knowledge_space", "can_view", {
+  primitive("knowledge.search.reindex", "can_edit", snapshotInput),
+  primitive("knowledge.watchers.notify", "can_edit", snapshotInput),
+  primitive("knowledge.pages.list_stale", "can_view", {
     type: "object",
     properties: { staleAfterDays: { type: "integer", minimum: 1, maximum: 3650 } },
     additionalProperties: false,
   }),
-  primitive("knowledge.page.get_published", "knowledge_page", "can_view", {
+  primitive("knowledge.page.get_published", "can_view", {
     type: "object",
-    properties: {},
+    properties: { pageId: PAGE_ID },
+    required: ["pageId"],
     additionalProperties: false,
   }),
-  primitive("knowledge.page.mark_reviewed", "knowledge_page", "can_manage", {
+  primitive("knowledge.page.mark_reviewed", "can_manage", {
     type: "object",
-    properties: { outcome: { type: "string", enum: ["reviewed", "update_needed"] } },
-    required: ["outcome"],
+    properties: {
+      pageId: PAGE_ID,
+      outcome: { type: "string", enum: ["reviewed", "update_needed"] },
+    },
+    required: ["pageId", "outcome"],
     additionalProperties: false,
   }),
   // pageOwnerIdは「page owner以外のarchiveはownerの承認」policyが参照する（Knowledgeが実際の
   // ownerと照合する）。
-  primitive("knowledge.page.archive", "knowledge_page", "can_manage", {
+  primitive("knowledge.page.archive", "can_manage", {
     type: "object",
-    properties: { pageOwnerId: { type: "string", maxLength: 256 } },
-    required: ["pageOwnerId"],
+    properties: { pageId: PAGE_ID, pageOwnerId: { type: "string", maxLength: 256 } },
+    required: ["pageId", "pageOwnerId"],
     additionalProperties: false,
   }),
 ];
@@ -118,14 +123,14 @@ function assess(page, now) {
   return { verdict: "likely_current", analysis: "Last confirmed " + ageDays + " days ago; no outdated signals found." };
 }
 
-function apply(page, decision) {
+function apply(spaceId, page, decision) {
   var state = { step: "apply", page: page, decision: decision };
-  var resource = { type: "knowledge_page", id: page.pageId };
+  var resource = { type: "knowledge_space", id: spaceId };
   if (decision === "archive_candidate") {
-    return ue.action(state, "knowledge.page.archive", resource, { pageOwnerId: page.ownerId });
+    return ue.action(state, "knowledge.page.archive", resource, { pageId: page.pageId, pageOwnerId: page.ownerId });
   }
   var outcome = decision === "update_needed" ? "update_needed" : "reviewed";
-  return ue.action(state, "knowledge.page.mark_reviewed", resource, { outcome: outcome });
+  return ue.action(state, "knowledge.page.mark_reviewed", resource, { pageId: page.pageId, outcome: outcome });
 }
 
 function done(page, fields) {
@@ -137,7 +142,7 @@ function done(page, fields) {
 function main(input, context) {
   var resume = context.resume;
   if (!resume) {
-    return ue.action({ step: "read" }, "knowledge.page.get_published", { type: "knowledge_page", id: input.pageId }, {});
+    return ue.action({ step: "read" }, "knowledge.page.get_published", { type: "knowledge_space", id: input.spaceId }, { pageId: input.pageId });
   }
   var state = resume.state;
   var result = resume.effectResult;
@@ -157,11 +162,11 @@ function main(input, context) {
         analysis: assessed.analysis
       });
     }
-    return apply(page, assessed.verdict === "archive_candidate" ? "archive_candidate" : "still_valid");
+    return apply(input.spaceId, page, assessed.verdict === "archive_candidate" ? "archive_candidate" : "still_valid");
   }
   if (state.step === "review") {
     if (result.type !== "completed") return done(state.page, { decision: "", resolution: "failed", errorCode: result.code });
-    return apply(state.page, result.output);
+    return apply(input.spaceId, state.page, result.output);
   }
   if (result.type === "completed") {
     var resolution = state.decision === "archive_candidate" ? "archived" : state.decision === "update_needed" ? "update_needed" : "reviewed";
@@ -175,9 +180,9 @@ function main(input, context) {
 `.trim();
 
 const REVIEW_PAGE_ACTIONS = [
-  { actionType: "knowledge.page.get_published", resourceType: "knowledge_page" },
-  { actionType: "knowledge.page.mark_reviewed", resourceType: "knowledge_page" },
-  { actionType: "knowledge.page.archive", resourceType: "knowledge_page" },
+  { actionType: "knowledge.page.get_published", resourceType: "knowledge_space" },
+  { actionType: "knowledge.page.mark_reviewed", resourceType: "knowledge_space" },
+  { actionType: "knowledge.page.archive", resourceType: "knowledge_space" },
 ];
 
 const REVIEW_PAGE_PROGRAM: CatalogProgram = {
@@ -189,11 +194,12 @@ const REVIEW_PAGE_PROGRAM: CatalogProgram = {
   inputSchema: {
     type: "object",
     properties: {
+      spaceId: { type: "string", maxLength: 64 },
       pageId: { type: "string", maxLength: 64 },
       ownerId: { type: "string", maxLength: 256 },
       now: { type: "string", maxLength: 64 },
     },
-    required: ["pageId", "ownerId", "now"],
+    required: ["spaceId", "pageId", "ownerId", "now"],
     additionalProperties: false,
   },
   outputSchema: {
@@ -226,7 +232,7 @@ const action = (
   label: string,
 ): JsonObject => ({ id, type: "action", label, actionType, resource, input: obj(input) });
 
-const page = { type: "knowledge_page", id: f("workflow.input.pageId") };
+const space = { type: "knowledge_space", id: f("workflow.input.spaceId") };
 const snapshot = { publicationSnapshotId: f("workflow.input.publicationSnapshotId") };
 
 /**
@@ -239,17 +245,17 @@ const PUBLISH_DOCUMENT: JsonObject = {
   name: "Knowledge: publish document",
   description: "Publishes a pinned PublicationSnapshot with approval, then reindexes and notifies.",
   inputFields: [
-    { path: "workflow.input.pageId", type: "string", label: "Page" },
+    { path: "workflow.input.spaceId", type: "string", label: "Space" },
     { path: "workflow.input.publicationSnapshotId", type: "string", label: "Publication snapshot" },
   ],
   graph: {
     nodes: [
       { id: "start", type: "trigger" },
-      action("get_publication", "knowledge.publication.get", page, snapshot, "Load publication"),
+      action("get_publication", "knowledge.publication.get", space, snapshot, "Load publication"),
       action(
         "publish",
         "knowledge.revision.publish",
-        page,
+        space,
         {
           ...snapshot,
           visibility: f("nodes.get_publication.output.snapshot.visibility"),
@@ -257,14 +263,15 @@ const PUBLISH_DOCUMENT: JsonObject = {
         },
         "Publish",
       ),
-      action("reindex", "knowledge.search.reindex", page, snapshot, "Update search index"),
-      action("notify", "knowledge.watchers.notify", page, snapshot, "Notify watchers"),
+      action("reindex", "knowledge.search.reindex", space, snapshot, "Update search index"),
+      action("notify", "knowledge.watchers.notify", space, snapshot, "Notify watchers"),
       { id: "effects", type: "join" },
       {
         id: "end",
         type: "output",
         value: obj({
-          pageId: f("workflow.input.pageId"),
+          spaceId: f("workflow.input.spaceId"),
+          pageId: f("nodes.get_publication.output.snapshot.pageId"),
           publicationSnapshotId: f("workflow.input.publicationSnapshotId"),
           publication: f("nodes.publish.output"),
         }),
@@ -292,13 +299,7 @@ const MAINTAIN_SPACE: JsonObject = {
   graph: {
     nodes: [
       { id: "start", type: "trigger" },
-      action(
-        "list_stale",
-        "knowledge.pages.list_stale",
-        { type: "knowledge_space", id: f("workflow.input.spaceId") },
-        {},
-        "List stale pages",
-      ),
+      action("list_stale", "knowledge.pages.list_stale", space, {}, "List stale pages"),
       {
         id: "review",
         type: "for_each",
@@ -319,6 +320,7 @@ const MAINTAIN_SPACE: JsonObject = {
                 sourceDigest: "sha256:catalog",
               },
               input: obj({
+                spaceId: f("workflow.input.spaceId"),
                 pageId: f("loop.item.pageId"),
                 ownerId: f("loop.item.ownerId"),
                 now: f("now"),
@@ -365,7 +367,7 @@ export const KNOWLEDGE_CATALOG: ApplicationCatalog = {
       actionDefinitionVersion: 1,
       workflowId: PUBLISH_DOCUMENT_ID,
       workflowVersion: 1,
-      resourceType: "knowledge_page",
+      resourceType: "knowledge_space",
       relation: "can_edit",
       workflow: PUBLISH_DOCUMENT,
     },

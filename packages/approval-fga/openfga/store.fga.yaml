@@ -117,3 +117,39 @@ tests:
         assertions:
           owner: false
           can_manage: false
+
+  - name: knowledge_space action relations (#198)
+    tuples:
+      - user: user:alice
+        relation: owner
+        object: knowledge_space:organization%3Astaging/spc-one
+      - user: user:bob
+        relation: editor
+        object: knowledge_space:organization%3Astaging/spc-one
+      - user: user:carol
+        relation: viewer
+        object: knowledge_space:organization%3Astaging/spc-one
+    check:
+      - user: user:alice
+        object: knowledge_space:organization%3Astaging/spc-one
+        assertions:
+          can_manage: true
+          can_edit: true
+          can_view: true
+      - user: user:bob
+        object: knowledge_space:organization%3Astaging/spc-one
+        assertions:
+          can_manage: false
+          can_edit: true
+          can_view: true
+      - user: user:carol
+        object: knowledge_space:organization%3Astaging/spc-one
+        assertions:
+          can_manage: false
+          can_edit: false
+          can_view: true
+      - user: user:bob
+        object: knowledge_space:organization%3Aother/spc-one
+        assertions:
+          can_edit: false
+          can_view: false

@@ -49,15 +49,27 @@ const storeFailure = (error: { message: string }): ToolOutcome =>
   fail("knowledge_store_unavailable", error.message, true);
 
 /**
- * `pageId` is the resource ultra-easy authorized the ActionRequest for (the MCP route passes
- * it from `action.resource`). Tools that act on a snapshot refuse a snapshot of another page,
- * so an authorization on page A can never publish / reindex / notify page B.
+ * ultra-easy authorizes Knowledge actions per space (the ActionRequest resource is the
+ * `knowledge_space`), and its MCP route passes that space as `spaceId`. Tools refuse a
+ * snapshot or page of another space, so a role in space A never acts on space B.
  */
-const snapshotInput = z.object({
-  publicationSnapshotId: z.string().min(1).max(64),
-  pageId: z.string().min(1).max(64).optional(),
-});
-const pageInput = z.object({ pageId: z.string().min(1).max(64) });
+const spaceId = z.string().min(1).max(64).optional();
+const snapshotInput = z.object({ publicationSnapshotId: z.string().min(1).max(64), spaceId });
+const pageInput = z.object({ pageId: z.string().min(1).max(64), spaceId });
+
+const outsideSpace = (): ToolOutcome =>
+  fail("resource_outside_space", "the page belongs to another space");
+
+/** Rejects a page of another space (a missing page is left to the tool's own handling). */
+async function pageOutsideSpace(
+  repos: KnowledgeRepositories,
+  input: z.infer<typeof pageInput>,
+): Promise<ToolOutcome | null> {
+  if (input.spaceId === undefined) return null;
+  const page = await repos.pages.find(input.pageId);
+  if (Result.isFailure(page)) return storeFailure(page.error);
+  return page.value && page.value.spaceId !== input.spaceId ? outsideSpace() : null;
+}
 
 type SnapshotLookup =
   | { type: "found"; snapshot: PublicationSnapshot }
@@ -72,11 +84,8 @@ async function boundSnapshot(
   if (!snapshot.value) {
     return { type: "error", outcome: fail("publication_snapshot_not_found", "unknown snapshot") };
   }
-  if (input.pageId !== undefined && snapshot.value.pageId !== input.pageId) {
-    return {
-      type: "error",
-      outcome: fail("publication_snapshot_mismatch", "the snapshot belongs to another page"),
-    };
+  if (input.spaceId !== undefined && snapshot.value.spaceId !== input.spaceId) {
+    return { type: "error", outcome: outsideSpace() };
   }
   return { type: "found", snapshot: snapshot.value };
 }
@@ -321,6 +330,9 @@ export const KNOWLEDGE_TOOLS = [
       if (!page.value?.publishedRevisionId || page.value.status !== "active") {
         return fail("page_not_found", "no published revision");
       }
+      if (input.spaceId !== undefined && page.value.spaceId !== input.spaceId) {
+        return outsideSpace();
+      }
       const revision = await repos.revisions.find(page.value.publishedRevisionId);
       if (Result.isFailure(revision)) return storeFailure(revision.error);
       if (!revision.value) return fail("page_not_found", "no published revision");
@@ -346,6 +358,8 @@ export const KNOWLEDGE_TOOLS = [
     readOnly: false,
     guaranteeLevel: "idempotent",
     async run(input, { repos, now }) {
+      const outside = await pageOutsideSpace(repos, input);
+      if (outside) return outside;
       const changed = await repos.pages.setReviewState({
         pageId: input.pageId,
         state: input.outcome === "reviewed" ? "current" : "update_needed",
@@ -366,6 +380,8 @@ export const KNOWLEDGE_TOOLS = [
     readOnly: false,
     guaranteeLevel: "idempotent",
     async run(input, { repos, now }) {
+      const outside = await pageOutsideSpace(repos, input);
+      if (outside) return outside;
       if (input.pageOwnerId !== undefined) {
         const page = await repos.pages.find(input.pageId);
         if (Result.isFailure(page)) return storeFailure(page.error);

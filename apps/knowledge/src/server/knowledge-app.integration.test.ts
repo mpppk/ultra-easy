@@ -587,14 +587,17 @@ describe("Knowledge MCP endpoint", () => {
     const reused = await call({ pageId: "pg_incident_runbook", outcome: "update_needed" }, "k1");
     expect(reused.error?.code).toBe(-32602);
   });
-  it("binds snapshot tools to the authorized page and the snapshot's policy fields (#198)", async () => {
+  it("binds snapshot and page tools to the authorized space and the snapshot's policy fields (#198)", async () => {
     const yuki = await signIn("user:yuki"); // triggers the demo seed
     void yuki;
     const snapshot = knowledgeDb.db
       .prepare(
-        "SELECT id, page_id, visibility, sensitivity FROM publication_snapshots ORDER BY id LIMIT 1",
+        "SELECT id, space_id, visibility, sensitivity FROM publication_snapshots ORDER BY id LIMIT 1",
       )
-      .get() as { id: string; page_id: string; visibility: string; sensitivity: string };
+      .get() as { id: string; space_id: string; visibility: string; sensitivity: string };
+    const page = knowledgeDb.db
+      .prepare("SELECT id, space_id, owner_id FROM pages WHERE id = 'pg_incident_runbook'")
+      .get() as { id: string; space_id: string; owner_id: string };
     const call = (name: string, args: Record<string, unknown>) =>
       mcp({
         jsonrpc: "2.0",
@@ -614,7 +617,7 @@ describe("Knowledge MCP endpoint", () => {
 
     const own = await call("knowledge.publication.get", {
       publicationSnapshotId: snapshot.id,
-      pageId: snapshot.page_id,
+      spaceId: snapshot.space_id,
     });
     expect(own.result.isError).toBeUndefined();
     for (const name of [
@@ -623,19 +626,28 @@ describe("Knowledge MCP endpoint", () => {
       "knowledge.search.reindex",
       "knowledge.watchers.notify",
     ]) {
-      const other = await call(name, { publicationSnapshotId: snapshot.id, pageId: "pg_other" });
-      expect(other.result.structuredContent.code).toBe("publication_snapshot_mismatch");
+      const other = await call(name, { publicationSnapshotId: snapshot.id, spaceId: "spc_other" });
+      expect(other.result.structuredContent.code).toBe("resource_outside_space");
     }
     const understated = await call("knowledge.revision.publish", {
       publicationSnapshotId: snapshot.id,
-      pageId: snapshot.page_id,
+      spaceId: snapshot.space_id,
       visibility: snapshot.visibility === "private" ? "space" : "private",
       sensitivity: snapshot.sensitivity,
     });
     expect(understated.result.structuredContent.code).toBe("publication_snapshot_mismatch");
 
+    for (const [name, args] of [
+      ["knowledge.page.get_published", {}],
+      ["knowledge.page.mark_reviewed", { outcome: "reviewed" }],
+      ["knowledge.page.archive", { pageOwnerId: page.owner_id }],
+    ] as const) {
+      const other = await call(name, { pageId: page.id, spaceId: "spc_other", ...args });
+      expect(other.result.structuredContent.code).toBe("resource_outside_space");
+    }
     const archive = await call("knowledge.page.archive", {
-      pageId: "pg_incident_runbook",
+      pageId: page.id,
+      spaceId: page.space_id,
       pageOwnerId: "user:somebody-else",
     });
     expect(archive.result.structuredContent.code).toBe("page_owner_mismatch");

@@ -4,6 +4,7 @@ import { Result } from "@praha/byethrow";
 import { assert, describe, expect, it } from "vite-plus/test";
 import { unstable_readConfig } from "wrangler";
 
+import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
 import { REQUIRED_BINDINGS, REQUIRED_SETTINGS, validateApprovalApiConfig } from "./config.ts";
 
 const binding = {};
@@ -114,8 +115,17 @@ describe("#84 wrangler environments", () => {
         ...bindings(config.queues.producers),
       ]);
       for (const name of REQUIRED_BINDINGS) expect(declared, name).toContain(name);
-      for (const service of (config.services ?? []) as { service: string }[]) {
-        expect(service.service).toBe(workerName);
+      // #198: Application Catalog servers are the only bindings to other Workers.
+      const applications = new Map(
+        APPLICATION_CATALOGS.flatMap((catalog) =>
+          catalog.servers.map((server) => [
+            server.serviceBinding,
+            `ultra-easy-${catalog.application}`,
+          ]),
+        ),
+      );
+      for (const service of (config.services ?? []) as { binding: string; service: string }[]) {
+        expect(service.service).toBe(applications.get(service.binding) ?? workerName);
       }
 
       const vars = Object.keys(config.vars);

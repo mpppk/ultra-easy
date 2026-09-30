@@ -63,6 +63,14 @@
       "service": "ultra-easy-approval-api",
       "entrypoint": "StagingActionExecutor",
     },
+    {
+      // #198 Application Catalog: `knowledge.*` primitive Actions call the Knowledge Worker's
+      // `/mcp` over this binding (workers.dev-to-workers.dev fetch is not available).
+      // Bearer token: `wrangler secret put KNOWLEDGE_MCP_TOKEN` (same value as the Knowledge
+      // Worker's secret; 1Password `ultra-easy`). Without either, knowledge.* executions fail closed.
+      "binding": "KNOWLEDGE",
+      "service": "ultra-easy-knowledge",
+    },
   ],
   // Notifications: at-least-once + notificationKey/delivery idempotency。
   // Top-level = staging (ultra-easy-notifications-staging + DLQ)。
@@ -123,6 +131,8 @@
           "migrations_dir": "../../packages/approval-d1/migrations",
         },
       ],
+      // #198: no production Knowledge Worker yet, so no KNOWLEDGE binding; knowledge.* executions
+      // fail closed (`mcp_server_not_configured`) until it is provisioned.
       "services": [
         {
           "binding": "ACTION_AUTHORIZER",

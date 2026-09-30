@@ -50,6 +50,7 @@ class FakeKnowledgeMcp {
           snapshot: {
             id: String(args["publicationSnapshotId"]),
             pageId: "page-1",
+            spaceId: "space-1",
             visibility: "organization",
             sensitivity: "confidential",
           },
@@ -74,7 +75,7 @@ class FakeKnowledgeMcp {
           lastReviewedAt: null,
         };
       default:
-        return { ok: true, pageId: typeof args["pageId"] === "string" ? args["pageId"] : "" };
+        return { ok: true };
     }
   }
 
@@ -226,8 +227,8 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     const h = harness();
     const submitted = await h.submit(
       "knowledge.publish_document",
-      { type: "knowledge_page", id: "page-1" },
-      { pageId: "page-1", publicationSnapshotId: "snap-1" },
+      { type: "knowledge_space", id: "space-1" },
+      { spaceId: "space-1", publicationSnapshotId: "snap-1" },
     );
     assert(Result.isSuccess(submitted) && submitted.value.type === "accepted");
     await h.settle();
@@ -242,12 +243,12 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
       "knowledge.watchers.notify",
     ]);
     const publish = h.knowledge.calls.find((call) => call.name === "knowledge.revision.publish");
-    // The page comes from the authorized resource; policy fields come from the snapshot.
+    // The space comes from the authorized resource; policy fields come from the snapshot.
     expect(publish?.arguments).toEqual({
       publicationSnapshotId: "snap-1",
       visibility: "organization",
       sensitivity: "confidential",
-      pageId: "page-1",
+      spaceId: "space-1",
     });
     expect(publish?.authorization).toBe(`Bearer ${TOKEN}`);
     expect(typeof publish?.idempotencyKey).toBe("string");
@@ -261,8 +262,8 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     });
     const submitted = await h.submit(
       "knowledge.publish_document",
-      { type: "knowledge_page", id: "page-1" },
-      { pageId: "page-1", publicationSnapshotId: "snap-1" },
+      { type: "knowledge_space", id: "space-1" },
+      { spaceId: "space-1", publicationSnapshotId: "snap-1" },
     );
     assert(Result.isSuccess(submitted) && submitted.value.type === "accepted");
     await h.settle();
@@ -299,7 +300,9 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     expect(
       h.knowledge.calls.filter((call) => call.name === "knowledge.page.mark_reviewed"),
     ).toEqual([
-      expect.objectContaining({ arguments: { outcome: "reviewed", pageId: "page-current" } }),
+      expect.objectContaining({
+        arguments: { pageId: "page-current", outcome: "reviewed", spaceId: "space-1" },
+      }),
     ]);
 
     const answered = await h.platform.runtime.answerHumanInput({
@@ -316,7 +319,7 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     expect(done.state.status).toBe("succeeded");
     expect(
       h.knowledge.calls.find((call) => call.name === "knowledge.page.archive")?.arguments,
-    ).toEqual({ pageOwnerId: OWNER.id, pageId: "page-stale" });
+    ).toEqual({ pageId: "page-stale", pageOwnerId: OWNER.id, spaceId: "space-1" });
     expect(done.state.output).toMatchObject({
       spaceId: "space-1",
       pages: [
@@ -330,7 +333,7 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     const h = harness();
     const submitted = await h.submit(
       "knowledge.search.reindex",
-      { type: "knowledge_page", id: "page-1" },
+      { type: "knowledge_space", id: "space-1" },
       { publicationSnapshotId: "snap-1" },
     );
     assert(Result.isSuccess(submitted) && submitted.value.type === "accepted");
@@ -338,7 +341,7 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     expect(h.knowledge.calls).toEqual([
       expect.objectContaining({
         name: "knowledge.search.reindex",
-        arguments: { publicationSnapshotId: "snap-1", pageId: "page-1" },
+        arguments: { publicationSnapshotId: "snap-1", spaceId: "space-1" },
       }),
     ]);
   });
@@ -347,8 +350,8 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     const h = harness();
     const submitted = await h.submit(
       "knowledge.search.reindex",
-      { type: "knowledge_page", id: "page-1" },
-      { publicationSnapshotId: "snap-1", pageId: "page-of-another-space" },
+      { type: "knowledge_space", id: "space-1" },
+      { publicationSnapshotId: "snap-1", spaceId: "space-of-another-team" },
     );
     expect(Result.isSuccess(submitted) && submitted.value.type === "accepted").toBe(false);
     expect(h.knowledge.calls).toEqual([]);
@@ -359,8 +362,8 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     h.authorizer.denied.add("knowledge.page.archive");
     const submitted = await h.submit(
       "knowledge.page.archive",
-      { type: "knowledge_page", id: "page-1" },
-      { pageOwnerId: OWNER.id },
+      { type: "knowledge_space", id: "space-1" },
+      { pageId: "page-1", pageOwnerId: OWNER.id },
     );
     assert(Result.isSuccess(submitted));
     expect(submitted.value.type).toBe("authorization_denied");
