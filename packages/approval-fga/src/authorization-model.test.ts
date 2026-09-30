@@ -28,7 +28,7 @@ describe("GitOps authorization model source (AC-M9-008)", () => {
     );
     expect(relations).toEqual({
       authorization_admin: ["editor", "viewer"],
-      knowledge_space: ["can_manage", "editor", "owner", "viewer"],
+      knowledge_space: ["can_edit", "can_manage", "can_view", "editor", "owner", "viewer"],
       mcp_tool: ["can_use"],
       ticket: ["can_approve", "can_execute"],
       user: [],

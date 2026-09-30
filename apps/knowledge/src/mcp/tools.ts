@@ -1,7 +1,7 @@
 import { Result } from "@praha/byethrow";
 import { z } from "zod";
 
-import { isStale, STALE_AFTER_DAYS } from "@app/knowledge-core";
+import { isStale, STALE_AFTER_DAYS, type PublicationSnapshot } from "@app/knowledge-core";
 import type { KnowledgeRepositories } from "@app/knowledge-d1";
 
 /**
@@ -48,8 +48,47 @@ const fail = (
 const storeFailure = (error: { message: string }): ToolOutcome =>
   fail("knowledge_store_unavailable", error.message, true);
 
-const snapshotInput = z.object({ publicationSnapshotId: z.string().min(1).max(64) });
-const pageInput = z.object({ pageId: z.string().min(1).max(64) });
+/**
+ * ultra-easy authorizes Knowledge actions per space (the ActionRequest resource is the
+ * `knowledge_space`), and its MCP route passes that space as `spaceId`. Tools refuse a
+ * snapshot or page of another space, so a role in space A never acts on space B.
+ */
+const spaceId = z.string().min(1).max(64).optional();
+const snapshotInput = z.object({ publicationSnapshotId: z.string().min(1).max(64), spaceId });
+const pageInput = z.object({ pageId: z.string().min(1).max(64), spaceId });
+
+const outsideSpace = (): ToolOutcome =>
+  fail("resource_outside_space", "the page belongs to another space");
+
+/** Rejects a page of another space (a missing page is left to the tool's own handling). */
+async function pageOutsideSpace(
+  repos: KnowledgeRepositories,
+  input: z.infer<typeof pageInput>,
+): Promise<ToolOutcome | null> {
+  if (input.spaceId === undefined) return null;
+  const page = await repos.pages.find(input.pageId);
+  if (Result.isFailure(page)) return storeFailure(page.error);
+  return page.value && page.value.spaceId !== input.spaceId ? outsideSpace() : null;
+}
+
+type SnapshotLookup =
+  | { type: "found"; snapshot: PublicationSnapshot }
+  | { type: "error"; outcome: ToolOutcome };
+
+async function boundSnapshot(
+  repos: KnowledgeRepositories,
+  input: z.infer<typeof snapshotInput>,
+): Promise<SnapshotLookup> {
+  const snapshot = await repos.revisions.findSnapshot(input.publicationSnapshotId);
+  if (Result.isFailure(snapshot)) return { type: "error", outcome: storeFailure(snapshot.error) };
+  if (!snapshot.value) {
+    return { type: "error", outcome: fail("publication_snapshot_not_found", "unknown snapshot") };
+  }
+  if (input.spaceId !== undefined && snapshot.value.spaceId !== input.spaceId) {
+    return { type: "error", outcome: outsideSpace() };
+  }
+  return { type: "found", snapshot: snapshot.value };
+}
 
 export const FAULT_SEARCH_INDEX = "fault.search_index";
 export const FAULT_NOTIFIER = "fault.notifier";
@@ -72,13 +111,13 @@ export const KNOWLEDGE_TOOLS = [
     readOnly: true,
     guaranteeLevel: "read_only",
     async run(input, { repos }) {
-      const snapshot = await repos.revisions.findSnapshot(input.publicationSnapshotId);
-      if (Result.isFailure(snapshot)) return storeFailure(snapshot.error);
-      if (!snapshot.value) return fail("publication_snapshot_not_found", "unknown snapshot");
+      const found = await boundSnapshot(repos, input);
+      if (found.type === "error") return found.outcome;
+      const snapshot = found.snapshot;
       const [revision, page, space] = await Promise.all([
-        repos.revisions.find(snapshot.value.revisionId),
-        repos.pages.find(snapshot.value.pageId),
-        repos.spaces.findById(snapshot.value.spaceId),
+        repos.revisions.find(snapshot.revisionId),
+        repos.pages.find(snapshot.pageId),
+        repos.spaces.findById(snapshot.spaceId),
       ]);
       if (Result.isFailure(revision)) return storeFailure(revision.error);
       if (Result.isFailure(page)) return storeFailure(page.error);
@@ -87,7 +126,7 @@ export const KNOWLEDGE_TOOLS = [
         return fail("publication_snapshot_not_found", "snapshot references are missing");
       }
       return ok({
-        snapshot: snapshot.value,
+        snapshot,
         revision: {
           id: revision.value.id,
           number: revision.value.number,
@@ -106,10 +145,27 @@ export const KNOWLEDGE_TOOLS = [
     description:
       "Publishes exactly the revision and settings pinned by a PublicationSnapshot " +
       "(compare-and-swap on the page lifecycle version).",
-    input: snapshotInput,
+    // Approval policies match on visibility / sensitivity of the child ActionRequest input.
+    // When present they must be the snapshot's own values, so a request cannot understate
+    // them to avoid an approval.
+    input: snapshotInput.extend({
+      visibility: z.string().max(64).optional(),
+      sensitivity: z.string().max(64).optional(),
+    }),
     readOnly: false,
     guaranteeLevel: "idempotent",
     async run(input, { repos, now }) {
+      const found = await boundSnapshot(repos, input);
+      if (found.type === "error") return found.outcome;
+      if (
+        (input.visibility !== undefined && input.visibility !== found.snapshot.visibility) ||
+        (input.sensitivity !== undefined && input.sensitivity !== found.snapshot.sensitivity)
+      ) {
+        return fail(
+          "publication_snapshot_mismatch",
+          "visibility / sensitivity differ from the pinned snapshot",
+        );
+      }
       const committed = await repos.publications.commitPublish({
         snapshotId: input.publicationSnapshotId,
         now: now(),
@@ -148,12 +204,12 @@ export const KNOWLEDGE_TOOLS = [
     guaranteeLevel: "idempotent",
     async run(input, dependencies) {
       const { repos, now } = dependencies;
-      const snapshot = await repos.revisions.findSnapshot(input.publicationSnapshotId);
-      if (Result.isFailure(snapshot)) return storeFailure(snapshot.error);
-      if (!snapshot.value) return fail("publication_snapshot_not_found", "unknown snapshot");
+      const found = await boundSnapshot(repos, input);
+      if (found.type === "error") return found.outcome;
+      const snapshot = found.snapshot;
       if (await faultActive(dependencies, FAULT_SEARCH_INDEX)) {
         const recorded = await repos.effects.record({
-          snapshotId: snapshot.value.id,
+          snapshotId: snapshot.id,
           effect: "search_reindex",
           status: "failed",
           errorCode: "search_index_unavailable",
@@ -162,10 +218,10 @@ export const KNOWLEDGE_TOOLS = [
         if (Result.isFailure(recorded)) return storeFailure(recorded.error);
         return fail("search_index_unavailable", "search index temporarily unavailable", true);
       }
-      const indexed = await repos.search.reindexPublished(snapshot.value.pageId);
+      const indexed = await repos.search.reindexPublished(snapshot.pageId);
       if (Result.isFailure(indexed)) return storeFailure(indexed.error);
       const recorded = await repos.effects.record({
-        snapshotId: snapshot.value.id,
+        snapshotId: snapshot.id,
         effect: "search_reindex",
         status: "succeeded",
         errorCode: null,
@@ -186,17 +242,17 @@ export const KNOWLEDGE_TOOLS = [
     guaranteeLevel: "idempotent",
     async run(input, dependencies) {
       const { repos, now } = dependencies;
-      const snapshot = await repos.revisions.findSnapshot(input.publicationSnapshotId);
-      if (Result.isFailure(snapshot)) return storeFailure(snapshot.error);
-      if (!snapshot.value) return fail("publication_snapshot_not_found", "unknown snapshot");
-      const outcome = await repos.revisions.findOutcome(snapshot.value.id);
+      const found = await boundSnapshot(repos, input);
+      if (found.type === "error") return found.outcome;
+      const snapshot = found.snapshot;
+      const outcome = await repos.revisions.findOutcome(snapshot.id);
       if (Result.isFailure(outcome)) return storeFailure(outcome.error);
       if (outcome.value?.status !== "published") {
         return fail("publication_not_published", "only published snapshots notify watchers");
       }
       if (await faultActive(dependencies, FAULT_NOTIFIER)) {
         const recorded = await repos.effects.record({
-          snapshotId: snapshot.value.id,
+          snapshotId: snapshot.id,
           effect: "watcher_notification",
           status: "failed",
           errorCode: "notifier_unavailable",
@@ -209,18 +265,18 @@ export const KNOWLEDGE_TOOLS = [
           true,
         );
       }
-      const watchers = await repos.pages.listWatchers(snapshot.value.pageId);
+      const watchers = await repos.pages.listWatchers(snapshot.pageId);
       if (Result.isFailure(watchers)) return storeFailure(watchers.error);
-      const recipients = watchers.value.filter((id) => id !== snapshot.value?.createdBy);
+      const recipients = watchers.value.filter((id) => id !== snapshot.createdBy);
       const delivered = await repos.effects.deliverNotifications({
-        snapshotId: snapshot.value.id,
-        pageId: snapshot.value.pageId,
+        snapshotId: snapshot.id,
+        pageId: snapshot.pageId,
         watcherIds: recipients,
         now: now(),
       });
       if (Result.isFailure(delivered)) return storeFailure(delivered.error);
       const recorded = await repos.effects.record({
-        snapshotId: snapshot.value.id,
+        snapshotId: snapshot.id,
         effect: "watcher_notification",
         status: "succeeded",
         errorCode: null,
@@ -274,6 +330,9 @@ export const KNOWLEDGE_TOOLS = [
       if (!page.value?.publishedRevisionId || page.value.status !== "active") {
         return fail("page_not_found", "no published revision");
       }
+      if (input.spaceId !== undefined && page.value.spaceId !== input.spaceId) {
+        return outsideSpace();
+      }
       const revision = await repos.revisions.find(page.value.publishedRevisionId);
       if (Result.isFailure(revision)) return storeFailure(revision.error);
       if (!revision.value) return fail("page_not_found", "no published revision");
@@ -299,6 +358,8 @@ export const KNOWLEDGE_TOOLS = [
     readOnly: false,
     guaranteeLevel: "idempotent",
     async run(input, { repos, now }) {
+      const outside = await pageOutsideSpace(repos, input);
+      if (outside) return outside;
       const changed = await repos.pages.setReviewState({
         pageId: input.pageId,
         state: input.outcome === "reviewed" ? "current" : "update_needed",
@@ -313,10 +374,21 @@ export const KNOWLEDGE_TOOLS = [
     name: "knowledge.page.archive",
     title: "Archive page",
     description: "Archives an active page (lifecycle transition; removes it from search).",
-    input: pageInput,
+    // `pageOwnerId` feeds the "archive by someone other than the owner" approval rule; when
+    // present it must be the page's actual owner.
+    input: pageInput.extend({ pageOwnerId: z.string().max(256).optional() }),
     readOnly: false,
     guaranteeLevel: "idempotent",
     async run(input, { repos, now }) {
+      const outside = await pageOutsideSpace(repos, input);
+      if (outside) return outside;
+      if (input.pageOwnerId !== undefined) {
+        const page = await repos.pages.find(input.pageId);
+        if (Result.isFailure(page)) return storeFailure(page.error);
+        if (page.value && page.value.ownerId !== input.pageOwnerId) {
+          return fail("page_owner_mismatch", "pageOwnerId is not the page owner");
+        }
+      }
       const archived = await repos.pages.archive(input.pageId, now());
       if (Result.isFailure(archived)) return storeFailure(archived.error);
       if (!archived.value) return fail("page_not_found", "unknown page");

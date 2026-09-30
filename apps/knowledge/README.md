@@ -91,6 +91,12 @@ downstream client). Requires `Authorization: Bearer $KNOWLEDGE_MCP_TOKEN`. Tools
 `knowledge.publication.get`, `knowledge.page.get_published`). Mutating tools advertise
 `guaranteeLevel=idempotent` and deduplicate by idempotency key in `tool_invocations`.
 
+ultra-easy registers these tools as `knowledge.*` Actions in its Application Catalog
+(`docs/application-catalog.md`, #198) and authorizes them per space. The ultra-easy route always
+passes the authorized space as `spaceId`, so tools reject a page or snapshot of another space
+(`resource_outside_space`). They also reject policy fields that differ from the real values
+(`visibility` / `sensitivity` of the snapshot, the page owner as `pageOwnerId`).
+
 ## Running locally
 
 ```bash

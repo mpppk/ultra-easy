@@ -38,3 +38,6 @@ type knowledge_space
     define editor: [user]
     define viewer: [user]
     define can_manage: owner
+    # Application Catalog (#198): Knowledge actions are authorized per space.
+    define can_edit: editor or owner
+    define can_view: viewer or can_edit

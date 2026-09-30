@@ -36,8 +36,8 @@
     "OPENFGA_STORE_ID": "01M31PMZ0DRBWZQ9D6TZ64E87W",
     // Pinned GitOps model (packages/approval-fga/openfga/model.fga) published from
     // AUTHORIZATION_MODEL_SOURCE_REVISION. Update both via PR after publish-model.ts.
-    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M3S6Q07BVT6ASNZ3R3CN1AJ7",
-    "AUTHORIZATION_MODEL_SOURCE_REVISION": "9267d20",
+    "OPENFGA_AUTHORIZATION_MODEL_ID": "01M3S8B36TK1WQSHQJEBTE5RNA",
+    "AUTHORIZATION_MODEL_SOURCE_REVISION": "abd9258",
     "OPENFGA_ASSUME_LIST_USERS_COMPLETE": "false",
     // #109: FGA alertはAnalytics Engine（TELEMETRY_ANALYTICS）をSQL APIで読む。
     // ANALYTICS_ENGINE_API_TOKEN（Account Analytics: Read）は`wrangler secret put`のみ。
@@ -62,6 +62,14 @@
       "binding": "ACTION_EXECUTOR",
       "service": "ultra-easy-approval-api",
       "entrypoint": "StagingActionExecutor",
+    },
+    {
+      // #198 Application Catalog: `knowledge.*` primitive Actions call the Knowledge Worker's
+      // `/mcp` over this binding (workers.dev-to-workers.dev fetch is not available).
+      // Bearer token: `wrangler secret put KNOWLEDGE_MCP_TOKEN` (same value as the Knowledge
+      // Worker's secret; 1Password `ultra-easy`). Without either, knowledge.* executions fail closed.
+      "binding": "KNOWLEDGE",
+      "service": "ultra-easy-knowledge",
     },
   ],
   // Notifications: at-least-once + notificationKey/delivery idempotency。
@@ -123,6 +131,8 @@
           "migrations_dir": "../../packages/approval-d1/migrations",
         },
       ],
+      // #198: no production Knowledge Worker yet, so no KNOWLEDGE binding; knowledge.* executions
+      // fail closed (`mcp_server_not_configured`) until it is provisioned.
       "services": [
         {
           "binding": "ACTION_AUTHORIZER",

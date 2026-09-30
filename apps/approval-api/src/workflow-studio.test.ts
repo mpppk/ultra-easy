@@ -83,3 +83,58 @@ describe("production Workflow Studio authorization", () => {
     expect(permissions).toEqual(["editor"]);
   });
 });
+
+describe("production Workflow Studio and Application Catalog ownership (#198)", () => {
+  const editor = () =>
+    createProductionWorkflowStudioApi({
+      ...host,
+      organizationId,
+      identity: { resolve: async () => Result.succeed({ organizationId, principal }) },
+      access: { check: async () => Result.succeed(true) },
+    });
+  const write = (path: string, method: string, body: unknown) =>
+    new Request(`https://api.example/v1/admin/workflow/${path}`, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it.each([
+    ["knowledge.publish_document"],
+    ["knowledge.page.archive"],
+    ["knowledge.not_registered_yet"],
+  ])(
+    "does not let an editor publish a Workflow as the app-owned action type %s",
+    async (actionType) => {
+      const response = await editor().fetch(
+        write("definitions/wf:shadow/publish", "POST", { definition: {}, actionType }),
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "catalog_owned" });
+    },
+  );
+
+  it("does not let an editor add versions to catalog-registered Workflows or Programs", async () => {
+    for (const request of [
+      write("definitions/wf:knowledge-publish-document", "PUT", { definition: {} }),
+      write("definitions/wf:knowledge-maintain-space/publish", "POST", { definition: {} }),
+      write("definitions/wf%3Aknowledge-maintain-space/publish", "POST", { definition: {} }),
+      write("programs/publish", "POST", { draft: { programId: "prog:knowledge-review-page" } }),
+    ]) {
+      const response = await editor().fetch(request);
+      expect(response.status).toBe(409);
+    }
+  });
+
+  it("leaves other action types to the regular Studio publish path", async () => {
+    const response = await editor().fetch(
+      write("definitions/wf:ticket-flow/publish", "POST", {
+        definition: {},
+        actionType: "ticket.triage",
+      }),
+    );
+    // Reached the Studio handler (which rejects the empty definition), not the catalog guard.
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "invalid_definition" });
+  });
+});

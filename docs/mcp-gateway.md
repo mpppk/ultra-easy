@@ -234,6 +234,14 @@ downstreamのJSON-RPC errorはActionExecutorError.code `mcp_jsonrpc_error:<code>
 
 `guaranteeLevel` のdefaultは `best_effort_at_most_once`。downstreamが `dev.ultra-easy/idempotencyKey` でdedupeする場合だけ `idempotent` を設定する。
 
+### Catalog経由の実行（#198）
+
+Gatewayの `tools/call` を通らないActionRequest（公開APIのsubmit、Workflowのchild Action）は、
+route snapshotを持たない。Application Catalog（`docs/application-catalog.md`）で登録した
+MCP-backed primitive Actionは、`McpCatalogActionExecutor`（executorKey `mcp:<serverId>`）で実行する。
+routeは、Materialized PlanのActionDefinition (key, version) にbindされた `mcp_action_routes`
+（insert-only）から引く。downstreamの `isError: true` は、Actionの失敗として扱う。
+
 ## 9. Telemetry / audit
 
 - Gateway: `request.accepted` / `request.replayed` / `request.denied` を `mcpInvocationId` + `actionRequestId` で相関し、`toolName` / `mcpServerId` / `bindingVersion` を付ける。

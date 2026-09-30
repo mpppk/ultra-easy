@@ -1,3 +1,4 @@
+export * from "./action-route.ts";
 export * from "./binding.ts";
 export * from "./downstream-http.ts";
 export * from "./executor.ts";

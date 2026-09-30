@@ -416,3 +416,21 @@ setting names (never values). Check that log first after a production deploy.
 - Browser login UI + session management (M2M + password-realm only).
 - Custom domain + ultra-easy-web callback URLs.
 - Staging executor is a success-echo sink (no external side effects by design).
+
+## Application Catalog (#198)
+
+`knowledge.*` Actions and the Knowledge Composite Actions are registered through the reviewed
+catalog migration `0031_knowledge_catalog.sql` (after `0030_mcp_action_routes.sql`). They are
+generated from `apps/approval-api/src/catalog/knowledge.ts` by `vp -C apps/approval-api run
+generate:catalog`. The migration uses plain INSERTs, so a conflicting pre-existing row fails the
+migration instead of being overwritten. See `docs/application-catalog.md`.
+
+- staging: Service Binding `KNOWLEDGE` → `ultra-easy-knowledge`, plus the Worker secret
+  `KNOWLEDGE_MCP_TOKEN` (the same value as the Knowledge Worker's secret; 1Password `ultra-easy`):
+  `wrangler secret put KNOWLEDGE_MCP_TOKEN`. Without it, knowledge.* executions fail closed
+  (`mcp_downstream_credentials_missing`, retried).
+- production: no Knowledge Worker yet, hence no binding (`mcp_server_not_configured`).
+- Authorization: `knowledge_space#can_view` / `#can_edit` / `#can_manage` (FGA model). Roles are
+  the #195 application relationships.
+- The production Workflow Studio rejects writes to catalog-owned action types, Workflows and Programs
+  with `409 catalog_owned`.

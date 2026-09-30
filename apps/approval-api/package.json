@@ -10,15 +10,19 @@
     "bootstrap:staging": "wrangler deploy && wrangler d1 migrations apply DB --remote",
     "bootstrap:production": "wrangler deploy --env production && wrangler d1 migrations apply DB --remote --env production",
     "deploy:dry-run": "wrangler deploy --dry-run",
-    "deploy:dry-run:production": "wrangler deploy --dry-run --env production"
+    "deploy:dry-run:production": "wrangler deploy --dry-run --env production",
+    "generate:catalog": "bun scripts/generate-catalog-migration.ts"
   },
   "dependencies": {
     "@app/approval-application": "workspace:*",
     "@app/approval-core": "workspace:*",
     "@app/approval-d1": "workspace:*",
     "@app/approval-fga": "workspace:*",
+    "@app/approval-mcp": "workspace:*",
     "@app/approval-runtime-cloudflare": "workspace:*",
+    "@app/expression-core": "workspace:*",
     "@app/workflow-application": "workspace:*",
+    "@app/workflow-core": "workspace:*",
     "@app/workflow-platform": "workspace:*",
     "@app/workflow-runtime-cloudflare": "workspace:*",
     "@app/workflow-sandbox": "workspace:*",
@@ -27,6 +31,7 @@
     "jose": "^6.1.0"
   },
   "devDependencies": {
+    "@app/workflow-d1": "workspace:*",
     "@cloudflare/workers-types": "^5.20260911.1",
     "wrangler": "^4.70.0"
   }
