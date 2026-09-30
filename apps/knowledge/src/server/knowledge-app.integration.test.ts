@@ -636,6 +636,14 @@ describe("Knowledge MCP endpoint", () => {
       sensitivity: snapshot.sensitivity,
     });
     expect(understated.result.structuredContent.code).toBe("publication_snapshot_mismatch");
+    const otherOwner = await call("knowledge.revision.publish", {
+      publicationSnapshotId: snapshot.id,
+      spaceId: snapshot.space_id,
+      visibility: snapshot.visibility,
+      sensitivity: snapshot.sensitivity,
+      pageOwnerId: "user:somebody-else",
+    });
+    expect(otherOwner.result.structuredContent.code).toBe("page_owner_mismatch");
 
     for (const [name, args] of [
       ["knowledge.page.get_published", {}],

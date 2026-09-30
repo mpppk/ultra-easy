@@ -27,7 +27,10 @@ tags:
 - name: HumanInputs
 - name: Principals
 - name: ApplicationRelationships
+- name: ApplicationPolicies
 paths:
+  /v1/organizations/{organizationId}/application-policies/{scopeType}/{scopeId}:
+    $ref: ./paths/paths-15.yaml#/~1v1~1organizations~1{organizationId}~1application-policies~1{scopeType}~1{scopeId}
   /v1/organizations/{organizationId}/me/space-roles:
     $ref: ./paths/paths-14.yaml#/~1v1~1organizations~1{organizationId}~1me~1space-roles
   /v1/organizations/{organizationId}/spaces/{spaceId}/members:

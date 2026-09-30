@@ -68,6 +68,11 @@ export const APPROVAL_FIELD_NAMESPACES: FieldNamespacePolicy = {
   context: "approval",
   namespaces: [
     { pattern: "action.input", match: "prefix", label: "Action input" },
+    // #199: resource-scoped policies (e.g. one Knowledge space's rules) select by the action
+    // and resource the ActionRequest was authorized for. Both are part of the immutable plan.
+    { pattern: "action.type", match: "exact", label: "Action type", type: "string" },
+    { pattern: "action.resource.type", match: "exact", label: "Resource type", type: "string" },
+    { pattern: "action.resource.id", match: "exact", label: "Resource ID", type: "string" },
     { pattern: "actor", match: "prefix", label: "Actor" },
     { pattern: "authority", match: "prefix", label: "Authority" },
     { pattern: "origin", match: "prefix", label: "Origin" },

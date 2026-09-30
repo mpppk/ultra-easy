@@ -33,10 +33,11 @@ function primitive(
   actionType: string,
   relation: "can_view" | "can_edit" | "can_manage",
   input: CatalogPrimitiveAction["input"],
+  version = 1,
 ): CatalogPrimitiveAction {
   return {
     actionType,
-    version: 1,
+    version,
     resourceType: "knowledge_space",
     relation,
     tool: { server: KNOWLEDGE_SERVER, name: actionType, resourceIdArgument: "spaceId" },
@@ -65,6 +66,24 @@ const PRIMITIVES: CatalogPrimitiveAction[] = [
     required: ["publicationSnapshotId", "visibility", "sensitivity"],
     additionalProperties: false,
   }),
+  // v2（#199）: 「page ownerが承認」ruleをpublishにも使えるよう、page ownerを必須inputにする
+  // （Knowledgeが実際のownerと照合する）。v1は登録済みのまま残す（catalogはimmutable）。
+  primitive(
+    "knowledge.revision.publish",
+    "can_edit",
+    {
+      type: "object",
+      properties: {
+        publicationSnapshotId: SNAPSHOT_ID,
+        visibility: { type: "string", maxLength: 64 },
+        sensitivity: { type: "string", maxLength: 64 },
+        pageOwnerId: { type: "string", maxLength: 256 },
+      },
+      required: ["publicationSnapshotId", "visibility", "sensitivity", "pageOwnerId"],
+      additionalProperties: false,
+    },
+    2,
+  ),
   primitive("knowledge.search.reindex", "can_edit", snapshotInput),
   primitive("knowledge.watchers.notify", "can_edit", snapshotInput),
   primitive("knowledge.pages.list_stale", "can_view", {
@@ -240,7 +259,8 @@ const snapshot = { publicationSnapshotId: f("workflow.input.publicationSnapshotI
  * 側で照合される）から子Actionへ渡す → 承認付きpublish → reindex / notify（独立した子Action）。
  */
 const PUBLISH_DOCUMENT_ID = "wf:knowledge-publish-document";
-const PUBLISH_DOCUMENT: JsonObject = {
+/** v2（#199）はpage ownerもsnapshotから`knowledge.revision.publish` v2へ渡す。 */
+const publishDocument = (version: 1 | 2): JsonObject => ({
   id: PUBLISH_DOCUMENT_ID,
   name: "Knowledge: publish document",
   description: "Publishes a pinned PublicationSnapshot with approval, then reindexes and notifies.",
@@ -260,6 +280,7 @@ const PUBLISH_DOCUMENT: JsonObject = {
           ...snapshot,
           visibility: f("nodes.get_publication.output.snapshot.visibility"),
           sensitivity: f("nodes.get_publication.output.snapshot.sensitivity"),
+          ...(version === 2 ? { pageOwnerId: f("nodes.get_publication.output.page.ownerId") } : {}),
         },
         "Publish",
       ),
@@ -287,7 +308,7 @@ const PUBLISH_DOCUMENT: JsonObject = {
       edge("effects", "end"),
     ],
   },
-};
+});
 
 /** maintain: stale pageを列挙し、pageごとにreview Programを実行する。 */
 const MAINTAIN_SPACE_ID = "wf:knowledge-maintain-space";
@@ -369,7 +390,16 @@ export const KNOWLEDGE_CATALOG: ApplicationCatalog = {
       workflowVersion: 1,
       resourceType: "knowledge_space",
       relation: "can_edit",
-      workflow: PUBLISH_DOCUMENT,
+      workflow: publishDocument(1),
+    },
+    {
+      actionType: "knowledge.publish_document",
+      actionDefinitionVersion: 2,
+      workflowId: PUBLISH_DOCUMENT_ID,
+      workflowVersion: 2,
+      resourceType: "knowledge_space",
+      relation: "can_edit",
+      workflow: publishDocument(2),
     },
     {
       actionType: "knowledge.maintain_space",
@@ -381,6 +411,58 @@ export const KNOWLEDGE_CATALOG: ApplicationCatalog = {
       workflow: MAINTAIN_SPACE,
     },
   ],
+  approvalPolicy: {
+    scheme: {
+      application: "knowledge",
+      scopeResourceType: "knowledge_space",
+      policyKey: "app:knowledge:approval",
+      bindingId: "binding:app:knowledge:approval",
+      metaPolicyKey: "app:knowledge:approval-policy-meta",
+      metaBindingId: "binding:app:knowledge:approval-policy-meta",
+      actions: [
+        {
+          actionType: "knowledge.revision.publish",
+          conditionFields: ["visibility", "sensitivity"],
+          principalFields: ["pageOwnerId"],
+        },
+        {
+          actionType: "knowledge.page.archive",
+          conditionFields: [],
+          principalFields: ["pageOwnerId"],
+        },
+      ],
+      approvers: {
+        space_owners: { relation: "owner" },
+        page_owner: { inputUser: "pageOwnerId" },
+      },
+      requesterIsNot: { page_owner: "pageOwnerId" },
+      // 既定rule（apps/knowledgeの`DEFAULT_KNOWLEDGE_POLICY`と同じ）。
+      defaultPolicy: {
+        rules: [
+          {
+            key: "publish_confidential",
+            actionType: "knowledge.revision.publish",
+            when: { field: "sensitivity", equals: "confidential" },
+            approvers: "space_owners",
+          },
+          {
+            key: "publish_organization",
+            actionType: "knowledge.revision.publish",
+            when: { field: "visibility", equals: "organization" },
+            approvers: "space_owners",
+          },
+          {
+            key: "archive",
+            actionType: "knowledge.page.archive",
+            when: { requesterIsNot: "page_owner" },
+            approvers: "page_owner",
+          },
+        ],
+      },
+      metaApprovalRelation: "owner",
+    },
+    updateRelation: "can_manage",
+  },
 };
 
 /** このdeploymentに登録されているApplication Catalog。 */

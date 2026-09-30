@@ -127,6 +127,10 @@ describe("shared Expression Engine", () => {
   it("Approval / Workflow / Delegationでnamespaceが分離されている", () => {
     expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "action.input.amount")).toBe(true);
     expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "action.inputs")).toBe(false);
+    expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "action.type")).toBe(true);
+    expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "action.resource.id")).toBe(true);
+    expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "action.resource")).toBe(false);
+    expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "action.resource.id.x")).toBe(false);
     expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "workflow.input.amount")).toBe(false);
     expect(isFieldPathAllowed(APPROVAL_FIELD_NAMESPACES, "now.x")).toBe(false);
 

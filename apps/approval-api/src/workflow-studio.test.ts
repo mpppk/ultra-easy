@@ -103,6 +103,9 @@ describe("production Workflow Studio and Application Catalog ownership (#198)", 
     ["knowledge.publish_document"],
     ["knowledge.page.archive"],
     ["knowledge.not_registered_yet"],
+    ["application.approval_policy.update"],
+    ["approval_policy_binding.update"],
+    ["authorization.relationship.update"],
   ])(
     "does not let an editor publish a Workflow as the app-owned action type %s",
     async (actionType) => {

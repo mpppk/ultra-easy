@@ -2,8 +2,14 @@ import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
+  APPLICATION_APPROVAL_POLICY_ACTION_TYPE,
+  applicationApprovalBindingId,
+  applicationApprovalPolicyMetaPolicy,
   canonicalizeJson,
+  compileApplicationApprovalPolicies,
   parseBrand,
+  validateApplicationApprovalPolicy,
+  type ApplicationApprovalScheme,
   sha256CanonicalJson,
   sha256Text,
   type ActionDefinition,
@@ -59,6 +65,19 @@ export type ApplicationCatalog = {
   primitives: readonly CatalogPrimitiveAction[];
   programs: readonly CatalogProgram[];
   composites: readonly CatalogCompositeAction[];
+  /** resource（例: space）ごとの承認rule（#199）。 */
+  approvalPolicy?: CatalogApprovalPolicy;
+};
+
+/**
+ * アプリが自分のresourceごとに変えられる承認ruleの語彙（#199）。ruleの変更は
+ * `application.approval_policy.update`（meta-approval付き）で行い、bootstrap（既定rule / Binding /
+ * meta-approval policy）はcatalog migrationで入れる。
+ */
+export type CatalogApprovalPolicy = {
+  scheme: ApplicationApprovalScheme;
+  /** ruleを変更できるscope上のrelation（Authorization）。 */
+  updateRelation: string;
 };
 
 /** downstream MCP server。endpoint / credentialはdeployment設定だけが持ち、catalogへ保存しない。 */
@@ -365,6 +384,65 @@ export function validateCatalog(catalog: ApplicationCatalog): CatalogManifestErr
       issue("catalog_action_unknown", `${String(node.actionType)}がcatalogに未定義です`);
     }
   }
+  if (catalog.approvalPolicy) {
+    for (const found of validateApprovalPolicySection(catalog, catalog.approvalPolicy)) {
+      issue(found.code, found.message);
+    }
+  }
+  return issues;
+}
+
+/** 最新versionのprimitive（ruleが参照するinputはこのversionのschemaで必須である必要がある）。 */
+function latestPrimitive(
+  catalog: ApplicationCatalog,
+  actionType: string,
+): CatalogPrimitiveAction | undefined {
+  return catalog.primitives
+    .filter((primitive) => primitive.actionType === actionType)
+    .sort((left, right) => right.version - left.version)[0];
+}
+
+function validateApprovalPolicySection(
+  catalog: ApplicationCatalog,
+  section: CatalogApprovalPolicy,
+): CatalogManifestError[] {
+  const issues: CatalogManifestError[] = [];
+  const { scheme } = section;
+  if (scheme.application !== catalog.application) {
+    issues.push(new CatalogManifestError("catalog_policy_invalid", "applicationが一致しません"));
+  }
+  for (const action of scheme.actions) {
+    const primitive = latestPrimitive(catalog, action.actionType);
+    if (!primitive || primitive.resourceType !== scheme.scopeResourceType) {
+      issues.push(
+        new CatalogManifestError(
+          "catalog_policy_invalid",
+          `${action.actionType}はscope ${scheme.scopeResourceType}のprimitiveではありません`,
+        ),
+      );
+      continue;
+    }
+    const required = primitive.input.required ?? [];
+    for (const fieldName of [...action.conditionFields, ...action.principalFields]) {
+      if (!required.includes(fieldName)) {
+        issues.push(
+          new CatalogManifestError(
+            "catalog_policy_invalid",
+            `${action.actionType}@${primitive.version}: ${fieldName}は必須inputではありません`,
+          ),
+        );
+      }
+    }
+  }
+  const defaults = validateApplicationApprovalPolicy(scheme, scheme.defaultPolicy);
+  if (defaults.type === "invalid") {
+    issues.push(
+      new CatalogManifestError(
+        "catalog_policy_invalid",
+        defaults.issues.map((entry) => `${entry.path}: ${entry.message}`).join("; "),
+      ),
+    );
+  }
   return issues;
 }
 
@@ -616,7 +694,91 @@ export async function renderCatalogEntries(
     if (Result.isFailure(rendered)) return rendered;
     entries.push(rendered.value);
   }
+
+  if (catalog.approvalPolicy) {
+    const rendered = await approvalPolicyEntry(catalog, catalog.approvalPolicy, organizations);
+    if (Result.isFailure(rendered)) return rendered;
+    entries.push(rendered.value);
+  }
   return Result.succeed(entries);
+}
+
+/**
+ * 承認ruleのbootstrap: 既定ruleをcompileしたActionごとのPolicy v1とBinding、および
+ * `application.approval_policy.update`のmeta-approval policy v1とBinding。以後のversionは
+ * meta-approval済みのrule変更だけが作る（docs/governance-bootstrap.md）。
+ */
+async function approvalPolicyEntry(
+  catalog: ApplicationCatalog,
+  section: CatalogApprovalPolicy,
+  organizations: readonly OrganizationId[],
+): Result.ResultAsync<CatalogEntry, CatalogManifestError> {
+  const { scheme } = section;
+  const actor = catalogActor(catalog);
+  if (Result.isFailure(actor)) return actor;
+  const actorJson = json(actor.value);
+  if (Result.isFailure(actorJson)) return actorJson;
+  const source = catalogSource(catalog);
+  const policies = [
+    ...compileApplicationApprovalPolicies(scheme, []).map(({ actionType, policy }) => ({
+      policy,
+      bindingId: applicationApprovalBindingId(scheme, actionType),
+      actionType,
+    })),
+    {
+      policy: applicationApprovalPolicyMetaPolicy(scheme),
+      bindingId: scheme.metaBindingId,
+      actionType: String(APPLICATION_APPROVAL_POLICY_ACTION_TYPE),
+    },
+  ];
+  const statements: string[] = [];
+  for (const organization of organizations) {
+    for (const { policy, bindingId, actionType } of policies) {
+      const policyJson = json(policy);
+      const binding = {
+        id: bindingId,
+        organizationId: String(organization),
+        policyKey: String(policy.key),
+        selector: { actionTypes: [actionType], resourceTypes: [scheme.scopeResourceType] },
+        compositionOrder: 100,
+        enabled: true,
+      };
+      const bindingJson = json(binding);
+      if (Result.isFailure(policyJson)) return policyJson;
+      if (Result.isFailure(bindingJson)) return bindingJson;
+      statements.push(
+        insert("published_approval_policy_versions", {
+          organization_id: organization,
+          policy_key: String(policy.key),
+          version: 1,
+          policy_json: policyJson.value,
+          actor_json: actorJson.value,
+          source_action_request_id: source,
+          published_at: catalog.publishedAt,
+        }),
+        insert("approval_policy_bindings", {
+          organization_id: organization,
+          binding_id: bindingId,
+          policy_key: String(policy.key),
+          enabled: 1,
+          binding_json: bindingJson.value,
+          actor_json: actorJson.value,
+          source_action_request_id: source,
+          updated_at: catalog.publishedAt,
+        }),
+      );
+    }
+  }
+  return entry(`approval-policy:${catalog.application}@1`, statements);
+}
+
+/** runtime view: catalogが宣言する承認ruleの語彙。 */
+export function catalogApprovalSchemes(
+  catalogs: readonly ApplicationCatalog[],
+): ApplicationApprovalScheme[] {
+  return catalogs.flatMap((catalog) =>
+    catalog.approvalPolicy ? [catalog.approvalPolicy.scheme] : [],
+  );
 }
 
 const MARKER = /^-- catalog-entry: (\S+) (sha256:[0-9a-f]{64})$/gm;
@@ -701,6 +863,14 @@ export function catalogActionRelation(
   action: { type: string; resourceType: string },
 ): string | null {
   for (const catalog of catalogs) {
+    const policy = catalog.approvalPolicy;
+    if (
+      policy &&
+      action.type === String(APPLICATION_APPROVAL_POLICY_ACTION_TYPE) &&
+      action.resourceType === policy.scheme.scopeResourceType
+    ) {
+      return policy.updateRelation;
+    }
     const declared = [...catalog.primitives, ...catalog.composites].find(
       (candidate) =>
         candidate.actionType === action.type && candidate.resourceType === action.resourceType,

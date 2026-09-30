@@ -4,7 +4,12 @@ import type {
   AuthorizationAdminAccessChecker,
   AuthorizationAdminCallerResolver,
 } from "@app/approval-application";
-import { decodeUriComponent, type OrganizationId } from "@app/approval-core";
+import {
+  AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION,
+  decodeUriComponent,
+  GOVERNANCE_ACTION_TYPES,
+  type OrganizationId,
+} from "@app/approval-core";
 import type { CapabilityPolicy } from "@app/workflow-application";
 import { handleWorkflowStudio, type WorkflowPlatform } from "@app/workflow-platform";
 
@@ -39,6 +44,15 @@ async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   return isRecord(parsed) ? parsed : {};
 }
 
+/** 組み込みのgoverned action（Studioで同名のComposite Actionを公開させない）。 */
+function builtInActionType(actionType: string): boolean {
+  return (
+    actionType.startsWith("application.") ||
+    Object.values(GOVERNANCE_ACTION_TYPES).some((type) => String(type) === actionType) ||
+    actionType === String(AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION.actionType)
+  );
+}
+
 /**
  * Application Catalog（#198）が所有するaction type / Workflow Definition / Programへの
  * Studioからの書き込みを拒否する。これらはreview済みcatalog migrationだけが登録し、
@@ -61,9 +75,11 @@ async function catalogOwnedWrite(
     }
     if (request.method === "POST" && sub === "publish") {
       const actionType = (await jsonBody(request))["actionType"];
-      const owner =
-        typeof actionType === "string" ? reservedActionTypeOwner(catalogs, actionType) : null;
-      if (owner) return `Action type ${String(actionType)} is owned by the ${owner} application`;
+      if (typeof actionType === "string") {
+        const owner = reservedActionTypeOwner(catalogs, actionType);
+        if (owner) return `Action type ${actionType} is owned by the ${owner} application`;
+        if (builtInActionType(actionType)) return `Action type ${actionType} is built in`;
+      }
     }
   }
   if (resource === "programs" && id === "publish") {

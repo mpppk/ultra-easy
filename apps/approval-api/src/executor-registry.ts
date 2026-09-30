@@ -1,8 +1,10 @@
 import { Result } from "@praha/byethrow";
 
 import {
+  APPLICATION_APPROVAL_POLICY_EXECUTOR_KEY,
   ActionExecutorError,
   ActionExecutorRegistry,
+  ApplicationApprovalPolicyExecutor,
   AUTHORIZATION_EXECUTOR_KEY,
   GOVERNANCE_EXECUTOR_KEY,
   GovernanceActionExecutor,
@@ -10,13 +12,15 @@ import {
   type ActionExecutionResult,
   type ActionExecutor,
 } from "@app/approval-core";
-import { D1GovernanceRepository } from "@app/approval-d1";
+import { D1ApplicationApprovalPolicyRepository, D1GovernanceRepository } from "@app/approval-d1";
 import {
   CloudflareWorkflowCancellationControl,
   type WorkflowBindingControl,
   telemetrySinkFromEnv,
 } from "@app/approval-runtime-cloudflare";
 
+import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
+import { catalogApprovalSchemes } from "./catalog/manifest.ts";
 import { catalogActionExecutors } from "./catalog/runtime.ts";
 import { relationshipExecutor, type RelationshipMutationEnv } from "./relationship-mutation.ts";
 
@@ -90,6 +94,11 @@ export function createPrimitiveActionExecutors(
       relationshipExecutor(env) ??
       new UnavailableActionExecutor("fga_not_configured", "FGA接続設定がありません"),
     [STAGING_EXECUTOR_KEY]: new StagingSinkActionExecutor(),
+    // Application-scoped approval rules（#199）。meta-approval済みの変更だけを適用する。
+    [String(APPLICATION_APPROVAL_POLICY_EXECUTOR_KEY)]: new ApplicationApprovalPolicyExecutor({
+      schemes: catalogApprovalSchemes(APPLICATION_CATALOGS),
+      repository: new D1ApplicationApprovalPolicyRepository(env.DB),
+    }),
     // Application Catalog（#198）のMCP-backed primitive Action（`mcp:<serverId>`）。
     ...catalogActionExecutors(env, { telemetry: telemetrySinkFromEnv(env) }),
   };

@@ -26,7 +26,7 @@ type ConditionEvaluationResult \=
   | { type: "not\_matched" }  
   | { type: "error"; code: string; path?: string; message: string };
 
-Condition評価はfail closedとする。missing field、順序比較の型不一致、未許可field path、invalid number/date等は\`not\_matched\`へ潰さず\`error\`とし、そのActionRequestのPolicy評価を停止して実行しない。\`eq/ne\`のみnull比較を許可し、\`gt/gte/lt/lte\`は同一の比較可能型に限定する。Policyから参照できるfield rootは\`action.input\`、\`actor\`、\`authority\`、\`origin\`、\`organization.settings\`、\`attributes\`、\`now\`のallowlistとし、それ以外はpublish時のsemantic validation errorとする。配列集約・合計等はv1のCondition ASTへ入れず、Action Definition側でderived attributeとして\`attributes\`へ供給する。金額はv1では最小通貨単位の\`Number.isSafeInteger\`で表現し、currencyを別fieldとして保持する。異なるcurrencyを金額だけで比較するPolicyを禁止する。
+Condition評価はfail closedとする。missing field、順序比較の型不一致、未許可field path、invalid number/date等は\`not\_matched\`へ潰さず\`error\`とし、そのActionRequestのPolicy評価を停止して実行しない。\`eq/ne\`のみnull比較を許可し、\`gt/gte/lt/lte\`は同一の比較可能型に限定する。Policyから参照できるfield rootは\`action.type\`・\`action.resource.type\`・\`action.resource.id\`（#199、resource単位のPolicyのため。いずれも不変のPlanの一部）、\`action.input\`、\`actor\`、\`authority\`、\`origin\`、\`organization.settings\`、\`attributes\`、\`now\`のallowlistとし、それ以外はpublish時のsemantic validation errorとする。配列集約・合計等はv1のCondition ASTへ入れず、Action Definition側でderived attributeとして\`attributes\`へ供給する。金額はv1では最小通貨単位の\`Number.isSafeInteger\`で表現し、currencyを別fieldとして保持する。異なるcurrencyを金額だけで比較するPolicyを禁止する。
 
 ## **7.3 Evaluation Context**
 

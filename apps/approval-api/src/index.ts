@@ -8,11 +8,13 @@ import {
   createActionRequestHttpApi,
   createPublicHttpApi,
   createPublicPrincipalDirectoryApi,
+  createPublicApplicationApprovalPolicyApi,
   createPublicApplicationRelationshipApi,
   PublicApiRepositoryError,
   AUTHORIZATION_ADMIN_HTTP_ROUTES,
   PUBLIC_HTTP_ROUTES,
   PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
+  PUBLIC_APPLICATION_APPROVAL_POLICY_ROUTES,
   PUBLIC_APPLICATION_RELATIONSHIP_ROUTES,
   withHttpAccessLog,
 } from "@app/approval-application";
@@ -25,6 +27,7 @@ import {
 import {
   D1FixedWindowRateLimiter,
   D1PrincipalDirectoryRepository,
+  D1ApplicationApprovalPolicyRepository,
   D1ApplicationRelationshipReadRepository,
   D1PublicApiRepository,
 } from "@app/approval-d1";
@@ -54,6 +57,8 @@ import {
   buildAdminAuthorizationApi,
 } from "./admin-authorization.ts";
 import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-identity.ts";
+import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
+import { catalogApprovalSchemes } from "./catalog/manifest.ts";
 import { readClientRegistry } from "./client-registry.ts";
 import { handleOperatorDashboard } from "./operator-dashboard.ts";
 import { StagingTrustedContextProvider } from "./trusted-context.ts";
@@ -268,6 +273,26 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
       ? { applicationAgentId: `agent:${env.AUTH0_KNOWLEDGE_AGENT_CLIENT_ID}` }
       : {}),
   });
+  const publicApplicationPolicies = createPublicApplicationApprovalPolicyApi({
+    schemes: catalogApprovalSchemes(APPLICATION_CATALOGS),
+    repository: new D1ApplicationApprovalPolicyRepository(env.DB),
+    actionRequests: readRepository,
+    identityProvider: identity,
+    accessChecker: {
+      canView: ({ scopeType, scopeId, userId }) =>
+        spaceReadClient
+          ? spaceReadClient.check({
+              user: String(userId),
+              relation: "can_view",
+              object: `${scopeType}:${scopeId}`,
+              consistency: "higher_consistency",
+            })
+          : Promise.resolve(Result.fail({ code: "fga_not_configured", retriable: true })),
+    },
+    ...(env.AUTH0_KNOWLEDGE_AGENT_CLIENT_ID
+      ? { applicationAgentId: `agent:${env.AUTH0_KNOWLEDGE_AGENT_CLIENT_ID}` }
+      : {}),
+  });
   const publicApi = createPublicHttpApi({
     actionRequestApi,
     readRepository,
@@ -334,6 +359,8 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
       if (publicPrincipalDirectory.handles(request)) return publicPrincipalDirectory.fetch(request);
       if (publicApplicationRelationships.handles(request))
         return publicApplicationRelationships.fetch(request);
+      if (publicApplicationPolicies.handles(request))
+        return publicApplicationPolicies.fetch(request);
       return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
     },
   };
@@ -363,6 +390,7 @@ const APPROVAL_API_ROUTES = [
   ...PUBLIC_HUMAN_INPUT_ROUTES,
   ...PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
   ...PUBLIC_APPLICATION_RELATIONSHIP_ROUTES,
+  ...PUBLIC_APPLICATION_APPROVAL_POLICY_ROUTES,
   ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
   `${PRODUCTION_WORKFLOW_STUDIO_PREFIX}/*`,
   "/operator/dashboard",

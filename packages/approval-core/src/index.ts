@@ -11,6 +11,7 @@ export * from "./approver-resolver.ts";
 export * from "./attachment.ts";
 export * from "./authorization.ts";
 export * from "./authorization-admin.ts";
+export * from "./application-approval-policy.ts";
 export * from "./application-relationship.ts";
 export * from "./authorization-relationship.ts";
 export * from "./authorization-relationship-coordinator.ts";
