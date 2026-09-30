@@ -26,7 +26,12 @@ tags:
 - name: WorkflowRuns
 - name: HumanInputs
 - name: Principals
+- name: ApplicationRelationships
 paths:
+  /v1/organizations/{organizationId}/me/space-roles:
+    $ref: ./paths/paths-14.yaml#/~1v1~1organizations~1{organizationId}~1me~1space-roles
+  /v1/organizations/{organizationId}/spaces/{spaceId}/members:
+    $ref: ./paths/paths-14.yaml#/~1v1~1organizations~1{organizationId}~1spaces~1{spaceId}~1members
   /v1/organizations/{organizationId}/principals:
     $ref: ./paths/paths-13.yaml#/~1v1~1organizations~1{organizationId}~1principals
   /v1/organizations/{organizationId}/me/principal:

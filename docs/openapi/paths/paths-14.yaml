@@ -1,0 +1,61 @@
+/v1/organizations/{organizationId}/me/space-roles:
+  get:
+    tags: [ApplicationRelationships]
+    operationId: listMySpaceRoles
+    summary: 認証済みuser自身のKnowledge space roleを一覧する
+    description: |
+      organization membership、登録済みclient、read:action-requests scopeを確認する。
+      本人の確定済みknowledge_space関係だけを返す。agent tokenは利用できない。
+      同じspaceに複数roleがある場合はowner、editor、viewerの順で1件だけ返す。
+      nextCursorがあれば同じqueryのcursorに渡す。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+    - name: cursor
+      in: query
+      schema: { type: string }
+    responses:
+      '200':
+        description: 本人のspace role。
+        content:
+          application/json:
+            schema: { $ref: ../components/schemas-11.yaml#/SpaceRolePage }
+      '400': { $ref: ../components/common.yaml#/responses/BadRequest }
+      '401': { $ref: ../components/common.yaml#/responses/Unauthorized }
+      '403': { $ref: ../components/common.yaml#/responses/Forbidden }
+      '503': { $ref: ../components/common.yaml#/responses/ServiceUnavailable }
+/v1/organizations/{organizationId}/spaces/{spaceId}/members:
+  get:
+    tags: [ApplicationRelationships]
+    operationId: listSpaceMembers
+    summary: Knowledge spaceの確定済みメンバーを一覧する
+    description: |
+      user tokenは対象spaceのcan_manage（owner）をOpenFGAで確認する。
+      登録済みKnowledge agentも利用できる。双方にorganization membershipと
+      read:action-requests scopeが必要。表示名はprincipal directoryから取得し、
+      未登録ならIDを表示する。nextCursorがあれば同じqueryのcursorに渡す。
+      同じuserに複数roleがある場合はowner、editor、viewerの順で1件だけ返す。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: spaceId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    - name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+    - name: cursor
+      in: query
+      schema: { type: string }
+    responses:
+      '200':
+        description: 対象spaceのメンバー。
+        content:
+          application/json:
+            schema: { $ref: ../components/schemas-11.yaml#/SpaceMemberPage }
+      '400': { $ref: ../components/common.yaml#/responses/BadRequest }
+      '401': { $ref: ../components/common.yaml#/responses/Unauthorized }
+      '403': { $ref: ../components/common.yaml#/responses/Forbidden }
+      '503': { $ref: ../components/common.yaml#/responses/ServiceUnavailable }

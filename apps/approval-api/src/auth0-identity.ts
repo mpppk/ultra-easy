@@ -45,6 +45,7 @@ export const PUBLIC_API_OPERATION_SCOPES: Record<PublicApiOperation, string> = {
   "approval_decision.submit": "write:action-requests",
   "principal_directory.read": "read:action-requests",
   "principal_directory.ensure": "write:action-requests",
+  "application_relationship.read": "read:action-requests",
 };
 
 /** user loginで発行されるtokenの`gty`。省略（authorization code等）もuser tokenとして扱う。 */

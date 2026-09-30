@@ -3,6 +3,8 @@ import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
   AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY,
+  APPLICATION_RELATIONSHIP_UPDATE_DEFINITION,
+  applicationRelationshipUpdateInputSchema,
   relationshipUpdateInputSchema,
   type SchemaReference,
   type SchemaResolver,
@@ -42,6 +44,9 @@ export class StagingSchemaResolver implements SchemaResolver {
     if (key === "staging:ticket-update") return Result.succeed(stagingTicketUpdateSchema());
     if (key === String(AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY)) {
       return Result.succeed(relationshipUpdateInputSchema() as StandardSchemaV1);
+    }
+    if (key === String(APPLICATION_RELATIONSHIP_UPDATE_DEFINITION.inputSchema.key)) {
+      return Result.succeed(applicationRelationshipUpdateInputSchema() as StandardSchemaV1);
     }
     return Result.succeed(null);
   }

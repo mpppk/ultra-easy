@@ -1,5 +1,6 @@
 import {
   authorizationAdminActionRelation,
+  APPLICATION_RELATIONSHIP_ACTION_TYPE,
   type ActionType,
   type RelationName,
   type ResourceRef,
@@ -19,6 +20,12 @@ export function stagingActionRelation(action: {
   // ticket.escalate is a staging fixture for parallel (any/all/quorum) approval flows.
   if (String(action.type) === "ticket.update" || String(action.type) === "ticket.escalate") {
     return brandLiteral("RelationName", "can_execute");
+  }
+  if (
+    String(action.type) === String(APPLICATION_RELATIONSHIP_ACTION_TYPE) &&
+    String(action.resource.type) === "knowledge_space"
+  ) {
+    return brandLiteral("RelationName", "can_manage");
   }
   return authorizationAdminActionRelation({ actionType: action.type, resource: action.resource });
 }

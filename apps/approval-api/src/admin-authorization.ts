@@ -63,7 +63,10 @@ function tokenSupplier(env: AdminAuthorizationEnv): FgaAccessTokenSupplier | nul
  * uses check / readTuple / readAuthorizationModel; tuple writes happen solely
  * in the relationship executor/reconciler, and no model write exists.
  */
-function readClient(env: AdminAuthorizationEnv, organizationId: OrganizationId) {
+export function authorizationReadClient(
+  env: AdminAuthorizationEnv,
+  organizationId: OrganizationId,
+) {
   const supplier = tokenSupplier(env);
   if (!env.OPENFGA_STORE_ID || !env.OPENFGA_AUTHORIZATION_MODEL_ID || !supplier) return null;
   return new OpenFgaClient({
@@ -93,7 +96,7 @@ export function authorizationAdminAccessChecker(
   env: AdminAuthorizationEnv,
   organizationId: OrganizationId,
 ): AuthorizationAdminAccessChecker {
-  const client = readClient(env, organizationId);
+  const client = authorizationReadClient(env, organizationId);
   return {
     async check({ caller, permission }) {
       if (!client || String(caller.organizationId) !== String(organizationId)) {
@@ -127,7 +130,7 @@ export function buildAdminAuthorizationApi(input: {
   service: ActionRequestApplicationService;
 }) {
   const { env, organizationId } = input;
-  const client = readClient(env, organizationId);
+  const client = authorizationReadClient(env, organizationId);
   const modelId = env.OPENFGA_AUTHORIZATION_MODEL_ID ?? "";
 
   const accessChecker = authorizationAdminAccessChecker(env, organizationId);
@@ -202,7 +205,7 @@ export function buildAdminAuthorizationApi(input: {
 
   const observer: AuthorizationRelationshipObserver = {
     async observe({ organizationId: org, tuple }) {
-      const scoped = readClient(env, org);
+      const scoped = authorizationReadClient(env, org);
       if (!scoped) {
         return Result.fail(
           new AuthorizationAdminDependencyError("fga_not_configured", true, "FGA未設定です"),

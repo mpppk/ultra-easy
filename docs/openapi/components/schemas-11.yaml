@@ -1,0 +1,50 @@
+SpaceRole:
+  type: string
+  enum: [viewer, editor, owner]
+SpaceRoleEntry:
+  type: object
+  required: [spaceId, role]
+  properties:
+    spaceId: { type: string }
+    role: { $ref: ./schemas-11.yaml#/SpaceRole }
+  additionalProperties: false
+SpaceRolePage:
+  type: object
+  required: [items]
+  properties:
+    items:
+      type: array
+      items: { $ref: ./schemas-11.yaml#/SpaceRoleEntry }
+    nextCursor: { type: string }
+  additionalProperties: false
+SpaceMemberEntry:
+  type: object
+  required: [id, displayName, role]
+  properties:
+    id: { type: string, pattern: '^user:' }
+    displayName: { type: string }
+    role: { $ref: ./schemas-11.yaml#/SpaceRole }
+  additionalProperties: false
+SpaceMemberPage:
+  type: object
+  required: [items]
+  properties:
+    items:
+      type: array
+      items: { $ref: ./schemas-11.yaml#/SpaceMemberEntry }
+    nextCursor: { type: string }
+  additionalProperties: false
+ApplicationRelationshipUpdateInput:
+  type: object
+  required: [operation, tuple]
+  properties:
+    operation: { type: string, enum: [write, delete] }
+    tuple:
+      type: object
+      required: [user, relation, object]
+      properties:
+        user: { type: string, pattern: '^user:' }
+        relation: { $ref: ./schemas-11.yaml#/SpaceRole }
+        object: { type: string, pattern: '^knowledge_space:' }
+      additionalProperties: false
+  additionalProperties: false

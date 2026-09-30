@@ -355,6 +355,78 @@ describe("Auth0IdentityProvider", () => {
     expect(agent.error).toMatchObject({ status: 403, code: "client_operation_not_allowed" });
   });
 
+  it("#195: Knowledge clientのrelationship scopeはknowledge_spaceだけに限定する", async () => {
+    const registry = readClientRegistry({
+      AUTH0_KNOWLEDGE_CLIENT_ID: "knowledge-client",
+      AUTH0_KNOWLEDGE_AGENT_CLIENT_ID: "knowledge-agent",
+    });
+    const { provider, sign } = await harness({ type: "tenant" }, registry);
+    for (const clientId of ["knowledge-client", "knowledge-agent"]) {
+      const token = await sign({
+        azp: clientId,
+        sub: clientId === "knowledge-agent" ? `${clientId}@clients` : "auth0|alice",
+        ...(clientId === "knowledge-agent" ? { gty: "client-credentials" } : {}),
+      });
+      const authenticate = (actionType: string, resourceType: string) =>
+        provider.authenticate({
+          request: requestWith(token),
+          organizationId,
+          operation: "action_request.submit",
+          actionType,
+          resourceType,
+        });
+      expect(
+        Result.isSuccess(await authenticate("application.relationship.update", "knowledge_space")),
+      ).toBe(true);
+      for (const [actionType, resourceType] of [
+        ["application.relationship.update", "ticket"],
+        ["authorization.relationship.update", "knowledge_space"],
+      ]) {
+        const denied = await authenticate(actionType, resourceType);
+        assert(Result.isFailure(denied));
+        expect(denied.error.code).toBe("client_operation_not_allowed");
+      }
+    }
+  });
+
+  it("#195: relationship readは登録済みKnowledge clientとread scopeを要求する", async () => {
+    const registry = readClientRegistry({
+      AUTH0_KNOWLEDGE_CLIENT_ID: "knowledge-client",
+      AUTH0_KNOWLEDGE_AGENT_CLIENT_ID: "knowledge-agent",
+    });
+    const { provider, sign } = await harness({ type: "tenant" }, registry);
+    for (const clientId of ["knowledge-client", "knowledge-agent"]) {
+      const token = await sign({
+        azp: clientId,
+        sub: clientId === "knowledge-agent" ? `${clientId}@clients` : "auth0|alice",
+        ...(clientId === "knowledge-agent" ? { gty: "client-credentials" } : {}),
+      });
+      const allowed = await provider.authenticate({
+        request: requestWith(token),
+        organizationId,
+        operation: "application_relationship.read",
+      });
+      assert(Result.isSuccess(allowed));
+      expect(allowed.value.type).toBe(clientId === "knowledge-agent" ? "agent" : "user");
+      const otherOrganization = await provider.authenticate({
+        request: requestWith(token),
+        organizationId: "organization:other" as OrganizationId,
+        operation: "application_relationship.read",
+      });
+      assert(Result.isFailure(otherOrganization));
+      expect(otherOrganization.error.code).toBe("organization_mismatch");
+    }
+    const withoutScope = await provider.authenticate({
+      request: requestWith(
+        await sign({ azp: "knowledge-client", sub: "auth0|alice", scope: "write:action-requests" }),
+      ),
+      organizationId,
+      operation: "application_relationship.read",
+    });
+    assert(Result.isFailure(withoutScope));
+    expect(withoutScope.error.code).toBe("insufficient_scope");
+  });
+
   it("#193: delegation grant付きの提出を拒否する", async () => {
     const { provider, sign } = await harness();
     const trusted = await new StagingTrustedContextProvider(provider).resolve({

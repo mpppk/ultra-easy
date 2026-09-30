@@ -8,10 +8,12 @@ import {
   createActionRequestHttpApi,
   createPublicHttpApi,
   createPublicPrincipalDirectoryApi,
+  createPublicApplicationRelationshipApi,
   PublicApiRepositoryError,
   AUTHORIZATION_ADMIN_HTTP_ROUTES,
   PUBLIC_HTTP_ROUTES,
   PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
+  PUBLIC_APPLICATION_RELATIONSHIP_ROUTES,
   withHttpAccessLog,
 } from "@app/approval-application";
 import {
@@ -23,6 +25,7 @@ import {
 import {
   D1FixedWindowRateLimiter,
   D1PrincipalDirectoryRepository,
+  D1ApplicationRelationshipReadRepository,
   D1PublicApiRepository,
 } from "@app/approval-d1";
 import {
@@ -47,6 +50,7 @@ import {
 
 import {
   authorizationAdminAccessChecker,
+  authorizationReadClient,
   buildAdminAuthorizationApi,
 } from "./admin-authorization.ts";
 import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-identity.ts";
@@ -245,6 +249,25 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
     identityProvider: identity,
     clock: { now: () => new Date().toISOString() },
   });
+  const spaceReadClient = authorizationReadClient(env, organizationId);
+  const publicApplicationRelationships = createPublicApplicationRelationshipApi({
+    repository: new D1ApplicationRelationshipReadRepository(env.DB),
+    identityProvider: identity,
+    accessChecker: {
+      canManage: ({ spaceId, userId }) =>
+        spaceReadClient
+          ? spaceReadClient.check({
+              user: String(userId),
+              relation: "can_manage",
+              object: `knowledge_space:${spaceId}`,
+              consistency: "higher_consistency",
+            })
+          : Promise.resolve(Result.fail({ code: "fga_not_configured", retriable: true })),
+    },
+    ...(env.AUTH0_KNOWLEDGE_AGENT_CLIENT_ID
+      ? { applicationAgentId: `agent:${env.AUTH0_KNOWLEDGE_AGENT_CLIENT_ID}` }
+      : {}),
+  });
   const publicApi = createPublicHttpApi({
     actionRequestApi,
     readRepository,
@@ -309,6 +332,8 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
       if (publicWorkflowRuns.handles(request)) return publicWorkflowRuns.fetch(request);
       if (publicHumanInputs.handles(request)) return publicHumanInputs.fetch(request);
       if (publicPrincipalDirectory.handles(request)) return publicPrincipalDirectory.fetch(request);
+      if (publicApplicationRelationships.handles(request))
+        return publicApplicationRelationships.fetch(request);
       return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
     },
   };
@@ -337,6 +362,7 @@ const APPROVAL_API_ROUTES = [
   ...PUBLIC_WORKFLOW_RUN_ROUTES,
   ...PUBLIC_HUMAN_INPUT_ROUTES,
   ...PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
+  ...PUBLIC_APPLICATION_RELATIONSHIP_ROUTES,
   ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
   `${PRODUCTION_WORKFLOW_STUDIO_PREFIX}/*`,
   "/operator/dashboard",

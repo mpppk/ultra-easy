@@ -84,3 +84,19 @@ client: <knowledge client id>
 - Knowledge: ログイン時の access token 取得と session への保存、`RemoteUltraEasy` での利用
 - Knowledge: M2M client の agent principal でのメンテナンス起動
 - security regression: 未登録 client、allowlist 外の action type / resource type、agent token による decision、他 tenant、期限切れ token
+
+## Application relationship API（#195）
+
+`knowledge_space` の `owner` / `editor` / `viewer` は専用の
+`application.relationship.update` ActionRequest で更新する。既存 space の
+変更は user token と OpenFGA `can_manage`（owner）を要求する。space 作成直後の
+初回 owner 付与は、Knowledge server の登録済み M2M client が自分の agent
+principal で実行する。この場合の audit actor は agent であり、任意の user を
+代理したものとして記録しない。client registry は action type と resource
+type を `application.relationship.update` / `knowledge_space` に限定する。
+
+読み取りは本人の role 一覧と、owner または Knowledge agent が取得する space
+member 一覧を公開する。どちらも organization membership と read scope を
+確認し、D1 の確認済み relationship projection だけを返す。role の変更は旧 tuple
+の delete と新 tuple の write を別 ActionRequest として送るため、両操作の
+中間状態を Knowledge adapter が扱う。

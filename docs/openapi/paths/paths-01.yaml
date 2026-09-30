@@ -4,6 +4,11 @@
     - ActionRequests
     operationId: createActionRequest
     summary: ActionRequest を受付し、認可・Policy 評価・実行または承認待ちを開始する
+    description: |
+      application.relationship.update は knowledge_space の role 付与・削除に使う。
+      input は schemas-11.yaml の ApplicationRelationshipUpdateInput に従い、
+      resource.id と tuple.object の space ID が一致しなければならない。
+      user token は対象spaceのowner、初回owner付与は登録済みKnowledge agentが必要。
     parameters:
     - $ref: ../components/common.yaml#/parameters/OrganizationId
     - $ref: ../components/common.yaml#/parameters/IdempotencyKey
@@ -23,6 +28,19 @@
                     id: TICKET-123
                   input:
                     priority: critical
+            grantKnowledgeSpaceOwner:
+              value:
+                action:
+                  type: application.relationship.update
+                  resource:
+                    type: knowledge_space
+                    id: spc-1
+                  input:
+                    operation: write
+                    tuple:
+                      user: user:auth0|alice
+                      relation: owner
+                      object: knowledge_space:spc-1
     responses:
       '201':
         description: ActionRequest が作成された。承認不要なら executed/executing、必要なら pending_approval になり得る。

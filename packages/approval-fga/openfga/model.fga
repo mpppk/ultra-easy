@@ -29,3 +29,12 @@ type authorization_admin
 type mcp_tool
   relations
     define can_use: [user]
+
+# Application-owned Knowledge spaces. A role is a direct user tuple; the
+# application API may grant only these relations on knowledge_space objects.
+type knowledge_space
+  relations
+    define owner: [user]
+    define editor: [user]
+    define viewer: [user]
+    define can_manage: owner

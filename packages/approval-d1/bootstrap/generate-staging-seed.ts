@@ -9,6 +9,7 @@ import {
   always,
   approve,
   AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION,
+  APPLICATION_RELATIONSHIP_UPDATE_DEFINITION,
   canonicalizeJson,
   definePolicy,
   eq,
@@ -53,6 +54,7 @@ statements.push(`-- source: ${SOURCE} at ${OCCURRED_AT}`);
 for (const definition of [
   ...GOVERNANCE_ACTION_DEFINITIONS,
   AUTHORIZATION_RELATIONSHIP_UPDATE_DEFINITION,
+  APPLICATION_RELATIONSHIP_UPDATE_DEFINITION,
 ]) {
   statements.push(`INSERT OR IGNORE INTO published_action_definitions (
   organization_id, definition_key, version, action_type, definition_json,
