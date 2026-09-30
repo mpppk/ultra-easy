@@ -10,9 +10,9 @@ import type { SpaceRole } from "@app/knowledge-core";
  * ActionRequests (Composite Actions run by the Workflow Engine), run
  * projections, Human Input and governed policy updates.
  *
- * The Workflow Engine public API is still being built (#154-#165), so the only
- * implementation today is `MockUltraEasy` (./mock). A Service Binding / HTTP
- * implementation replaces it without touching Knowledge code.
+ * `MockUltraEasy` (./mock) remains the runtime implementation until #183 is
+ * complete. The request-scoped principal and relationship HTTP adapter lives
+ * in ./remote/authorization.ts; run and policy adapters are subsequent slices.
  */
 
 export type PrincipalRef = { id: string; displayName: string };
