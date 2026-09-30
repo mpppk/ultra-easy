@@ -5,7 +5,11 @@ import {
   type RelationName,
   type ResourceRef,
 } from "@app/approval-core";
-import { brandLiteral } from "@app/approval-core";
+import { brandLiteral, parseBrand } from "@app/approval-core";
+import { Result } from "@praha/byethrow";
+
+import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
+import { catalogActionRelation } from "./catalog/manifest.ts";
 
 /**
  * Action → FGA relation map for this deployment. Shared by the
@@ -26,6 +30,15 @@ export function stagingActionRelation(action: {
     String(action.resource.type) === "knowledge_space"
   ) {
     return brandLiteral("RelationName", "can_manage");
+  }
+  // Application Catalog（#198）: 登録済みaction type × resource typeに宣言されたrelation。
+  const declared = catalogActionRelation(APPLICATION_CATALOGS, {
+    type: String(action.type),
+    resourceType: String(action.resource.type),
+  });
+  if (declared) {
+    const relation = parseBrand("RelationName", declared);
+    return Result.isSuccess(relation) ? relation.value : null;
   }
   return authorizationAdminActionRelation({ actionType: action.type, resource: action.resource });
 }

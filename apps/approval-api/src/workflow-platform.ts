@@ -22,6 +22,8 @@ import {
 import { QuickJsSandbox } from "@app/workflow-sandbox";
 import { workerdQuickJsModule } from "@app/workflow-sandbox/workerd";
 
+import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
+import { catalogCapabilityActions } from "./catalog/manifest.ts";
 import {
   createPrimitiveActionExecutors,
   type ActionExecutorRegistryEnv,
@@ -44,7 +46,12 @@ export type ProductionWorkflowEnv = ActionExecutorRegistryEnv &
 /** Explicit grants for the initial production host. Policy binding API follows in #199. */
 export function productionCapabilityPolicy(env: ProductionWorkflowEnv): CapabilityPolicy {
   return {
-    actions: [{ actionType: "ticket.update" }, { actionType: "ticket.escalate" }],
+    actions: [
+      { actionType: "ticket.update" },
+      { actionType: "ticket.escalate" },
+      // Application Catalog（#198）のProgramが要求するAction。
+      ...catalogCapabilityActions(APPLICATION_CATALOGS),
+    ],
     llm: {
       models: [env.WORKFLOW_LLM_MODEL || "@cf/qwen/qwen2.5-coder-32b-instruct"],
       maxCalls: 5,

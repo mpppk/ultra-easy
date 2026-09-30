@@ -7,6 +7,7 @@ export * from "./approval-runtime-projection-repository.ts";
 export * from "./approver-candidate-projection-repository.ts";
 export * from "./governance-repository.ts";
 export * from "./materialized-plan-repository.ts";
+export * from "./mcp-action-route-repository.ts";
 export * from "./mcp-gateway-repository.ts";
 export * from "./public-api-repository.ts";
 export * from "./principal-directory-repository.ts";

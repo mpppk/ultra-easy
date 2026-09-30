@@ -17,6 +17,7 @@ import {
   telemetrySinkFromEnv,
 } from "@app/approval-runtime-cloudflare";
 
+import { catalogActionExecutors } from "./catalog/runtime.ts";
 import { relationshipExecutor, type RelationshipMutationEnv } from "./relationship-mutation.ts";
 
 export const STAGING_EXECUTOR_KEY = "staging";
@@ -89,5 +90,7 @@ export function createPrimitiveActionExecutors(
       relationshipExecutor(env) ??
       new UnavailableActionExecutor("fga_not_configured", "FGA接続設定がありません"),
     [STAGING_EXECUTOR_KEY]: new StagingSinkActionExecutor(),
+    // Application Catalog（#198）のMCP-backed primitive Action（`mcp:<serverId>`）。
+    ...catalogActionExecutors(env, { telemetry: telemetrySinkFromEnv(env) }),
   };
 }

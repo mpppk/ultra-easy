@@ -11,6 +11,9 @@ import {
   type SchemaResolverError,
 } from "@app/approval-core";
 
+import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
+import { catalogInputSchema } from "./catalog/manifest.ts";
+
 function stagingTicketUpdateSchema(): StandardSchemaV1 {
   return {
     "~standard": {
@@ -48,7 +51,8 @@ export class StagingSchemaResolver implements SchemaResolver {
     if (key === String(APPLICATION_RELATIONSHIP_UPDATE_DEFINITION.inputSchema.key)) {
       return Result.succeed(applicationRelationshipUpdateInputSchema() as StandardSchemaV1);
     }
-    return Result.succeed(null);
+    // Application Catalog（#198）: 登録済みversionのschemaだけを解決する。
+    return Result.succeed(catalogInputSchema(APPLICATION_CATALOGS, { key, version: ref.version }));
   }
 }
 
