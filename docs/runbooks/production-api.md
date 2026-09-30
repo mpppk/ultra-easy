@@ -62,6 +62,30 @@ Production domain + custom-domain cutover are follow-ups.
   (`authorization_admin:root#viewer`); a Decision command to its issuer and
   operators. Everyone else gets 404 (existence is not disclosed).
 
+## Principal directory (#194)
+
+`GET /v1/organizations/{organizationId}/principals?limit=100` lists registered
+user principals as `{ "items": [{ "id": "user:<Auth0 sub>", "displayName": "..." }],
+"nextCursor": "..." }`. Follow `nextCursor` until it is absent. This is a JIT
+directory, so users who have never signed in are absent. It does not discover
+all IdP users or provide organization membership administration.
+
+After a verified Auth0 sign-in, the Knowledge user client calls
+`PUT /v1/organizations/{organizationId}/me/principal` with its own
+`{"id":"user:<Auth0 sub>","displayName":"..."}`. The API checks the JWT
+principal against `id`; a caller cannot create or update someone else's entry.
+The display name is trimmed and refreshed on each call. It is untrusted display
+data; authorization always uses the verified principal ID and FGA relationships.
+Registering an entry grants no access. The directory currently contains human
+users only; M2M agents are identified from their registered client ID and are
+not returned by this route.
+
+Both routes require a verified member of the requested organization and a
+registered user client. The list requires `read:action-requests`; the update
+requires `write:action-requests`. The Knowledge user client has these operation
+grants; the Knowledge M2M client does not. D1 migration
+`0028_principal_directory.sql` must be applied before deploying this API.
+
 ## Public Workflow Run projection (#196)
 
 Application clients submit an optional `correlation` object alongside `action` in

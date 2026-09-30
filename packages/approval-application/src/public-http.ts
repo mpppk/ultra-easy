@@ -29,7 +29,9 @@ import {
 export type PublicApiOperation =
   | "action_request.read"
   | "action_request.submit"
-  | "approval_decision.submit";
+  | "approval_decision.submit"
+  | "principal_directory.read"
+  | "principal_directory.ensure";
 
 export interface PublicHttpIdentityProvider {
   /**

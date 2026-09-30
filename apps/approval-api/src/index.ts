@@ -7,9 +7,11 @@ import {
   ApprovalDecisionCommandService,
   createActionRequestHttpApi,
   createPublicHttpApi,
+  createPublicPrincipalDirectoryApi,
   PublicApiRepositoryError,
   AUTHORIZATION_ADMIN_HTTP_ROUTES,
   PUBLIC_HTTP_ROUTES,
+  PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
   withHttpAccessLog,
 } from "@app/approval-application";
 import {
@@ -18,7 +20,11 @@ import {
   systemCorrelation,
   type OrganizationId,
 } from "@app/approval-core";
-import { D1FixedWindowRateLimiter, D1PublicApiRepository } from "@app/approval-d1";
+import {
+  D1FixedWindowRateLimiter,
+  D1PrincipalDirectoryRepository,
+  D1PublicApiRepository,
+} from "@app/approval-d1";
 import {
   ActionWorkflow,
   createSlackNotificationSink,
@@ -234,6 +240,11 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
     clock: { now: () => new Date().toISOString() },
     onAnswerAccepted: (key) => new CloudflareWorkflowRunnerControl(env.WORKFLOW_RUNNER).resume(key),
   });
+  const publicPrincipalDirectory = createPublicPrincipalDirectoryApi({
+    repository: new D1PrincipalDirectoryRepository(env.DB),
+    identityProvider: identity,
+    clock: { now: () => new Date().toISOString() },
+  });
   const publicApi = createPublicHttpApi({
     actionRequestApi,
     readRepository,
@@ -297,6 +308,7 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
       if (workflowStudio.handles(request)) return workflowStudio.fetch(request);
       if (publicWorkflowRuns.handles(request)) return publicWorkflowRuns.fetch(request);
       if (publicHumanInputs.handles(request)) return publicHumanInputs.fetch(request);
+      if (publicPrincipalDirectory.handles(request)) return publicPrincipalDirectory.fetch(request);
       return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
     },
   };
@@ -324,6 +336,7 @@ const APPROVAL_API_ROUTES = [
   ...PUBLIC_HTTP_ROUTES,
   ...PUBLIC_WORKFLOW_RUN_ROUTES,
   ...PUBLIC_HUMAN_INPUT_ROUTES,
+  ...PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
   ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
   `${PRODUCTION_WORKFLOW_STUDIO_PREFIX}/*`,
   "/operator/dashboard",

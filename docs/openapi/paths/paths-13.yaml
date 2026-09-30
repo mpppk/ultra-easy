@@ -1,0 +1,69 @@
+/v1/organizations/{organizationId}/principals:
+  get:
+    tags: [Principals]
+    operationId: listPrincipals
+    summary: Organizationに登録されたuser principalを一覧する
+    description: |
+      検証済みorganizationメンバーのuser tokenとread:action-requests scopeが必要。
+      本人がサインインした際に登録されたuserだけを返す。表示名は本人が更新できる表示用データであり、認可には使用しない。
+      最大100件ずつ返す。続きがあればnextCursorを次のcursorにそのまま渡す。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 100
+    - name: cursor
+      in: query
+      schema:
+        type: string
+    responses:
+      '200':
+        description: 登録済みのuser principal。displayNameとIDの昇順。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-10.yaml#/PrincipalDirectoryPage
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+/v1/organizations/{organizationId}/me/principal:
+  put:
+    tags: [Principals]
+    operationId: ensurePrincipal
+    summary: 認証済みuser自身のprincipalを登録・更新する
+    description: |
+      検証済みorganizationメンバーのuser tokenとwrite:action-requests scopeが必要。
+      idはJWTのsubから導出されたuser:<sub>と一致しなければ403。登録しても権限は付与されない。
+      Auth0ログイン後に呼び出し、表示名の変更時にも再送できる。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas-10.yaml#/PrincipalDirectoryEntry
+    responses:
+      '200':
+        description: 登録または更新したprincipal。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-10.yaml#/PrincipalDirectoryEntry
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable

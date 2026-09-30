@@ -319,6 +319,42 @@ describe("Auth0IdentityProvider", () => {
     expect(trusted.value.actor).toEqual(trusted.value.authority.principal);
   });
 
+  it("#194: Knowledge userのdirectory閲覧・本人登録を許し、scopeとclient grantを確認する", async () => {
+    const registry = readClientRegistry({
+      AUTH0_WEB_CLIENT_ID: "web-client",
+      AUTH0_KNOWLEDGE_CLIENT_ID: "knowledge-client",
+      AUTH0_KNOWLEDGE_AGENT_CLIENT_ID: "knowledge-agent",
+    });
+    const { provider, sign } = await harness({ type: "tenant" }, registry);
+    const authenticate = async (
+      claims: Record<string, unknown>,
+      operation: "principal_directory.read" | "principal_directory.ensure",
+    ) =>
+      provider.authenticate({
+        request: requestWith(
+          await sign({ sub: "auth0|alice", azp: "knowledge-client", ...claims }),
+        ),
+        organizationId,
+        operation,
+      });
+
+    expect(Result.isSuccess(await authenticate({}, "principal_directory.read"))).toBe(true);
+    expect(Result.isSuccess(await authenticate({}, "principal_directory.ensure"))).toBe(true);
+    const readOnly = await authenticate(
+      { scope: "read:action-requests" },
+      "principal_directory.ensure",
+    );
+    assert(Result.isFailure(readOnly));
+    expect(readOnly.error).toMatchObject({ status: 403, code: "insufficient_scope" });
+
+    const agent = await authenticate(
+      { sub: "knowledge-agent@clients", azp: "knowledge-agent", gty: "client-credentials" },
+      "principal_directory.read",
+    );
+    assert(Result.isFailure(agent));
+    expect(agent.error).toMatchObject({ status: 403, code: "client_operation_not_allowed" });
+  });
+
   it("#193: delegation grant付きの提出を拒否する", async () => {
     const { provider, sign } = await harness();
     const trusted = await new StagingTrustedContextProvider(provider).resolve({

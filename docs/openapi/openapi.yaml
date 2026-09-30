@@ -25,7 +25,12 @@ tags:
 - name: AuthorizationAdmin
 - name: WorkflowRuns
 - name: HumanInputs
+- name: Principals
 paths:
+  /v1/organizations/{organizationId}/principals:
+    $ref: ./paths/paths-13.yaml#/~1v1~1organizations~1{organizationId}~1principals
+  /v1/organizations/{organizationId}/me/principal:
+    $ref: ./paths/paths-13.yaml#/~1v1~1organizations~1{organizationId}~1me~1principal
   /v1/organizations/{organizationId}/action-requests:
     $ref: ./paths/paths-01.yaml#/~1v1~1organizations~1{organizationId}~1action-requests
   /v1/organizations/{organizationId}/action-requests/simulate:
