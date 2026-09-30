@@ -7,6 +7,7 @@ import {
   type ActionExecutor,
 } from "./action-execution.ts";
 import {
+  AUTHORIZATION_ACTION_TYPES,
   AUTHORIZATION_ADMIN_OBJECT_TYPE,
   AUTHORIZATION_ADMIN_ROOT_ID,
   DEFAULT_MANAGED_RELATIONSHIP_CATALOG,
@@ -15,6 +16,10 @@ import {
   type AuthorizationRelationshipUpdateInput,
   type ManagedRelationshipCatalog,
 } from "./authorization-admin.ts";
+import {
+  APPLICATION_RELATIONSHIP_ACTION_TYPE,
+  validateApplicationRelationshipAction,
+} from "./application-relationship.ts";
 import {
   AuthorizationRelationshipRepositoryError,
   type AuthorizationRelationshipStore,
@@ -356,34 +361,51 @@ export class AuthorizationRelationshipExecutor implements ActionExecutor {
         }),
       );
     }
-    if (
-      String(request.action.resource.type) !== AUTHORIZATION_ADMIN_OBJECT_TYPE ||
-      String(request.action.resource.id) !== AUTHORIZATION_ADMIN_ROOT_ID
-    ) {
-      return Result.fail(
-        new ActionExecutorError({
-          code: "invalid_relationship_resource",
-          retriable: false,
-          detail: "resourceはauthorization_admin:rootである必要があります",
-        }),
-      );
-    }
-    const validated = validateRelationshipUpdateInput(request.action.input, this.catalog);
-    if (validated.type === "invalid") {
-      return Result.fail(
-        new ActionExecutorError({
-          code: "invalid_relationship_update",
-          retriable: false,
-          detail: validated.issues.map((issue) => `${issue.path}: ${issue.code}`).join("; "),
-        }),
-      );
+    let update: AuthorizationRelationshipUpdateInput;
+    if (String(request.action.type) === String(APPLICATION_RELATIONSHIP_ACTION_TYPE)) {
+      const validated = validateApplicationRelationshipAction(request.action);
+      if (validated.type === "invalid") {
+        return Result.fail(
+          new ActionExecutorError({
+            code: validated.code,
+            retriable: false,
+            detail: "application relationship actionが不正です",
+          }),
+        );
+      }
+      update = validated.input;
+    } else {
+      if (
+        String(request.action.type) !== String(AUTHORIZATION_ACTION_TYPES.relationshipUpdate) ||
+        String(request.action.resource.type) !== AUTHORIZATION_ADMIN_OBJECT_TYPE ||
+        String(request.action.resource.id) !== AUTHORIZATION_ADMIN_ROOT_ID
+      ) {
+        return Result.fail(
+          new ActionExecutorError({
+            code: "invalid_relationship_resource",
+            retriable: false,
+            detail: "resourceはauthorization_admin:rootである必要があります",
+          }),
+        );
+      }
+      const validated = validateRelationshipUpdateInput(request.action.input, this.catalog);
+      if (validated.type === "invalid") {
+        return Result.fail(
+          new ActionExecutorError({
+            code: "invalid_relationship_update",
+            retriable: false,
+            detail: validated.issues.map((issue) => `${issue.path}: ${issue.code}`).join("; "),
+          }),
+        );
+      }
+      update = validated.input;
     }
     const outcome = await this.coordinator.submit({
       organizationId: request.organizationId,
       actionRequestId: request.actionRequestId,
       mutationKey: request.idempotencyKey,
       actor: request.actor,
-      update: validated.input,
+      update,
     });
     if (Result.isFailure(outcome)) {
       return Result.fail(

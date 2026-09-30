@@ -1,7 +1,11 @@
 import { Result } from "@praha/byethrow";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import type { ActionRequest, RelationName } from "@app/approval-core";
+import {
+  APPLICATION_RELATIONSHIP_ACTION_TYPE,
+  type ActionRequest,
+  type RelationName,
+} from "@app/approval-core";
 import { D1PublishedActionDefinitionResolver } from "@app/approval-d1";
 import { WORKFLOW_EXECUTOR_KEY } from "@app/workflow-application";
 import {
@@ -99,6 +103,39 @@ export class StagingActionAuthorizer extends WorkerEntrypoint {
         false,
         403,
       );
+    }
+    if (
+      actionType === String(APPLICATION_RELATIONSHIP_ACTION_TYPE) &&
+      action?.resource.type === "knowledge_space" &&
+      principal.type === "agent"
+    ) {
+      const agentClientId = env["AUTH0_KNOWLEDGE_AGENT_CLIENT_ID"];
+      const origin = (body.request as Record<string, unknown>).origin;
+      const originClientId = isRecord(origin) ? origin.clientId : null;
+      const actor = (body.request as Record<string, unknown>).actor;
+      if (
+        agentClientId &&
+        principal.id === `agent:${agentClientId}` &&
+        originClientId === agentClientId &&
+        isRecord(actor) &&
+        actor.type === "agent" &&
+        actor.id === principal.id &&
+        !Object.hasOwn(authority ?? {}, "delegation")
+      ) {
+        return Response.json({
+          type: "allow",
+          evidence: {
+            evaluatedAt,
+            provider: "client_registry",
+            consistency: "higher_consistency",
+          },
+        });
+      }
+      return Response.json({
+        type: "deny",
+        code: "application_relationship_client_not_allowed",
+        reason: "登録済みapplication agentのみ利用できます",
+      });
     }
     if (!relation) {
       const type = parseBrand("ActionType", actionType);

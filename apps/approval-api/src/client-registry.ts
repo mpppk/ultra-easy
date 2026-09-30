@@ -22,14 +22,15 @@ const KNOWLEDGE_USER: ClientGrant = {
     "approval_decision.submit",
     "principal_directory.read",
     "principal_directory.ensure",
+    "application_relationship.read",
   ],
-  actionTypes: ["knowledge.*"],
+  actionTypes: ["knowledge.*", "application.relationship.update"],
   resourceTypes: ["knowledge_page", "knowledge_space"],
 };
 
 const KNOWLEDGE_AGENT: ClientGrant = {
-  operations: ["action_request.read", "action_request.submit"],
-  actionTypes: ["knowledge.maintain_space"],
+  operations: ["action_request.read", "action_request.submit", "application_relationship.read"],
+  actionTypes: ["knowledge.maintain_space", "application.relationship.update"],
   resourceTypes: ["knowledge_space"],
 };
 

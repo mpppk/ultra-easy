@@ -55,6 +55,23 @@ export const AUTHORIZATION_MODEL_SOURCE: OpenFgaAuthorizationModelJson = {
       },
     },
     {
+      type: "knowledge_space",
+      relations: {
+        owner: { this: {} },
+        editor: { this: {} },
+        viewer: { this: {} },
+        can_manage: { computedUserset: { relation: "owner" } },
+      },
+      metadata: {
+        relations: {
+          can_manage: { directly_related_user_types: [] },
+          owner: { directly_related_user_types: [{ type: "user" }] },
+          editor: { directly_related_user_types: [{ type: "user" }] },
+          viewer: { directly_related_user_types: [{ type: "user" }] },
+        },
+      },
+    },
+    {
       type: "authorization_admin",
       relations: {
         editor: { this: {} },

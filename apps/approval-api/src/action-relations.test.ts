@@ -19,6 +19,17 @@ describe("stagingActionRelation", () => {
     ).toBe("editor");
   });
 
+  it("#195: application relationship update checks knowledge_space owner", () => {
+    expect(
+      stagingActionRelation(
+        action("application.relationship.update", "knowledge_space", "spc-one"),
+      ),
+    ).toBe("can_manage");
+    expect(
+      stagingActionRelation(action("application.relationship.update", "ticket", "T-1")),
+    ).toBeNull();
+  });
+
   it("fails closed (null) for unknown actions and governed actions on other resources", () => {
     expect(stagingActionRelation(action("ticket.delete", "ticket", "T-1"))).toBeNull();
     expect(

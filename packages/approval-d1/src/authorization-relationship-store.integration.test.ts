@@ -3,6 +3,7 @@ import { assert, beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   AUTHORIZATION_ADMIN_RESOURCE,
+  APPLICATION_RELATIONSHIP_UPDATE_DEFINITION,
   AuthorizationRelationshipCoordinator,
   AuthorizationRelationshipExecutor,
   RelationshipGatewayError,
@@ -468,6 +469,47 @@ describe("AuthorizationRelationshipExecutor (AC-M9-004 / AC-M9-005)", () => {
     const retried = await executor.execute(request({ operation: "write", tuple }));
     assert(Result.isSuccess(retried));
     expect(retried.value.output).toMatchObject({ relationship: { revision: 1 } });
+    expect(events()).toEqual(["change_requested", "apply_started", "change_confirmed"]);
+  });
+
+  it("#195: application relationship action updates only its own resource and leaves an audit trail", async () => {
+    const executor = new AuthorizationRelationshipExecutor(coordinator);
+    const appTuple = {
+      user: "user:alice",
+      relation: "owner",
+      object: "knowledge_space:spc-one",
+    };
+    const base = request(
+      { operation: "write", tuple: appTuple },
+      { type: "knowledge_space" as never, id: "spc-one" as never },
+    );
+    const appRequest: ActionExecutionRequest = {
+      ...base,
+      action: {
+        ...base.action,
+        definition: APPLICATION_RELATIONSHIP_UPDATE_DEFINITION,
+        type: APPLICATION_RELATIONSHIP_UPDATE_DEFINITION.actionType,
+      },
+    };
+    const executed = await executor.execute(appRequest);
+    assert(Result.isSuccess(executed));
+    expect(gateway.has(appTuple)).toBe(true);
+    expect(events()).toEqual(["change_requested", "apply_started", "change_confirmed"]);
+
+    for (const invalid of [
+      { ...appTuple, relation: "can_approve" },
+      { ...appTuple, object: "knowledge_space:spc-other" },
+      { ...appTuple, object: "knowledge_space:organization%3Aother/spc-one" },
+      { ...appTuple, object: "ticket:T-1" },
+    ]) {
+      const denied = await executor.execute({
+        ...appRequest,
+        action: { ...appRequest.action, input: { operation: "write", tuple: invalid } },
+        idempotencyKey: `invalid-${invalid.relation}-${invalid.object}`,
+      });
+      assert(Result.isFailure(denied));
+      expect(gateway.has(invalid)).toBe(false);
+    }
     expect(events()).toEqual(["change_requested", "apply_started", "change_confirmed"]);
   });
 

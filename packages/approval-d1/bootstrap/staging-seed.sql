@@ -39,6 +39,13 @@ INSERT OR IGNORE INTO published_action_definitions (
   organization_id, definition_key, version, action_type, definition_json,
   actor_json, source_action_request_id, published_at
 ) VALUES (
+  'organization:staging', 'application:relationship-update', 1, 'application.relationship.update',
+  '{"actionType":"application.relationship.update","executorKey":"authorization","inputSchema":{"key":"application:relationship-update","version":1},"key":"application:relationship-update","version":1}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
+);
+INSERT OR IGNORE INTO published_action_definitions (
+  organization_id, definition_key, version, action_type, definition_json,
+  actor_json, source_action_request_id, published_at
+) VALUES (
   'organization:staging', 'staging:ticket-update', 1, 'ticket.update',
   '{"actionType":"ticket.update","executorKey":"staging","inputSchema":{"key":"staging:ticket-update","version":1},"key":"staging:ticket-update","version":1}', '{"id":"service:bootstrap","type":"service"}', 'bootstrap:m8-staging-seed', '2026-09-22T00:00:00.000Z'
 );

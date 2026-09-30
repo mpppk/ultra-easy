@@ -92,3 +92,28 @@ tests:
         object: ticket:organization%3Astaging/t-1
         assertions:
           can_execute: false
+
+  - name: knowledge_space role isolation (#195)
+    tuples:
+      - user: user:alice
+        relation: owner
+        object: knowledge_space:organization%3Astaging/spc-one
+      - user: user:bob
+        relation: editor
+        object: knowledge_space:organization%3Astaging/spc-one
+    check:
+      - user: user:alice
+        object: knowledge_space:organization%3Astaging/spc-one
+        assertions:
+          owner: true
+          can_manage: true
+      - user: user:bob
+        object: knowledge_space:organization%3Astaging/spc-one
+        assertions:
+          editor: true
+          can_manage: false
+      - user: user:alice
+        object: knowledge_space:organization%3Aother/spc-one
+        assertions:
+          owner: false
+          can_manage: false

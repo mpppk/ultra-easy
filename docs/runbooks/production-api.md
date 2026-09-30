@@ -86,6 +86,63 @@ requires `write:action-requests`. The Knowledge user client has these operation
 grants; the Knowledge M2M client does not. D1 migration
 `0028_principal_directory.sql` must be applied before deploying this API.
 
+## Application relationships (#195)
+
+`GET /v1/organizations/{organizationId}/me/space-roles` returns the signed-in
+user's confirmed Knowledge roles as `{ "items": [{ "spaceId": "spc-1",
+"role": "owner" }], "nextCursor": "..." }`. The token must have
+`read:action-requests`, a registered Knowledge user client, and verified
+organization membership. The server derives the subject from the JWT.
+
+`GET /v1/organizations/{organizationId}/spaces/{spaceId}/members` returns
+`{ "items": [{ "id": "user:...", "displayName": "...", "role": "viewer" }] }`.
+A user needs `knowledge_space:<spaceId>#can_manage` (owner); the registered
+Knowledge M2M agent may also read. Both need `read:action-requests`. Pages have
+up to 100 entries and use `nextCursor` for continuation. Only confirmed D1
+relationship projections are returned. The query is pinned to the token's
+organization; a provider-scoped object ID in a request is rejected.
+If more than one confirmed role tuple exists for the same user and space,
+the list returns one entry with `owner` before `editor` before `viewer`.
+
+Grant/revoke uses the normal governed ActionRequest endpoint; there is no
+direct tuple write route:
+
+```json
+{
+  "action": {
+    "type": "application.relationship.update",
+    "resource": { "type": "knowledge_space", "id": "spc-1" },
+    "input": {
+      "operation": "write",
+      "tuple": {
+        "user": "user:auth0|alice",
+        "relation": "owner",
+        "object": "knowledge_space:spc-1"
+      }
+    }
+  }
+}
+```
+
+Use `Idempotency-Key` and `write:action-requests`. The action schema and
+executor both require the resource and tuple object to match, and accept only
+`knowledge_space#owner|editor|viewer` with user subjects. A signed-in user
+must already be an owner to change a space role. The registered Knowledge M2M
+agent can bootstrap the first owner when Knowledge creates a space; the agent
+is the audited actor and its credentials must stay on the Knowledge server.
+The app's client grant limits this action to `knowledge_space`; it cannot edit
+`ticket`, `authorization_admin`, or other clients' resources. To change a role,
+submit a governed delete for the old role and a governed write for the new one;
+individual tuple updates are idempotent and separately audited. `executed`
+means mutation intent was recorded; check `result.output.relationship.effectConfirmed`
+for observed FGA convergence. The relationship journal records requested,
+applied, and confirmed events for each ActionRequest.
+
+The built-in Action Definition is seeded by D1 migration
+`0029_application_relationship_action.sql`. The additive `knowledge_space`
+OpenFGA model must be tested, published and pinned before live requests use
+it; follow the model publishing steps in `authorization-console.md`.
+
 ## Public Workflow Run projection (#196)
 
 Application clients submit an optional `correlation` object alongside `action` in

@@ -10,6 +10,7 @@ export * from "./materialized-plan-repository.ts";
 export * from "./mcp-gateway-repository.ts";
 export * from "./public-api-repository.ts";
 export * from "./principal-directory-repository.ts";
+export * from "./application-relationship-repository.ts";
 export * from "./notification-outbox-repository.ts";
 export * from "./operator-dashboard.ts";
 export * from "./operator-alert-state-repository.ts";

@@ -31,7 +31,8 @@ export type PublicApiOperation =
   | "action_request.submit"
   | "approval_decision.submit"
   | "principal_directory.read"
-  | "principal_directory.ensure";
+  | "principal_directory.ensure"
+  | "application_relationship.read";
 
 export interface PublicHttpIdentityProvider {
   /**
