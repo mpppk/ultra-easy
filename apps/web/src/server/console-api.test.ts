@@ -53,7 +53,8 @@ describe("console session", () => {
     });
     expect(await openSession(sealed, secret, 3_000)).toBeNull();
     expect(await openSession(sealed, "other-secret", 1_000)).toBeNull();
-    expect(await openSession(`${sealed.slice(0, -2)}AA`, secret, 1_000)).toBeNull();
+    const tampered = `${sealed[0] === "A" ? "B" : "A"}${sealed.slice(1)}`;
+    expect(await openSession(tampered, secret, 1_000)).toBeNull();
   });
 });
 
