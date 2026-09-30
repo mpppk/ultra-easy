@@ -81,6 +81,12 @@ still being built (#154–#165), so `ULTRA_EASY_MODE=mock` uses `src/ultra-easy/
 - serves a minimal Approval UI at `/mock/ultra-easy/approvals/:taskId`, outside the Knowledge shell.
 
 Replacing the mock with a Service Binding / HTTP client only means implementing `UltraEasyClient`.
+The first remote slice (#213) is `src/ultra-easy/remote/authorization.ts`: construct it
+per verified user session with that session's API access token and principal ID.
+Pass a Knowledge M2M agent token provider for the governed initial space owner grant.
+It reads every cursor page and requires confirmed FGA effect for a grant. Runtime
+`ULTRA_EASY_MODE=remote` remains gated until the run, Human Input and policy methods
+are implemented.
 
 ## MCP endpoint
 
