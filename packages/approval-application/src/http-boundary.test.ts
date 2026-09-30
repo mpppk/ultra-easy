@@ -203,6 +203,18 @@ describe("#196 ActionRequest correlation", () => {
     ).toBeNull();
     expect(parseActionRequestCreateBody({ action, correlation: { spaceId: 1 } })).toBeNull();
   });
+
+  it("submit応答に保存したcorrelationを返す", async () => {
+    const response = await harness().fetch(
+      new Request("https://api.test/v1/organizations/organization%3Ahttp/action-requests", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "correlation-1" },
+        body: JSON.stringify({ action, correlation: { spaceId: "space:one" } }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ correlation: { spaceId: "space:one" } });
+  });
 });
 
 describe("#96 path parameterのdecode", () => {
