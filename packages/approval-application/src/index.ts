@@ -4,6 +4,7 @@ export * from "./http.ts";
 export * from "./ports.ts";
 export * from "./public-http.ts";
 export * from "./principal-directory.ts";
+export * from "./application-approval-policy-http.ts";
 export * from "./application-relationship.ts";
 export * from "./application-relationship-http.ts";
 export * from "./principal-directory-http.ts";

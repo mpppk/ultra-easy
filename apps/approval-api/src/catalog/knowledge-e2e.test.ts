@@ -51,8 +51,8 @@ class FakeKnowledgeMcp {
             id: String(args["publicationSnapshotId"]),
             pageId: "page-1",
             spaceId: "space-1",
-            visibility: "organization",
-            sensitivity: "confidential",
+            visibility: "space",
+            sensitivity: "internal",
           },
           revision: { id: "rev-1", number: 2, title: "Runbook", tags: [], body: "..." },
           page: { id: "page-1", ownerId: OWNER.id },
@@ -246,8 +246,9 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     // The space comes from the authorized resource; policy fields come from the snapshot.
     expect(publish?.arguments).toEqual({
       publicationSnapshotId: "snap-1",
-      visibility: "organization",
-      sensitivity: "confidential",
+      visibility: "space",
+      sensitivity: "internal",
+      pageOwnerId: OWNER.id,
       spaceId: "space-1",
     });
     expect(publish?.authorization).toBe(`Bearer ${TOKEN}`);

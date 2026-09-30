@@ -3,7 +3,9 @@ import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
   AUTHORIZATION_RELATIONSHIP_UPDATE_SCHEMA_KEY,
+  APPLICATION_APPROVAL_POLICY_UPDATE_DEFINITION,
   APPLICATION_RELATIONSHIP_UPDATE_DEFINITION,
+  applicationApprovalPolicyUpdateInputSchema,
   applicationRelationshipUpdateInputSchema,
   relationshipUpdateInputSchema,
   type SchemaReference,
@@ -12,7 +14,7 @@ import {
 } from "@app/approval-core";
 
 import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
-import { catalogInputSchema } from "./catalog/manifest.ts";
+import { catalogApprovalSchemes, catalogInputSchema } from "./catalog/manifest.ts";
 
 function stagingTicketUpdateSchema(): StandardSchemaV1 {
   return {
@@ -50,6 +52,13 @@ export class StagingSchemaResolver implements SchemaResolver {
     }
     if (key === String(APPLICATION_RELATIONSHIP_UPDATE_DEFINITION.inputSchema.key)) {
       return Result.succeed(applicationRelationshipUpdateInputSchema() as StandardSchemaV1);
+    }
+    if (key === String(APPLICATION_APPROVAL_POLICY_UPDATE_DEFINITION.inputSchema.key)) {
+      return Result.succeed(
+        applicationApprovalPolicyUpdateInputSchema(
+          catalogApprovalSchemes(APPLICATION_CATALOGS),
+        ) as StandardSchemaV1,
+      );
     }
     // Application Catalog（#198）: 登録済みversionのschemaだけを解決する。
     return Result.succeed(catalogInputSchema(APPLICATION_CATALOGS, { key, version: ref.version }));

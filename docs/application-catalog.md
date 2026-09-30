@@ -118,6 +118,55 @@ MCP Gatewayの `tools/call` 経路（route snapshot、`McpActionExecutor`）は�
   LLM Gatewayへ置き換えるまでの決定的なheuristic（`mock/llm.ts` と同じ）である。
 - Knowledge側（#183）が `RemoteUltraEasy` で使う入力形は、このcatalogのinput schemaが正である。
 
+## Governed approval rules（#199）
+
+アプリは、自分のresource（Knowledgeではspace）ごとに、自分のActionの承認ruleを変えられる。
+
+- 語彙: catalogの `approvalPolicy.scheme`（`ApplicationApprovalScheme`）が、ruleを書けるAction、
+  条件に使えるinput field（`{field, equals}`）、approver（`{relation}` = scope上のrelation、
+  `{inputUser}` = Action inputのuser ID）、`requesterIsNot`、既定ruleを宣言する。条件やapproverが
+  参照するfieldは、そのActionの最新versionで **必須input** でなければならない（catalogの検証）。
+  Conditionはfail-closedなので、存在しないfieldを参照するruleはerrorになるためである。
+- 変更: 組み込みのgoverned action `application.approval_policy.update`
+  （resource = scope、input = `{ baseVersion, policy }`、Authorization = `updateRelation`、
+  Knowledgeでは `knowledge_space#can_manage`）。inputはsubmit時にschemeの語彙で検証する。
+- meta-approval: `application.approval_policy.update` のApproval Policyは常に、
+  「申請者以外のscope owner」または「組織管理者（`authorization_admin#editor`）」のどちらかの
+  承認を要求する（parallel any、self-approval deny）。ownerが1人のscopeも管理者が承認するので、
+  meta-approvalなしでruleが変わることはない。
+- 適用: `ApplicationApprovalPolicyExecutor` が、承認とRe-Authorizationの後にだけ適用する。
+  `baseVersion` が現在のscope versionと一致しなければ `application_policy_conflict` になる
+  （古い提案が後から承認されても、新しいruleを上書きしない）。適用は
+  `application_approval_policies`（insert-only）へscope ruleの次のversionを、
+  `published_approval_policy_versions` へcompile済みPolicyの次のversionを、1 transactionで保存する。
+- compile: 統治するActionごとに1つのApproval Policy（`<policyKey>:<actionType>`）を持つ。
+  固有ruleを持つscopeのrule（条件に `action.resource.id == scope` を含む）、その後に
+  「このscopeは承認不要」、最後に既定ruleを並べる。最初に一致したruleが勝つ。これにより、
+  固有ruleのscopeに既定ruleがfall throughしない。
+  Approvalの参照範囲には `action.type` / `action.resource.type` / `action.resource.id` を追加した
+  （`docs/approval-workflow-spec/part-06.md`）。
+- 不変条件: 承認待ちのActionRequestは、Materialized Planに固定されたPolicy versionのまま変わらない。
+  新しいversionが適用されるのは、以後にprepareされるActionRequestだけである。
+- bootstrap: 既定ruleのPolicy v1、Actionごとのbinding、meta-approval policyとbindingは
+  catalog migration（`approval-policy:<app>@1`）で入れる。`application.approval_policy.update` の
+  Action Definitionは `0032_application_approval_policies.sql` で入れる。
+- 読み取り: `GET /v1/organizations/{org}/application-policies/{scopeType}/{scopeId}`
+  （scopeのmember、または登録済みapplication agent）→ `{ version, policy, pendingChange }`。
+  `version` 0は既定ruleを表す。`pendingChange` は、現在のversionを基にした、まだ終端していない
+  `application.approval_policy.update` である（`docs/openapi`）。
+
+Knowledgeの対応:
+
+| `UltraEasyClient`       | ultra-easy                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `getPolicyBinding`      | `GET .../application-policies/knowledge_space/{spaceId}`                                          |
+| `proposePolicyBinding`  | `POST .../action-requests`（`application.approval_policy.update`、`baseVersion` = 読んだversion） |
+| `space_owners` approver | `knowledge_space#owner`                                                                           |
+| `page_owner` approver   | Action inputの `pageOwnerId`（Knowledgeが実際のownerと照合する）                                  |
+
+`page_owner` をpublishのruleでも使えるよう、`knowledge.revision.publish` v2と
+`knowledge.publish_document` v2（snapshotのpage ownerを渡す）を追加した。v1は登録済みのまま残る。
+
 ## Consequences
 
 - アプリのAction追加・変更は、PR（catalog + 生成migration）→ deployで反映される。runtimeで即時に

@@ -434,3 +434,19 @@ migration instead of being overwritten. See `docs/application-catalog.md`.
   the #195 application relationships.
 - The production Workflow Studio rejects writes to catalog-owned action types, Workflows and Programs
   with `409 catalog_owned`.
+
+## Application approval rules (#199)
+
+Knowledge space owners change a space's publication / archive approval rules with the governed
+`application.approval_policy.update` action (resource `knowledge_space`, input
+`{ "baseVersion": <version read>, "policy": { "rules": [...] } }`). The request always needs a
+meta-approval from another space owner or an organization admin (`authorization_admin#editor`).
+After approval, the change applies only when `baseVersion` is still current
+(`application_policy_conflict` otherwise). Read the current rules and the pending change with
+`GET /v1/organizations/{organizationId}/application-policies/knowledge_space/{spaceId}`
+(`read:action-requests`, space member or the Knowledge agent).
+
+Bootstrap: `0032_application_approval_policies.sql` (the action definition, rule history table,
+and pending-proposal index) and `0033_knowledge_catalog.sql` (default rules as Policy v1 per
+action, their bindings, and the meta-approval policy and binding). See
+`docs/application-catalog.md`.

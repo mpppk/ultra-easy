@@ -107,6 +107,36 @@ describe("Knowledge Application Catalog", () => {
     expect(reservedActionTypeOwner([KNOWLEDGE_CATALOG], "ticket.update")).toBeNull();
   });
 
+  it("only lets approval rules reference required inputs of the scope's primitives (#199)", () => {
+    const section = KNOWLEDGE_CATALOG.approvalPolicy;
+    assert(section);
+    const optionalField: ApplicationCatalog = {
+      ...KNOWLEDGE_CATALOG,
+      approvalPolicy: {
+        ...section,
+        scheme: {
+          ...section.scheme,
+          actions: [
+            {
+              actionType: "knowledge.page.archive",
+              conditionFields: ["outcome"],
+              principalFields: ["pageOwnerId"],
+            },
+          ],
+        },
+      },
+    };
+    expect(validateCatalog(optionalField).map((issue) => issue.code)).toContain(
+      "catalog_policy_invalid",
+    );
+    expect(
+      catalogActionRelation([KNOWLEDGE_CATALOG], {
+        type: "application.approval_policy.update",
+        resourceType: "knowledge_space",
+      }),
+    ).toBe("can_manage");
+  });
+
   it("declares the authorization relation of every registered action", () => {
     expect(
       catalogActionRelation([KNOWLEDGE_CATALOG], {
@@ -134,6 +164,17 @@ describe("Knowledge Application Catalog", () => {
       key: "catalog:knowledge.revision.publish",
       version: 1,
     });
+    const v2 = catalogInputSchema([KNOWLEDGE_CATALOG], {
+      key: "catalog:knowledge.revision.publish",
+      version: 2,
+    });
+    assert(v2);
+    const withoutOwner = await v2["~standard"].validate({
+      publicationSnapshotId: "snap-1",
+      visibility: "space",
+      sensitivity: "internal",
+    });
+    expect(withoutOwner.issues?.length).toBeGreaterThan(0);
     assert(schema);
     const ok = await schema["~standard"].validate({
       publicationSnapshotId: "snap-1",
@@ -153,7 +194,7 @@ describe("Knowledge Application Catalog", () => {
     expect(
       catalogInputSchema([KNOWLEDGE_CATALOG], {
         key: "catalog:knowledge.revision.publish",
-        version: 2,
+        version: 3,
       }),
     ).toBeNull();
   });

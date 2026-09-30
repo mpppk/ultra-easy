@@ -1,0 +1,36 @@
+/v1/organizations/{organizationId}/application-policies/{scopeType}/{scopeId}:
+  get:
+    tags: [ApplicationPolicies]
+    operationId: getApplicationApprovalPolicy
+    summary: Application resourceの承認ruleと反映待ちの変更を返す
+    description: |
+      #199。Application Catalogが宣言したscope（例: knowledge_space）の現在のrule
+      （固有ruleが無ければ既定rule、version 0）と、現在のversionを基にした未反映の変更
+      （`application.approval_policy.update` ActionRequest）を返す。user tokenは対象scopeの
+      can_view（member）をOpenFGAで確認する。登録済みapplication agentも利用できる。
+      双方にorganization membershipとread:action-requests scopeが必要。
+      ruleの変更は通常の`POST /v1/organizations/{organizationId}/action-requests`で
+      `application.approval_policy.update`（resource = scope、input = `{ baseVersion, policy }`）を
+      提出する。変更は必ずmeta-approval（申請者以外のscope owner、または組織管理者）を通り、
+      承認後にbaseVersionが現在のversionと一致する場合だけ適用される。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: scopeType
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+    - name: scopeId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9:_-]+$' }
+    responses:
+      '200':
+        description: 現在のruleと反映待ちの変更。
+        content:
+          application/json:
+            schema: { $ref: ../components/schemas-12.yaml#/ApplicationApprovalPolicyView }
+      '400': { $ref: ../components/common.yaml#/responses/BadRequest }
+      '401': { $ref: ../components/common.yaml#/responses/Unauthorized }
+      '403': { $ref: ../components/common.yaml#/responses/Forbidden }
+      '404': { $ref: ../components/common.yaml#/responses/NotFound }
+      '503': { $ref: ../components/common.yaml#/responses/ServiceUnavailable }

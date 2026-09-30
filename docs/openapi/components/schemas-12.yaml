@@ -1,0 +1,55 @@
+ApplicationApprovalRule:
+  type: object
+  required: [key, actionType, when, approvers]
+  properties:
+    key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    actionType: { type: string }
+    when:
+      oneOf:
+      - type: object
+        required: [field, equals]
+        properties:
+          field: { type: string }
+          equals: { type: string, minLength: 1, maxLength: 256 }
+        additionalProperties: false
+      - type: object
+        required: [always]
+        properties:
+          always: { const: true }
+        additionalProperties: false
+      - type: object
+        required: [requesterIsNot]
+        properties:
+          requesterIsNot: { type: string }
+        additionalProperties: false
+    approvers: { type: string }
+  additionalProperties: false
+ApplicationApprovalPolicy:
+  type: object
+  required: [rules]
+  properties:
+    rules:
+      type: array
+      maxItems: 20
+      items: { $ref: ./schemas-12.yaml#/ApplicationApprovalRule }
+  additionalProperties: false
+ApplicationApprovalPolicyView:
+  type: object
+  required: [scopeType, scopeId, version, policy, pendingChange]
+  properties:
+    scopeType: { type: string }
+    scopeId: { type: string }
+    version: { type: integer, minimum: 0 }
+    policy: { $ref: ./schemas-12.yaml#/ApplicationApprovalPolicy }
+    pendingChange:
+      oneOf:
+      - type: 'null'
+      - type: object
+        required: [actionRequestId, status, requestedBy, policy]
+        properties:
+          actionRequestId: { type: string }
+          status: { type: string }
+          requestedBy: { type: string }
+          policy: { $ref: ./schemas-12.yaml#/ApplicationApprovalPolicy }
+        additionalProperties: false
+  additionalProperties: false

@@ -145,12 +145,13 @@ export const KNOWLEDGE_TOOLS = [
     description:
       "Publishes exactly the revision and settings pinned by a PublicationSnapshot " +
       "(compare-and-swap on the page lifecycle version).",
-    // Approval policies match on visibility / sensitivity of the child ActionRequest input.
-    // When present they must be the snapshot's own values, so a request cannot understate
-    // them to avoid an approval.
+    // Approval policies match on visibility / sensitivity of the child ActionRequest input and
+    // may route the approval to the page owner. When present they must be the snapshot's own
+    // values / the page's owner, so a request cannot understate them or pick its approver.
     input: snapshotInput.extend({
       visibility: z.string().max(64).optional(),
       sensitivity: z.string().max(64).optional(),
+      pageOwnerId: z.string().max(256).optional(),
     }),
     readOnly: false,
     guaranteeLevel: "idempotent",
@@ -165,6 +166,13 @@ export const KNOWLEDGE_TOOLS = [
           "publication_snapshot_mismatch",
           "visibility / sensitivity differ from the pinned snapshot",
         );
+      }
+      if (input.pageOwnerId !== undefined) {
+        const page = await repos.pages.find(found.snapshot.pageId);
+        if (Result.isFailure(page)) return storeFailure(page.error);
+        if (page.value?.ownerId !== input.pageOwnerId) {
+          return fail("page_owner_mismatch", "pageOwnerId is not the page owner");
+        }
       }
       const committed = await repos.publications.commitPublish({
         snapshotId: input.publicationSnapshotId,
