@@ -233,8 +233,9 @@ const snapshot = { publicationSnapshotId: f("workflow.input.publicationSnapshotI
  * publish: snapshotを読み、policyが参照するvisibility / sensitivityをsnapshot（trusted、Knowledge
  * 側で照合される）から子Actionへ渡す → 承認付きpublish → reindex / notify（独立した子Action）。
  */
-const PUBLISH_DOCUMENT = {
-  id: "wf:knowledge-publish-document",
+const PUBLISH_DOCUMENT_ID = "wf:knowledge-publish-document";
+const PUBLISH_DOCUMENT: JsonObject = {
+  id: PUBLISH_DOCUMENT_ID,
   name: "Knowledge: publish document",
   description: "Publishes a pinned PublicationSnapshot with approval, then reindexes and notifies.",
   inputFields: [
@@ -279,11 +280,12 @@ const PUBLISH_DOCUMENT = {
       edge("effects", "end"),
     ],
   },
-} satisfies JsonObject;
+};
 
 /** maintain: stale pageを列挙し、pageごとにreview Programを実行する。 */
-const MAINTAIN_SPACE = {
-  id: "wf:knowledge-maintain-space",
+const MAINTAIN_SPACE_ID = "wf:knowledge-maintain-space";
+const MAINTAIN_SPACE: JsonObject = {
+  id: MAINTAIN_SPACE_ID,
   name: "Knowledge: maintain space",
   description: "Reviews stale published pages of a space with their owners.",
   inputFields: [{ path: "workflow.input.spaceId", type: "string", label: "Space" }],
@@ -323,8 +325,9 @@ const MAINTAIN_SPACE = {
               }),
               capabilities: { actions: REVIEW_PAGE_ACTIONS, maxEffects: 3 },
             },
+            { id: "page_result", type: "output", value: f("nodes.review_page.output") },
           ],
-          edges: [],
+          edges: [edge("review_page", "page_result")],
         },
       },
       {
@@ -335,7 +338,7 @@ const MAINTAIN_SPACE = {
     ],
     edges: [edge("start", "list_stale"), edge("list_stale", "review"), edge("review", "end")],
   },
-} satisfies JsonObject;
+};
 
 export const KNOWLEDGE_CATALOG: ApplicationCatalog = {
   application: "knowledge",
@@ -360,7 +363,7 @@ export const KNOWLEDGE_CATALOG: ApplicationCatalog = {
     {
       actionType: "knowledge.publish_document",
       actionDefinitionVersion: 1,
-      workflowId: PUBLISH_DOCUMENT.id,
+      workflowId: PUBLISH_DOCUMENT_ID,
       workflowVersion: 1,
       resourceType: "knowledge_page",
       relation: "can_edit",
@@ -369,7 +372,7 @@ export const KNOWLEDGE_CATALOG: ApplicationCatalog = {
     {
       actionType: "knowledge.maintain_space",
       actionDefinitionVersion: 1,
-      workflowId: MAINTAIN_SPACE.id,
+      workflowId: MAINTAIN_SPACE_ID,
       workflowVersion: 1,
       resourceType: "knowledge_space",
       relation: "can_manage",
