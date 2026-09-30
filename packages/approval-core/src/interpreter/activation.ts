@@ -1,6 +1,11 @@
 import { Result } from "@praha/byethrow";
 
-import { NoApproverCandidatesError, resolveApproverCandidates } from "../approver-resolver.ts";
+import {
+  NoApproverCandidatesError,
+  resolveApproverCandidates,
+  type ResolvedApproverCandidates,
+} from "../approver-resolver.ts";
+import type { UserId } from "../domain/brand.ts";
 import type { MaterializedApprovalStep, MaterializedFlow } from "../materialization.ts";
 import { NoEligibleApproverCandidatesError } from "./errors.ts";
 import type { ApprovalInterpreterError } from "./errors.ts";
@@ -44,6 +49,36 @@ function usersUsedByOtherTasks(
   return used;
 }
 
+/**
+ * self-approval / distinctApproversの除外後に承認できる候補が残らないstepは、承認者を解決できない
+ * stepと同じく`onUnresolved: fallback`の候補を使う（fallback先でも除外は同じに適用する）。
+ * fallbackが無い・fallbackでも候補が無ければnull（呼び出し側の従来のfail closedのまま）。
+ */
+async function eligibleFallback(
+  step: MaterializedApprovalStep,
+  primary: ResolvedApproverCandidates,
+  excluded: (userId: UserId) => boolean,
+  context: ApprovalInterpreterContext,
+): Result.ResultAsync<
+  (ResolvedApproverCandidates & { eligible: UserId[] }) | null,
+  ApprovalInterpreterError
+> {
+  if (primary.usedFallback || step.onUnresolved?.type !== "fallback") return Result.succeed(null);
+  const { onUnresolved, ...rest } = step;
+  const fallback = await resolveApproverCandidates({
+    resolver: context.resolver,
+    step: { ...rest, target: onUnresolved.target },
+    consistency: "minimize_latency",
+  });
+  if (Result.isFailure(fallback)) {
+    return fallback.error instanceof NoApproverCandidatesError ? Result.succeed(null) : fallback;
+  }
+  const eligible = uniqueUsers(fallback.value.userIds.filter((userId) => !excluded(userId)));
+  return Result.succeed(
+    eligible.length > 0 ? { ...fallback.value, usedFallback: true, eligible } : null,
+  );
+}
+
 async function reconcilePendingStep(
   step: MaterializedApprovalStep,
   distinctScopeId: string | undefined,
@@ -70,14 +105,22 @@ async function reconcilePendingStep(
         return resolved;
       }
     } else {
-      task.target = resolved.value.target;
-      task.candidateUserIds = uniqueUsers(
-        resolved.value.userIds.filter(
-          (userId) => !isSameUser(selfSubject, userId) && !used.has(String(userId)),
-        ),
-      );
-      task.usedFallback = resolved.value.usedFallback;
-      if (resolved.value.sourceRevision) task.sourceRevision = resolved.value.sourceRevision;
+      const excluded = (userId: UserId) =>
+        isSameUser(selfSubject, userId) || used.has(String(userId));
+      let candidates: ResolvedApproverCandidates = resolved.value;
+      let eligible = uniqueUsers(candidates.userIds.filter((userId) => !excluded(userId)));
+      if (eligible.length === 0) {
+        const fallback = await eligibleFallback(step, candidates, excluded, context);
+        if (Result.isFailure(fallback)) return fallback;
+        if (fallback.value) {
+          candidates = fallback.value;
+          eligible = fallback.value.eligible;
+        }
+      }
+      task.target = candidates.target;
+      task.candidateUserIds = eligible;
+      task.usedFallback = candidates.usedFallback;
+      if (candidates.sourceRevision) task.sourceRevision = candidates.sourceRevision;
       else delete task.sourceRevision;
     }
   }
@@ -116,11 +159,17 @@ async function activateStep(
   const used = distinctScopeId
     ? usersUsedInDistinctScope(context.state, distinctScopeId)
     : new Set<string>();
-  const candidateUserIds = uniqueUsers(
-    resolved.value.userIds.filter(
-      (userId) => !isSameUser(selfSubject, userId) && !used.has(String(userId)),
-    ),
-  );
+  const excluded = (userId: UserId) => isSameUser(selfSubject, userId) || used.has(String(userId));
+  let candidates: ResolvedApproverCandidates = resolved.value;
+  let candidateUserIds = uniqueUsers(candidates.userIds.filter((userId) => !excluded(userId)));
+  if (candidateUserIds.length === 0) {
+    const fallback = await eligibleFallback(step, candidates, excluded, context);
+    if (Result.isFailure(fallback)) return fallback;
+    if (fallback.value) {
+      candidates = fallback.value;
+      candidateUserIds = fallback.value.eligible;
+    }
+  }
   const completion = step.candidateCompletion ?? "any";
   const minimumCandidateCount =
     typeof completion === "object" ? completion.count : candidateUserIds.length > 0 ? 1 : 0;
@@ -139,14 +188,14 @@ async function activateStep(
     id: asTaskId(context.plan, step),
     materializedStepId: step.materializedStepId,
     status: "pending",
-    target: resolved.value.target,
+    target: candidates.target,
     candidateUserIds,
     decisions: [],
     activatedAt: context.now,
     ...(expiration.value ? { expiresAt: expiration.value } : {}),
     ...(distinctScopeId ? { distinctScopeId } : {}),
-    ...(resolved.value.sourceRevision ? { sourceRevision: resolved.value.sourceRevision } : {}),
-    usedFallback: resolved.value.usedFallback,
+    ...(candidates.sourceRevision ? { sourceRevision: candidates.sourceRevision } : {}),
+    usedFallback: candidates.usedFallback,
   });
   return Result.succeed(undefined);
 }

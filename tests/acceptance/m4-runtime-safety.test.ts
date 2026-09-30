@@ -102,6 +102,41 @@ describe("M4 Durable Approval Runtime / safety", () => {
     expect(allowed.value.state.status).toBe("approved");
   });
 
+  it("#199: self-approval除外後に候補が残らないstepはonUnresolved fallbackへ回し、無ければfail closed", async () => {
+    const admins = relationStep("admins", "editor").target;
+    const owners = relationStep("owners", "owner", {
+      purpose: "security_approval",
+      resolution: "dynamic",
+      selfApproval: { mode: "deny" },
+      onUnresolved: { type: "fallback", target: admins },
+    });
+    const { runtime: memory, resolver } = runtime();
+    // The requester (alice) is the only owner; bob is an admin.
+    resolver.set(owners.target, [alice]);
+    resolver.set(admins, [alice, bob]);
+    const withFallback = plan(owners, "sole-owner");
+    withFallback.evaluationSnapshot.origin = { type: "api", caller: { type: "user", id: alice } };
+    const started = await memory.start({ plan: withFallback, startedAt });
+    assert(Result.isSuccess(started));
+    expect(started.value.tasks[0]?.candidateUserIds.map(String)).toEqual(["user:bob"]);
+    expect(started.value.tasks[0]?.usedFallback).toBe(true);
+    const approved = await memory.decide({
+      actionRequestId: withFallback.actionRequestId,
+      event: decision(taskId(started.value), bob, "approve", "admin"),
+    });
+    assert(Result.isSuccess(approved));
+    expect(approved.value.state.status).toBe("approved");
+
+    const { runtime: strict, resolver: strictResolver } = runtime();
+    const { onUnresolved: _fallback, ...withoutFallback } = owners;
+    strictResolver.set(owners.target, [alice]);
+    const noFallback = plan(withoutFallback, "sole-owner-strict");
+    noFallback.evaluationSnapshot.origin = { type: "api", caller: { type: "user", id: alice } };
+    const failed = await strict.start({ plan: noFallback, startedAt });
+    assert(Result.isFailure(failed));
+    expect(failed.error.code).toBe("no_eligible_approver_candidates");
+  });
+
   it("AC-M4-008: expiryでterminal expiredへ遷移しauto approveしない", async () => {
     const { runtime: memory } = runtime();
     const p = plan(directStep("expiring", alice, { expiresAfter: { seconds: 60 } }), "expiry");
