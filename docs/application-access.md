@@ -40,7 +40,7 @@ Status: Accepted（2026-09-28）/ Parent: #191（Workflow Engine Phase 2）
 ### 3. Approval decision と Human Input の回答は user token に限る
 
 - 外部アプリ経由の Approval decision は、**本人の user token によるものだけ**を許可する（現行の `authenticateUser` を維持）。agent token・委任による decision は拒否する。
-- Human Input の回答（#197）も同じ規則とする。
+- Human Input の回答も同じ規則で、担当者の user token のみ受け付ける（#197）。
 - decision / 回答の audit には経由したアプリの `clientId` を残す。
 
 ### 4. アプリ単位の allowlist（client registry）を導入する

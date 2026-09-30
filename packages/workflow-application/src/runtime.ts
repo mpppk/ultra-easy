@@ -1,7 +1,12 @@
 import { Result } from "@praha/byethrow";
 
-import type { OrganizationId } from "@app/approval-core";
-import type { JsonObject } from "@app/expression-core";
+import {
+  canonicalizeJson,
+  type ClientId,
+  type OrganizationId,
+  type UserPrincipalRef,
+} from "@app/approval-core";
+import { jsonValueIssue, type JsonObject, type JsonValue } from "@app/expression-core";
 import {
   applyWorkflowRunEvent,
   cancellationsToPropagate,
@@ -11,10 +16,12 @@ import {
   isTerminalWorkflowRunStatus,
   nextEffectWakeAt,
   startWorkflowRun,
+  validateJsonSchemaLite,
   workflowRunTransitionEvents,
 } from "@app/workflow-core";
 import type {
   EffectRecord,
+  EffectId,
   WorkflowDefinitionId,
   WorkflowNode,
   WorkflowRunContext,
@@ -367,6 +374,134 @@ export class WorkflowRuntime {
     return this.advance(input);
   }
 
+  /**
+   * Answer one waiting Human Input with CAS. The caller supplies a verified user principal;
+   * a successful CAS is the durable acceptance point. A different key after acceptance gets
+   * a conflict, while the HTTP idempotency layer replays the same key.
+   */
+  async answerHumanInput(input: {
+    organizationId: OrganizationId;
+    runId: WorkflowRunId;
+    effectId: EffectId;
+    answer: JsonValue;
+    actor: UserPrincipalRef;
+    clientId?: ClientId;
+    idempotencyKey?: string;
+  }): Result.ResultAsync<WorkflowAdvanceResult, WorkflowRuntimeError> {
+    if (jsonValueIssue(input.answer)) {
+      return Result.fail(
+        new WorkflowRuntimeError("invalid_human_input_answer", false, "answerが不正です"),
+      );
+    }
+    for (let attempt = 0; attempt < MAX_ROUNDS; attempt += 1) {
+      const loaded = await this.load(input);
+      if (Result.isFailure(loaded)) return loaded;
+      const record = loaded.value;
+      const effect = record.state.effects[String(input.effectId)];
+      if (!effect || effect.request.kind !== "human_input") {
+        return Result.fail(
+          new WorkflowRuntimeError("human_input_not_found", false, "Human Inputが見つかりません"),
+        );
+      }
+      const assignee =
+        effect.request.assignee ??
+        (record.invocation.actor.type === "user" ? record.invocation.actor : undefined);
+      if (!assignee || String(assignee.id) !== String(input.actor.id)) {
+        return Result.fail(
+          new WorkflowRuntimeError("human_input_not_assigned", false, "担当者ではありません"),
+        );
+      }
+      const previousAnswer =
+        effect.outcome?.type === "completed" ? effect.outcome.output : undefined;
+      const previousCanonical =
+        previousAnswer === undefined ? undefined : canonicalizeJson(previousAnswer);
+      const incomingCanonical = canonicalizeJson(input.answer);
+      if (
+        effect.status === "completed" &&
+        input.idempotencyKey &&
+        effect.answerIdempotencyKey === input.idempotencyKey &&
+        effect.answeredBy?.id === input.actor.id &&
+        previousCanonical &&
+        Result.isSuccess(previousCanonical) &&
+        Result.isSuccess(incomingCanonical) &&
+        previousCanonical.value === incomingCanonical.value
+      ) {
+        return Result.succeed(summary(record));
+      }
+      const node = record.state.nodeRuns[String(effect.nodeRunId)];
+      if (
+        effect.status !== "in_flight" ||
+        node?.status !== "waiting" ||
+        node.waitingReason !== "waiting_input"
+      ) {
+        return Result.fail(
+          new WorkflowRuntimeError(
+            "human_input_already_answered",
+            false,
+            "回答済みか待機中ではありません",
+          ),
+        );
+      }
+      if (
+        (effect.request.options &&
+          (typeof input.answer !== "string" || !effect.request.options.includes(input.answer))) ||
+        (effect.request.answerSchema &&
+          validateJsonSchemaLite(effect.request.answerSchema, input.answer).length > 0) ||
+        (!effect.request.answerSchema && typeof input.answer !== "string")
+      ) {
+        return Result.fail(
+          new WorkflowRuntimeError(
+            "invalid_human_input_answer",
+            false,
+            "answerがschemaに一致しません",
+          ),
+        );
+      }
+      const version = await this.loadVersion(
+        record.state.organizationId,
+        record.state.definitionId,
+        record.state.version,
+      );
+      if (Result.isFailure(version)) return version;
+      const now = this.deps.clock.now();
+      const applied = applyWorkflowRunEvent(
+        record.state,
+        version.value.definition,
+        {
+          type: "effect_completed",
+          effectId: input.effectId,
+          output: input.answer,
+          answeredBy: input.actor,
+          ...(input.clientId ? { answeredViaClientId: input.clientId } : {}),
+          ...(input.idempotencyKey ? { answerIdempotencyKey: input.idempotencyKey } : {}),
+        },
+        now,
+      );
+      if (Result.isFailure(applied)) {
+        return Result.fail(
+          new WorkflowRuntimeError(applied.error.code, false, applied.error.message),
+        );
+      }
+      if (applied.value.outcome !== "applied") {
+        return Result.fail(
+          new WorkflowRuntimeError("human_input_already_answered", false, "回答済みです"),
+        );
+      }
+      const saved = await this.save(record, applied.value.state, now);
+      if (Result.isFailure(saved)) return saved;
+      if (saved.value) {
+        return Result.succeed({
+          runId: input.runId,
+          status: applied.value.state.status,
+          revision: record.revision + 1,
+        });
+      }
+    }
+    return Result.fail(
+      new WorkflowRuntimeError("workflow_cas_retry_exhausted", true, "更新が競合しました"),
+    );
+  }
+
   async cancel(input: {
     organizationId: OrganizationId;
     runId: WorkflowRunId;
@@ -390,6 +525,7 @@ export class WorkflowRuntime {
         : terminal
           ? now
           : earliest([
+              dispatchableEffects(state, now).length > 0 ? now : undefined,
               nextEffectWakeAt(state),
               timerDueAt(state),
               needsPolling(state)

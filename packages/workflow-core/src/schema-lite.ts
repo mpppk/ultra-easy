@@ -23,6 +23,68 @@ export type SchemaIssue = { path: string; message: string };
 
 const MAX_SCHEMA_DEPTH = 16;
 
+/** Untrusted Program output may carry a reply schema; validate it before persistence. */
+export function isJsonSchemaLite(value: unknown, depth = 0): value is JsonSchemaLite {
+  if (!isPlainRecord(value) || depth > MAX_SCHEMA_DEPTH) return false;
+  const keys = Object.keys(value);
+  const only = (allowed: readonly string[]) => keys.every((key) => allowed.includes(key));
+  switch (value["type"]) {
+    case "any":
+    case "null":
+    case "boolean":
+      return only(["type"]);
+    case "string":
+      return (
+        only(["type", "enum", "maxLength"]) &&
+        (value["enum"] === undefined ||
+          (Array.isArray(value["enum"]) &&
+            value["enum"].length <= 50 &&
+            value["enum"].every((entry) => typeof entry === "string" && entry.length <= 256))) &&
+        (value["maxLength"] === undefined ||
+          (Number.isInteger(value["maxLength"]) &&
+            (value["maxLength"] as number) >= 0 &&
+            (value["maxLength"] as number) <= 10_000))
+      );
+    case "number":
+    case "integer":
+      return (
+        only(["type", "minimum", "maximum"]) &&
+        (value["minimum"] === undefined ||
+          (typeof value["minimum"] === "number" && Number.isFinite(value["minimum"]))) &&
+        (value["maximum"] === undefined ||
+          (typeof value["maximum"] === "number" && Number.isFinite(value["maximum"])))
+      );
+    case "array":
+      return (
+        only(["type", "items", "maxItems"]) &&
+        (value["items"] === undefined || isJsonSchemaLite(value["items"], depth + 1)) &&
+        (value["maxItems"] === undefined ||
+          (Number.isInteger(value["maxItems"]) &&
+            (value["maxItems"] as number) >= 0 &&
+            (value["maxItems"] as number) <= 1000))
+      );
+    case "object": {
+      const properties = value["properties"];
+      const required = value["required"];
+      return (
+        only(["type", "properties", "required", "additionalProperties"]) &&
+        (properties === undefined ||
+          (isPlainRecord(properties) &&
+            Object.keys(properties).length <= 100 &&
+            Object.values(properties).every((child) => isJsonSchemaLite(child, depth + 1)))) &&
+        (required === undefined ||
+          (Array.isArray(required) &&
+            required.length <= 100 &&
+            required.every((key) => typeof key === "string" && key.length <= 128))) &&
+        (value["additionalProperties"] === undefined ||
+          typeof value["additionalProperties"] === "boolean")
+      );
+    }
+    default:
+      return false;
+  }
+}
+
 function check(
   schema: JsonSchemaLite,
   value: unknown,

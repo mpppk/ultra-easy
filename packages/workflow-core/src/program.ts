@@ -3,8 +3,9 @@ import { ErrorFactory } from "@praha/error-factory";
 
 import { isPlainRecord, jsonValueIssue } from "@app/expression-core";
 import type { JsonObject, JsonValue } from "@app/expression-core";
+import { parseBrand, type UserPrincipalRef } from "@app/approval-core";
 
-import type { JsonSchemaLite } from "./schema-lite.ts";
+import { isJsonSchemaLite, validateJsonSchemaLite, type JsonSchemaLite } from "./schema-lite.ts";
 
 /**
  * Sandbox内のProgramが要求できる外部作用。Programは作用を直接実行せず、yieldして
@@ -19,7 +20,16 @@ export type ProgramEffect =
     }
   | { type: "llm"; model: string; prompt: JsonValue; maxOutputTokens: number }
   | { type: "timer"; seconds: number }
-  | { type: "human_input"; prompt: string };
+  | {
+      type: "human_input";
+      prompt: string;
+      /** Optional for version compatibility; legacy runs assign to the requesting user. */
+      assignee?: UserPrincipalRef;
+      options?: string[];
+      answerSchema?: JsonSchemaLite;
+      subject?: { type: string; id: string; title: string };
+      analysis?: string;
+    };
 
 export type ProgramResult =
   | { type: "complete"; output: JsonValue }
@@ -94,7 +104,70 @@ function parseEffect(value: unknown): Result.Result<ProgramEffect, ProgramResult
     case "human_input": {
       if (!nonEmptyString(value["prompt"], 4000))
         return invalid("human_input effectにはpromptが必要です");
-      return Result.succeed({ type: "human_input", prompt: value["prompt"] });
+      const assignee = value["assignee"];
+      const options = value["options"];
+      const subject = value["subject"];
+      const answerSchema = value["answerSchema"];
+      let assigneeRef: UserPrincipalRef | undefined;
+      if (assignee !== undefined) {
+        if (!isPlainRecord(assignee) || assignee["type"] !== "user") {
+          return invalid("human_input assigneeはuser principalである必要があります");
+        }
+        const userId = parseBrand("UserId", assignee["id"]);
+        if (Result.isFailure(userId)) {
+          return invalid("human_input assigneeはuser principalである必要があります");
+        }
+        assigneeRef = { type: "user", id: userId.value };
+      }
+      if (
+        options !== undefined &&
+        (!Array.isArray(options) ||
+          options.length === 0 ||
+          options.length > 20 ||
+          !options.every((option) => nonEmptyString(option, 256)) ||
+          new Set(options).size !== options.length)
+      ) {
+        return invalid("human_input optionsが不正です");
+      }
+      if (
+        subject !== undefined &&
+        (!isPlainRecord(subject) ||
+          !nonEmptyString(subject["type"], 128) ||
+          !nonEmptyString(subject["id"], 1024) ||
+          !nonEmptyString(subject["title"], 512))
+      ) {
+        return invalid("human_input subjectが不正です");
+      }
+      if (value["analysis"] !== undefined && !nonEmptyString(value["analysis"], 8000)) {
+        return invalid("human_input analysisが不正です");
+      }
+      if (answerSchema !== undefined && !isJsonSchemaLite(answerSchema)) {
+        return invalid("human_input answerSchemaが不正です");
+      }
+      if (
+        answerSchema !== undefined &&
+        Array.isArray(options) &&
+        options.some((option) => validateJsonSchemaLite(answerSchema, option).length > 0)
+      ) {
+        return invalid("human_input optionsがanswerSchemaに一致しません");
+      }
+      return Result.succeed({
+        type: "human_input",
+        prompt: value["prompt"],
+        ...(assigneeRef !== undefined ? { assignee: assigneeRef } : {}),
+        ...(options !== undefined ? { options: options as string[] } : {}),
+        ...(answerSchema !== undefined ? { answerSchema } : {}),
+        ...(subject !== undefined
+          ? {
+              subject: {
+                type: subject["type"] as string,
+                id: subject["id"] as string,
+                title: subject["title"] as string,
+              },
+            }
+          : {}),
+        ...(typeof value["analysis"] === "string" ? { analysis: value["analysis"] } : {}),
+      });
     }
     default:
       return invalid("未対応のeffect typeです");

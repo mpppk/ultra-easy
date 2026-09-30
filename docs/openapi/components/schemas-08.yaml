@@ -60,7 +60,7 @@ PublicWorkflowRun:
         $ref: ./schemas-08.yaml#/PublicWorkflowApproval
     humanInputs:
       type: array
-      description: Key and status only until the governed Human Input API is available.
+      description: Other readers see key and status only. An explicitly assigned user also sees prompt, options, subject, analysis and any accepted answer.
       items:
         $ref: ./schemas-08.yaml#/PublicWorkflowHumanInput
     failure:
@@ -144,6 +144,24 @@ PublicWorkflowHumanInput:
     status:
       type: string
       enum: [waiting, answered, failed, cancelled]
+    assigneeId:
+      type: string
+    prompt:
+      type: string
+    options:
+      type: array
+      items:
+        type: string
+    answerSchema:
+      type: object
+    subject:
+      $ref: ./schemas-09.yaml#/HumanInputSubject
+    analysis:
+      type: string
+    answer:
+      description: The accepted JSON answer, visible only to the explicit assignee.
+    answeredBy:
+      type: string
   additionalProperties: false
 PublicWorkflowFailure:
   type: object

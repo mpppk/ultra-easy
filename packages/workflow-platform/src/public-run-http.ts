@@ -110,10 +110,34 @@ export function createPublicWorkflowRunApi(input: {
     organizationId: OrganizationId,
     actionRequestId: string,
     viewer: PrincipalRef,
+    record?: WorkflowRunRecord,
   ) {
     const parsed = parseBrand("ActionRequestId", actionRequestId);
     if (Result.isFailure(parsed))
       return problem(400, "invalid_action_request_id", "ActionRequest IDが不正です");
+    if (
+      viewer.type === "user" &&
+      record &&
+      Object.values(record.state.effects).some(
+        (effect) =>
+          effect.request.kind === "human_input" && effect.request.assignee?.id === viewer.id,
+      )
+    ) {
+      const assignedParent = await input.readRepository.getActionRequest({
+        organizationId,
+        actionRequestId: parsed.value,
+      });
+      if (Result.isFailure(assignedParent)) return repositoryProblem(assignedParent.error);
+      if (!assignedParent.value) return runNotFound();
+      const restricted = await authorizePublicAction({
+        identityProvider: input.identityProvider,
+        request,
+        organizationId,
+        operation: "action_request.read",
+        action: assignedParent.value,
+      });
+      return restricted ?? assignedParent.value;
+    }
     const loaded = await loadReadableActionRequest({
       organizationId,
       actionRequestId: parsed.value,
@@ -135,6 +159,7 @@ export function createPublicWorkflowRunApi(input: {
   async function project(
     record: WorkflowRunRecord,
     parent: Awaited<ReturnType<typeof authorizedParent>>,
+    viewer: PrincipalRef,
   ) {
     if (parent instanceof Response) return parent;
     const view = await projectPublicWorkflowRun({
@@ -144,6 +169,7 @@ export function createPublicWorkflowRunApi(input: {
       organizationId: record.state.organizationId,
       record,
       parent,
+      viewer,
     });
     return Result.isFailure(view) ? repositoryProblem(view.error) : view.value;
   }
@@ -189,9 +215,15 @@ export function createPublicWorkflowRunApi(input: {
         if (Result.isFailure(loaded)) return repositoryProblem(loaded.error);
         const parentId = loaded.value?.invocation.parentAction?.actionRequestId;
         if (!loaded.value || !parentId) return runNotFound();
-        const parent = await authorizedParent(request, organizationId, String(parentId), viewer);
+        const parent = await authorizedParent(
+          request,
+          organizationId,
+          String(parentId),
+          viewer,
+          loaded.value,
+        );
         if (parent instanceof Response && parent.status === 404) return runNotFound();
-        const result = await project(loaded.value, parent);
+        const result = await project(loaded.value, parent, viewer);
         return result instanceof Response ? result : Response.json(result);
       }
 
@@ -209,7 +241,7 @@ export function createPublicWorkflowRunApi(input: {
         });
         if (Result.isFailure(loaded)) return repositoryProblem(loaded.error);
         if (!loaded.value) return runNotFound();
-        const result = await project(loaded.value, parent);
+        const result = await project(loaded.value, parent, viewer);
         return result instanceof Response ? result : Response.json(result);
       }
 
@@ -249,7 +281,7 @@ export function createPublicWorkflowRunApi(input: {
           if (Result.isFailure(loaded)) return repositoryProblem(loaded.error);
           if (!loaded.value)
             return repositoryProblem({ code: "workflow_run_disappeared", retriable: true });
-          const result = await project(loaded.value, parent);
+          const result = await project(loaded.value, parent, viewer);
           if (result instanceof Response) return result;
           items.push(result);
           if (items.length >= query.limit) break;

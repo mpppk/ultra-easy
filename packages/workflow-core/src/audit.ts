@@ -19,7 +19,8 @@ export type WorkflowAuditEventType =
   | "effect.dispatched"
   | "effect.completed"
   | "effect.failed"
-  | "effect.cancelled";
+  | "effect.cancelled"
+  | "human_input.answered";
 
 /**
  * WorkflowRunの意味的な遷移を記録するappend-onlyの監査イベント。
@@ -178,6 +179,25 @@ export function workflowRunTransitionEvents(
       );
     }
     if (previous?.status === effect.status) continue;
+    if (
+      effect.request.kind === "human_input" &&
+      effect.status === "completed" &&
+      effect.answeredBy
+    ) {
+      events.push(
+        event(
+          after,
+          "human_input.answered",
+          String(effect.id),
+          effect.completedAt ?? at,
+          {
+            answeredBy: String(effect.answeredBy.id),
+            ...(effect.answeredViaClientId ? { clientId: String(effect.answeredViaClientId) } : {}),
+          },
+          refs,
+        ),
+      );
+    }
     if (
       effect.status === "completed" ||
       effect.status === "failed" ||

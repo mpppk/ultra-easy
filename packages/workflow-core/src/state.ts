@@ -1,7 +1,15 @@
-import type { ActionType, OrganizationId, PrincipalRef, Sha256Digest } from "@app/approval-core";
+import type {
+  ActionType,
+  ClientId,
+  OrganizationId,
+  PrincipalRef,
+  Sha256Digest,
+  UserPrincipalRef,
+} from "@app/approval-core";
 import type { Condition, JsonObject, JsonValue } from "@app/expression-core";
 
 import type { CapabilityGrant, ProgramNodeReference, WorkflowNodeType } from "./definition.ts";
+import type { JsonSchemaLite } from "./schema-lite.ts";
 import type {
   EffectId,
   NodeId,
@@ -125,7 +133,15 @@ export type LlmEffectRequest = {
 
 export type TimerEffectRequest = { kind: "timer"; seconds: number };
 
-export type HumanInputEffectRequest = { kind: "human_input"; prompt: string };
+export type HumanInputEffectRequest = {
+  kind: "human_input";
+  prompt: string;
+  assignee?: UserPrincipalRef;
+  options?: string[];
+  answerSchema?: JsonSchemaLite;
+  subject?: { type: string; id: string; title: string };
+  analysis?: string;
+};
 
 export type EffectRequest =
   | ActionEffectRequest
@@ -156,6 +172,11 @@ export type EffectRecord = {
   /** cancelされたin-flight作用。runtimeがchildへcancelを伝播したらtrue。 */
   cancelPropagated?: boolean;
   outcome?: EffectOutcome;
+  /** Verified assignee who answered this Human Input; recorded with the CAS transition. */
+  answeredBy?: UserPrincipalRef;
+  answeredViaClientId?: ClientId;
+  /** The HTTP idempotency key accepted with the answer, for replay after a response-store failure. */
+  answerIdempotencyKey?: string;
   requestedAt: string;
   completedAt?: string;
 };

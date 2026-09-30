@@ -2,6 +2,7 @@ import { Result } from "@praha/byethrow";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import type { JsonValue } from "@app/expression-core";
+import type { UserId, UserPrincipalRef } from "@app/approval-core";
 import {
   EffectHandlerError,
   HumanInputEffectHandler,
@@ -457,6 +458,112 @@ describe("durable workflow runtime on memory adapters (#157)", () => {
     });
     expect(Result.isSuccess(delivered) && delivered.value.status).toBe("succeeded");
     expect((await load()).state.output).toEqual({ finished: true });
+  });
+
+  it("assigned Human Input accepts one schema-valid answer and resumes from persisted state", async () => {
+    const program = {
+      id: id("prog"),
+      type: "program" as const,
+      program: { programId: id("program:review"), version: 1, sourceDigest: id("sha256:review") },
+      input: obj({}),
+    };
+    const version = await publish(
+      definition(
+        graph(
+          [n.trigger(), program as never, n.output(f("nodes.prog.output"))],
+          edges("start->prog", "prog->end"),
+        ),
+      ),
+    );
+    const assignee: UserPrincipalRef = { type: "user", id: id<UserId>("user:bob") };
+    let calls = 0;
+    const reviewRuntime = () =>
+      new WorkflowRuntime({
+        versions,
+        runs,
+        clock,
+        effects: {
+          human_input: new HumanInputEffectHandler(),
+          program: {
+            async dispatch() {
+              calls += 1;
+              return Result.succeed<EffectOutcomeReport>(
+                calls === 1
+                  ? {
+                      type: "yielded",
+                      state: {},
+                      effect: {
+                        type: "human_input",
+                        prompt: "Review page",
+                        assignee,
+                        options: ["keep", "archive"],
+                        answerSchema: { type: "string", enum: ["keep", "archive"] },
+                        subject: { type: "knowledge_page", id: "page:one", title: "Page One" },
+                        analysis: "Possibly stale",
+                      },
+                    }
+                  : { type: "completed", output: { reviewed: true } },
+              );
+            },
+          },
+        },
+      });
+    const started = await reviewRuntime().start({
+      organizationId: TEST_ORGANIZATION_ID,
+      runId: id<WorkflowRunId>("run:review"),
+      definitionId: version.definitionId,
+      version: version.version,
+      checksum: String(version.checksum),
+      input: {},
+      context: TEST_CONTEXT,
+      invocation,
+      depth: 0,
+    });
+    expect(Result.isSuccess(started) && started.value.status).toBe("waiting");
+    const waiting = await load("run:review");
+    const effect = Object.values(waiting.state.effects).find(
+      (entry) => entry.request.kind === "human_input",
+    );
+    if (!effect) expect.fail("human input missing");
+    expect(effect.request).toMatchObject({ assignee, options: ["keep", "archive"] });
+    const answer = (
+      actor: UserPrincipalRef,
+      value: string,
+      organizationId = TEST_ORGANIZATION_ID,
+    ) =>
+      reviewRuntime().answerHumanInput({
+        organizationId,
+        runId: id<WorkflowRunId>("run:review"),
+        effectId: effect.id,
+        answer: value,
+        actor,
+      });
+    const wrongActor = await answer({ type: "user", id: id<UserId>("user:charlie") }, "keep");
+    expect(Result.isFailure(wrongActor) && wrongActor.error.code).toBe("human_input_not_assigned");
+    const otherTenant = await answer(assignee, "keep", id("org:other"));
+    expect(Result.isFailure(otherTenant) && otherTenant.error.code).toBe("workflow_run_not_found");
+    const invalid = await answer(assignee, "invalid");
+    expect(Result.isFailure(invalid) && invalid.error.code).toBe("invalid_human_input_answer");
+    const results = await Promise.all([answer(assignee, "keep"), answer(assignee, "archive")]);
+    expect(results.filter(Result.isSuccess)).toHaveLength(1);
+    expect(results.filter(Result.isFailure).map((result) => result.error.code)).toEqual([
+      "human_input_already_answered",
+    ]);
+    const accepted = await load("run:review");
+    expect(accepted.state.effects[String(effect.id)]?.answeredBy).toEqual(assignee);
+    const events = await runs.listEvents({
+      organizationId: TEST_ORGANIZATION_ID,
+      runId: id<WorkflowRunId>("run:review"),
+    });
+    expect(
+      Result.isSuccess(events) &&
+        events.value.some((entry) => entry.type === "human_input.answered"),
+    ).toBe(true);
+    const resumed = await reviewRuntime().advance({
+      organizationId: TEST_ORGANIZATION_ID,
+      runId: id<WorkflowRunId>("run:review"),
+    });
+    expect(Result.isSuccess(resumed) && resumed.value.status).toBe("succeeded");
   });
 
   it("pins the version checksum and rejects runaway nesting depth", async () => {

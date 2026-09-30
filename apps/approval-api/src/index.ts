@@ -58,6 +58,7 @@ import {
   type ProductionWorkflowEnv,
 } from "./workflow-platform.ts";
 import {
+  CloudflareWorkflowRunnerControl,
   runWorkflowRunner,
   sweepDueWorkflowRuns,
   type WorkflowRunnerParams,
@@ -66,7 +67,12 @@ import {
   createProductionWorkflowStudioApi,
   PRODUCTION_WORKFLOW_STUDIO_PREFIX,
 } from "./workflow-studio.ts";
-import { createPublicWorkflowRunApi, PUBLIC_WORKFLOW_RUN_ROUTES } from "@app/workflow-platform";
+import {
+  createPublicHumanInputApi,
+  createPublicWorkflowRunApi,
+  PUBLIC_HUMAN_INPUT_ROUTES,
+  PUBLIC_WORKFLOW_RUN_ROUTES,
+} from "@app/workflow-platform";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 export class WorkflowRunner extends WorkflowEntrypoint<ApprovalApiEnv, WorkflowRunnerParams> {
@@ -219,6 +225,15 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
     identityProvider: identity,
     operatorAccess,
   });
+  const publicHumanInputs = createPublicHumanInputApi({
+    db: env.DB,
+    platform: productionWorkflowPlatform(env, organizationId),
+    readRepository,
+    identityProvider: identity,
+    idempotencyRepository: readRepository,
+    clock: { now: () => new Date().toISOString() },
+    onAnswerAccepted: (key) => new CloudflareWorkflowRunnerControl(env.WORKFLOW_RUNNER).resume(key),
+  });
   const publicApi = createPublicHttpApi({
     actionRequestApi,
     readRepository,
@@ -281,6 +296,7 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
       }
       if (workflowStudio.handles(request)) return workflowStudio.fetch(request);
       if (publicWorkflowRuns.handles(request)) return publicWorkflowRuns.fetch(request);
+      if (publicHumanInputs.handles(request)) return publicHumanInputs.fetch(request);
       return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
     },
   };
@@ -307,6 +323,7 @@ async function reconcileRelationships(
 const APPROVAL_API_ROUTES = [
   ...PUBLIC_HTTP_ROUTES,
   ...PUBLIC_WORKFLOW_RUN_ROUTES,
+  ...PUBLIC_HUMAN_INPUT_ROUTES,
   ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
   `${PRODUCTION_WORKFLOW_STUDIO_PREFIX}/*`,
   "/operator/dashboard",
