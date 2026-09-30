@@ -1,0 +1,26 @@
+PrincipalDirectoryEntry:
+  type: object
+  required: [id, displayName]
+  properties:
+    id:
+      type: string
+      pattern: '^user:'
+      description: 認証済みAuth0 subに対応するuser principal ID。
+    displayName:
+      type: string
+      minLength: 1
+      maxLength: 200
+      description: 表示用。認可には使用しない。
+  additionalProperties: false
+PrincipalDirectoryPage:
+  type: object
+  required: [items]
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-10.yaml#/PrincipalDirectoryEntry
+    nextCursor:
+      type: string
+      description: 次ページがある場合のみ返す不透明なカーソル。
+  additionalProperties: false

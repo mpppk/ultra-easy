@@ -16,7 +16,13 @@ const FIRST_PARTY: ClientGrant = {
 };
 
 const KNOWLEDGE_USER: ClientGrant = {
-  operations: ["action_request.read", "action_request.submit", "approval_decision.submit"],
+  operations: [
+    "action_request.read",
+    "action_request.submit",
+    "approval_decision.submit",
+    "principal_directory.read",
+    "principal_directory.ensure",
+  ],
   actionTypes: ["knowledge.*"],
   resourceTypes: ["knowledge_page", "knowledge_space"],
 };
