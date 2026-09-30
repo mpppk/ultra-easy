@@ -27,6 +27,7 @@ import {
   ApprovalDecisionCommandService,
   createActionRequestHttpApi,
   createPublicHttpApi,
+  parseActionRequestCreateBody,
   PublicApiRepositoryError,
   type ApprovalReadRepository,
   type TrustedActionRequestContext,
@@ -182,6 +183,27 @@ function submit(api: ReturnType<typeof harness>, orgSegment = "organization%3Aht
     }),
   );
 }
+
+describe("#196 ActionRequest correlation", () => {
+  const action = {
+    type: "ticket.update",
+    resource: { type: "ticket", id: "ticket:one" },
+    input: {},
+  };
+
+  it("application supplied keyを受け取り、危険なkeyと値を拒否する", () => {
+    expect(
+      parseActionRequestCreateBody({ action, correlation: { spaceId: "space:one" } }),
+    ).toMatchObject({ correlation: { spaceId: "space:one" } });
+    expect(
+      parseActionRequestCreateBody({ action, correlation: { "$.secret": "value" } }),
+    ).toBeNull();
+    expect(
+      parseActionRequestCreateBody({ action, correlation: { spaceId: "bad\nvalue" } }),
+    ).toBeNull();
+    expect(parseActionRequestCreateBody({ action, correlation: { spaceId: 1 } })).toBeNull();
+  });
+});
 
 describe("#96 path parameterのdecode", () => {
   it("不正なpercent-encodingは500ではなく400 invalid_path_parameterになる", async () => {

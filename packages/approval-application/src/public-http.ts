@@ -323,7 +323,7 @@ async function idempotent(input: {
   return response;
 }
 
-async function authenticate(input: {
+export async function authenticatePublicApi(input: {
   identityProvider: PublicHttpIdentityProvider;
   request: Request;
   organizationId: OrganizationId;
@@ -343,14 +343,14 @@ async function authenticate(input: {
   return identity.value;
 }
 
-async function authorizeAction(input: {
+export async function authorizePublicAction(input: {
   identityProvider: PublicHttpIdentityProvider;
   request: Request;
   organizationId: OrganizationId;
   operation: PublicApiOperation;
   action: ActionRequestView;
 }): Promise<Response | null> {
-  const result = await authenticate({
+  const result = await authenticatePublicApi({
     identityProvider: input.identityProvider,
     request: input.request,
     organizationId: input.organizationId,
@@ -367,7 +367,7 @@ async function authenticateUser(input: {
   organizationId: OrganizationId;
   operation: PublicApiOperation;
 }): Promise<UserId | Response> {
-  const principal = await authenticate(input);
+  const principal = await authenticatePublicApi(input);
   if (principal instanceof Response) return principal;
   if (principal.type !== "user") {
     return problem({
@@ -434,7 +434,7 @@ function actionRequestNotFound(): Response {
 }
 
 /** 読み取り可能なActionRequestだけを返す。存在しない・読めない場合はどちらも404にする。 */
-async function loadReadableActionRequest(input: {
+export async function loadReadableActionRequest(input: {
   organizationId: OrganizationId;
   actionRequestId: ActionRequestId;
   viewer: PrincipalRef;
@@ -493,7 +493,7 @@ export function createPublicHttpApi(input: {
       if (createMatch instanceof Response) return createMatch;
       if (request.method === "POST" && createMatch) {
         const organizationId = createMatch[0];
-        const principal = await authenticate({
+        const principal = await authenticatePublicApi({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -537,7 +537,7 @@ export function createPublicHttpApi(input: {
       if (actionMatch instanceof Response) return actionMatch;
       if (request.method === "GET" && actionMatch) {
         const organizationId = actionMatch[0];
-        const viewer = await authenticate({
+        const viewer = await authenticatePublicApi({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -552,7 +552,7 @@ export function createPublicHttpApi(input: {
           ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
         });
         if (loaded instanceof Response) return loaded;
-        const restricted = await authorizeAction({
+        const restricted = await authorizePublicAction({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -570,7 +570,7 @@ export function createPublicHttpApi(input: {
       if (actionTasksMatch instanceof Response) return actionTasksMatch;
       if (request.method === "GET" && actionTasksMatch) {
         const organizationId = actionTasksMatch[0];
-        const viewer = await authenticate({
+        const viewer = await authenticatePublicApi({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -587,7 +587,7 @@ export function createPublicHttpApi(input: {
         });
         if (action instanceof Response) return action;
 
-        const restricted = await authorizeAction({
+        const restricted = await authorizePublicAction({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -662,7 +662,7 @@ export function createPublicHttpApi(input: {
           });
           if (Result.isFailure(loaded)) return repositoryErrorResponse(loaded.error);
           if (!loaded.value) continue;
-          const restricted = await authorizeAction({
+          const restricted = await authorizePublicAction({
             identityProvider: input.identityProvider,
             request,
             organizationId,
@@ -682,7 +682,7 @@ export function createPublicHttpApi(input: {
       if (taskMatch instanceof Response) return taskMatch;
       if (request.method === "GET" && taskMatch) {
         const organizationId = taskMatch[0];
-        const viewer = await authenticate({
+        const viewer = await authenticatePublicApi({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -710,7 +710,7 @@ export function createPublicHttpApi(input: {
           ...(input.operatorAccess ? { operatorAccess: input.operatorAccess } : {}),
         });
         if (action instanceof Response) return action.status === 404 ? taskNotFound : action;
-        const restricted = await authorizeAction({
+        const restricted = await authorizePublicAction({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -780,7 +780,7 @@ export function createPublicHttpApi(input: {
         });
         if (Result.isFailure(decisionAction)) return repositoryErrorResponse(decisionAction.error);
         if (!decisionAction.value) return actionRequestNotFound();
-        const restricted = await authorizeAction({
+        const restricted = await authorizePublicAction({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -868,7 +868,7 @@ export function createPublicHttpApi(input: {
       if (commandMatch instanceof Response) return commandMatch;
       if (request.method === "GET" && commandMatch) {
         const organizationId = commandMatch[0];
-        const viewer = await authenticate({
+        const viewer = await authenticatePublicApi({
           identityProvider: input.identityProvider,
           request,
           organizationId,
@@ -892,7 +892,7 @@ export function createPublicHttpApi(input: {
         });
         if (Result.isFailure(commandAction)) return repositoryErrorResponse(commandAction.error);
         if (!commandAction.value) return commandNotFound;
-        const restricted = await authorizeAction({
+        const restricted = await authorizePublicAction({
           identityProvider: input.identityProvider,
           request,
           organizationId,

@@ -59,7 +59,19 @@ ActionRequestCreate:
       type: string
       maxLength: 255
       description: 呼び出し元が監査相関に利用できる任意の参照値。
+    correlation:
+      $ref: ./schemas-01.yaml#/ActionCorrelation
   additionalProperties: false
+ActionCorrelation:
+  type: object
+  maxProperties: 16
+  propertyNames:
+    pattern: ^[A-Za-z][A-Za-z0-9_]{0,63}$
+  additionalProperties:
+    type: string
+    minLength: 1
+    maxLength: 255
+  description: ActionRequestと一緒に保存するapplication supplied lookup keys。
 ActionRequestStatus:
   type: string
   enum:
@@ -147,6 +159,8 @@ ActionRequest:
       - type: 'null'
     action:
       $ref: ./schemas-01.yaml#/Action
+    correlation:
+      $ref: ./schemas-01.yaml#/ActionCorrelation
     origin:
       type: string
       enum:

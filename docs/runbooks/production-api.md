@@ -62,6 +62,41 @@ Production domain + custom-domain cutover are follow-ups.
   (`authorization_admin:root#viewer`); a Decision command to its issuer and
   operators. Everyone else gets 404 (existence is not disclosed).
 
+## Public Workflow Run projection (#196)
+
+Application clients submit an optional `correlation` object alongside `action` in
+`POST /v1/organizations/{organizationId}/action-requests`. It contains up to 16
+string keys (`[A-Za-z][A-Za-z0-9_]{0,63}`), each with a nonempty value of at most
+255 characters. For example, `{"correlation":{"spaceId":"space:one","pageId":"page:one"}}`.
+The object is immutable metadata stored with the ActionRequest and returned by
+ActionRequest reads. Do not place credentials in correlation values.
+
+These `GET` routes require the same Auth0 `read:action-requests` scope as the parent
+ActionRequest and enforce its actor / authority / caller / approval participant /
+organization operator read policy. The client registry also checks the parent
+action type and resource type. A run with no parent ActionRequest (for example a
+direct Studio run) is available through the Studio admin route, not these routes.
+
+| Route                                                                                                           | Result                                                              |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `/v1/organizations/{organizationId}/workflow-runs/{runId}`                                                      | One public run view by run ID                                       |
+| `/v1/organizations/{organizationId}/action-requests/{actionRequestId}/workflow-run`                             | The run started by an ActionRequest                                 |
+| `/v1/organizations/{organizationId}/workflow-runs?correlationKey=spaceId&correlationValue=space%3Aone&limit=50` | `{ "items": [...] }`; repeat `correlationValue` for multiple values |
+
+The view contains `id`, `actionRequestId`, `actionType`, `organizationId`,
+`status`, `correlation`, `requestedBy`, timestamps, `nodes`, `childActions`,
+`approvals`, `humanInputs`, `failure`, and `audit`. Node and child status, task
+candidate IDs, and audit event types are included. Raw workflow input/variables,
+LLM outputs, sandbox state, provider errors, and event data are excluded. Until
+the governed Human Input API (#197), `humanInputs` contains only a key and status;
+it does not disclose prompts or answers.
+
+Invalid IDs, limit (1–100), or correlation filters return 400. Missing and
+unreadable runs return the same 404 `workflow_run_not_found`; list results omit
+unreadable runs. Authentication failures return 401 or 403. Repository failures
+return 503 when retriable, otherwise 500, with a code only and no internal
+error text. Every lookup and filter includes the organization ID.
+
 ## Bootstrap (staging DB)
 
 Governance bootstrap rule (docs/governance-bootstrap.md) option 1

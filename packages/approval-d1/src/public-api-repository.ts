@@ -284,6 +284,11 @@ export class D1PublicApiRepository
       );
     }
 
+    const correlation = await this.plans.loadCorrelation(input);
+    if (Result.isFailure(correlation)) {
+      return Result.fail(repositoryError(correlation.error, correlation.error.message));
+    }
+
     const runtime = await this.runtimes.load(input);
     if (Result.isFailure(runtime)) {
       return Result.fail(repositoryError(runtime.error, runtime.error.message));
@@ -333,6 +338,7 @@ export class D1PublicApiRepository
       ...(plan.plan.evaluationSnapshot.origin.clientId
         ? { clientId: plan.plan.evaluationSnapshot.origin.clientId }
         : {}),
+      ...(correlation.value !== null ? { correlation: correlation.value } : {}),
       action: {
         type: plan.plan.action.type,
         resource: plan.plan.action.resource,

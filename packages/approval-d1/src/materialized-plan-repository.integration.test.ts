@@ -145,6 +145,12 @@ function createRepository(): {
   sqlite.exec(
     readFileSync(new URL("../migrations/0001_materialized_plans.sql", import.meta.url), "utf8"),
   );
+  sqlite.exec(
+    readFileSync(
+      new URL("../migrations/0027_action_request_correlation.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   return {
     repository: new D1MaterializedPlanRepository(new SqliteD1Database(sqlite)),
     sqlite,
@@ -152,6 +158,27 @@ function createRepository(): {
 }
 
 describe("D1MaterializedPlanRepository", () => {
+  it("ActionRequestとcorrelationを一緒に保存し、tenantと再試行時の値を固定する", async () => {
+    const { repository } = createRepository();
+    const plan = await createPlan({ actionRequestId: "action-request:correlation" });
+    const correlation = { spaceId: "space:one", pageId: "page:one" };
+
+    expect(await repository.save(plan, { correlation })).toEqual({ type: "created" });
+    expect(
+      await repository.loadCorrelation({ organizationId, actionRequestId: plan.actionRequestId }),
+    ).toEqual({ type: "Success", value: correlation });
+    expect(await repository.save(plan, { correlation })).toEqual({ type: "existing" });
+    expect((await repository.save(plan, { correlation: { spaceId: "space:other" } })).type).toBe(
+      "conflict",
+    );
+    expect(
+      await repository.loadCorrelation({
+        organizationId: branded<OrganizationId>("org:other"),
+        actionRequestId: plan.actionRequestId,
+      }),
+    ).toEqual({ type: "Success", value: null });
+  });
+
   it("Materialized Planを保存・再読込してsemantic identityを保持する", async () => {
     const { repository } = createRepository();
     const plan = await createPlan({ actionRequestId: "action-request:1" });
