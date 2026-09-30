@@ -130,10 +130,12 @@ MCP Gatewayの `tools/call` 経路（route snapshot、`McpActionExecutor`）は�
 - 変更: 組み込みのgoverned action `application.approval_policy.update`
   （resource = scope、input = `{ baseVersion, policy }`、Authorization = `updateRelation`、
   Knowledgeでは `knowledge_space#can_manage`）。inputはsubmit時にschemeの語彙で検証する。
-- meta-approval: `application.approval_policy.update` のApproval Policyは常に、
-  「申請者以外のscope owner」または「組織管理者（`authorization_admin#editor`）」のどちらかの
-  承認を要求する（parallel any、self-approval deny）。ownerが1人のscopeも管理者が承認するので、
-  meta-approvalなしでruleが変わることはない。
+- meta-approval: `application.approval_policy.update` のApproval Policyは常に、申請者以外の
+  scope owner の承認を要求する（self-approval deny）。申請者以外にownerが居ない場合は、
+  `onUnresolved: fallback` で組織管理者（`authorization_admin#editor`）へ回す。どちらにも申請者以外が
+  居なければ承認できず、fail closed（`no_eligible_approver_candidates`）でruleは変わらない。
+  bootstrapのv1（owner / 管理者のparallel any）は、どちらかの候補が申請者だけの場合にstepの有効化が
+  失敗したため、catalog migrationのv2（`approval-policy-meta:<app>@2`）で置き換えた。
 - 適用: `ApplicationApprovalPolicyExecutor` が、承認とRe-Authorizationの後にだけ適用する。
   `baseVersion` が現在のscope versionと一致しなければ `application_policy_conflict` になる
   （古い提案が後から承認されても、新しいruleを上書きしない）。適用は

@@ -19,7 +19,6 @@ import {
   ne,
   none,
   object,
-  parallelAny,
   relation,
   rule,
   user,
@@ -367,8 +366,10 @@ export function compileApplicationApprovalPolicies(
 }
 
 /**
- * policy変更のmeta-approval。申請者以外のscope owner、または組織管理者（console editor）の
- * いずれかが承認する。owner 1人のscopeでも管理者が承認できるので、承認なしには変わらない。
+ * policy変更のmeta-approval。申請者以外のscope ownerが承認する。申請者以外にownerが居ない
+ * （owner 1人のscope）場合は、組織管理者（console editor）へfallbackする
+ * （`onUnresolved: fallback`はself-approval除外後に候補が残らない場合にも適用される）。
+ * どちらにも申請者以外が居なければ承認できずfail closedになり、ruleは変わらない。
  */
 export function applicationApprovalPolicyMetaPolicy(
   scheme: ApplicationApprovalScheme,
@@ -380,24 +381,22 @@ export function applicationApprovalPolicyMetaPolicy(
     rules: [
       rule("meta-approval", {
         when: always(),
-        flow: parallelAny(
-          approve({
-            key: "scope_owner",
-            purpose: "security_approval",
-            approver: relation({
-              object: object(scheme.scopeResourceType, field("action.resource.id")),
-              relation: scheme.metaApprovalRelation,
-            }),
+        flow: approve({
+          key: "scope_owner",
+          purpose: "security_approval",
+          approver: relation({
+            object: object(scheme.scopeResourceType, field("action.resource.id")),
+            relation: scheme.metaApprovalRelation,
           }),
-          approve({
-            key: "organization_admin",
-            purpose: "security_approval",
+          selfApproval: { mode: "deny" },
+          onUnresolved: {
+            type: "fallback",
             approver: relation({
               object: object("authorization_admin", literal("root")),
               relation: "editor",
             }),
-          }),
-        ),
+          },
+        }),
       }),
     ],
   });

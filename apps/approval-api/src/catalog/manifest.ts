@@ -2,6 +2,15 @@ import { Result } from "@praha/byethrow";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 
 import {
+  always,
+  approve,
+  definePolicy,
+  field,
+  literal,
+  object,
+  parallelAny,
+  relation,
+  rule,
   APPLICATION_APPROVAL_POLICY_ACTION_TYPE,
   applicationApprovalBindingId,
   applicationApprovalPolicyMetaPolicy,
@@ -78,6 +87,11 @@ export type CatalogApprovalPolicy = {
   scheme: ApplicationApprovalScheme;
   /** ruleを変更できるscope上のrelation（Authorization）。 */
   updateRelation: string;
+  /**
+   * 登録するmeta-approval policyのversion。1は初回bootstrap（parallel any）、2以降は
+   * `applicationApprovalPolicyMetaPolicy`（scope owner、いなければ組織管理者へfallback）。
+   */
+  metaPolicyVersion: 1 | 2;
 };
 
 /** downstream MCP server。endpoint / credentialはdeployment設定だけが持ち、catalogへ保存しない。 */
@@ -699,6 +713,9 @@ export async function renderCatalogEntries(
     const rendered = await approvalPolicyEntry(catalog, catalog.approvalPolicy, organizations);
     if (Result.isFailure(rendered)) return rendered;
     entries.push(rendered.value);
+    const meta = await metaPolicyEntry(catalog, catalog.approvalPolicy, organizations);
+    if (Result.isFailure(meta)) return meta;
+    if (meta.value) entries.push(meta.value);
   }
   return Result.succeed(entries);
 }
@@ -726,7 +743,7 @@ async function approvalPolicyEntry(
       actionType,
     })),
     {
-      policy: applicationApprovalPolicyMetaPolicy(scheme),
+      policy: metaPolicyV1(scheme),
       bindingId: scheme.metaBindingId,
       actionType: String(APPLICATION_APPROVAL_POLICY_ACTION_TYPE),
     },
@@ -770,6 +787,73 @@ async function approvalPolicyEntry(
     }
   }
   return entry(`approval-policy:${catalog.application}@1`, statements);
+}
+
+/**
+ * 初回bootstrap（`approval-policy:<app>@1`）のmeta-approval policy。登録済みentryは変更できない
+ * ため、当時の内容のまま描画する。owner / 管理者のどちらかに申請者以外の候補が居ないと
+ * stepの有効化が失敗したため、v2で置き換えた。
+ */
+function metaPolicyV1(scheme: ApplicationApprovalScheme) {
+  return definePolicy({
+    key: scheme.metaPolicyKey,
+    name: `${scheme.application} approval rule changes`,
+    description: `Meta-approval of ${scheme.application} approval rule changes (#199).`,
+    rules: [
+      rule("meta-approval", {
+        when: always(),
+        flow: parallelAny(
+          approve({
+            key: "scope_owner",
+            purpose: "security_approval",
+            approver: relation({
+              object: object(scheme.scopeResourceType, field("action.resource.id")),
+              relation: scheme.metaApprovalRelation,
+            }),
+          }),
+          approve({
+            key: "organization_admin",
+            purpose: "security_approval",
+            approver: relation({
+              object: object("authorization_admin", literal("root")),
+              relation: "editor",
+            }),
+          }),
+        ),
+      }),
+    ],
+  });
+}
+
+/** meta-approval policyのv2以降（bindingは同じkeyの最新versionを使う）。 */
+async function metaPolicyEntry(
+  catalog: ApplicationCatalog,
+  section: CatalogApprovalPolicy,
+  organizations: readonly OrganizationId[],
+): Result.ResultAsync<CatalogEntry | null, CatalogManifestError> {
+  if (section.metaPolicyVersion < 2) return Result.succeed(null);
+  const actor = catalogActor(catalog);
+  if (Result.isFailure(actor)) return actor;
+  const actorJson = json(actor.value);
+  const policy = applicationApprovalPolicyMetaPolicy(section.scheme);
+  const policyJson = json(policy);
+  if (Result.isFailure(actorJson)) return actorJson;
+  if (Result.isFailure(policyJson)) return policyJson;
+  const rendered = await entry(
+    `approval-policy-meta:${catalog.application}@${section.metaPolicyVersion}`,
+    organizations.map((organization) =>
+      insert("published_approval_policy_versions", {
+        organization_id: organization,
+        policy_key: String(policy.key),
+        version: section.metaPolicyVersion,
+        policy_json: policyJson.value,
+        actor_json: actorJson.value,
+        source_action_request_id: catalogSource(catalog),
+        published_at: catalog.publishedAt,
+      }),
+    ),
+  );
+  return Result.isFailure(rendered) ? rendered : Result.succeed(rendered.value);
 }
 
 /** runtime view: catalogが宣言する承認ruleの語彙。 */

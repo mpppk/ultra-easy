@@ -462,6 +462,7 @@ export const KNOWLEDGE_CATALOG: ApplicationCatalog = {
       metaApprovalRelation: "owner",
     },
     updateRelation: "can_manage",
+    metaPolicyVersion: 2,
   },
 };
 
