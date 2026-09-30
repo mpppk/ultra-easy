@@ -48,6 +48,7 @@ export type ActionRequestCreateBody = {
   action: Action;
   delegationGrantId?: string;
   clientReference?: string;
+  correlation?: Record<string, string>;
 };
 
 export function actionRequestProblem(input: {
@@ -92,7 +93,10 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 }
 
 export function parseActionRequestCreateBody(value: unknown): ActionRequestCreateBody | null {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["action", "delegationGrantId", "clientReference"])) {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["action", "delegationGrantId", "clientReference", "correlation"])
+  ) {
     return null;
   }
   if (!isRecord(value.action) || !hasOnlyKeys(value.action, ["type", "resource", "input"])) {
@@ -127,6 +131,20 @@ export function parseActionRequestCreateBody(value: unknown): ActionRequestCreat
   ) {
     return null;
   }
+  if (value.correlation !== undefined) {
+    if (!isRecord(value.correlation) || Object.keys(value.correlation).length > 16) return null;
+    for (const [key, entry] of Object.entries(value.correlation)) {
+      if (
+        !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) ||
+        typeof entry !== "string" ||
+        entry.length < 1 ||
+        entry.length > 255 ||
+        Array.from(entry).some((character) => character.charCodeAt(0) < 32)
+      ) {
+        return null;
+      }
+    }
+  }
 
   return {
     action: {
@@ -139,6 +157,9 @@ export function parseActionRequestCreateBody(value: unknown): ActionRequestCreat
       : {}),
     ...(typeof value.clientReference === "string"
       ? { clientReference: value.clientReference }
+      : {}),
+    ...(value.correlation !== undefined
+      ? { correlation: value.correlation as Record<string, string> }
       : {}),
   };
 }
@@ -299,6 +320,7 @@ export function createActionRequestHttpApi(input: {
         action: body.action,
         trustedContext: trusted.value,
         ...(body.clientReference ? { clientReference: body.clientReference } : {}),
+        ...(body.correlation !== undefined ? { correlation: body.correlation } : {}),
       });
       if (Result.isFailure(submitted))
         return actionRequestApplicationErrorResponse(submitted.error);

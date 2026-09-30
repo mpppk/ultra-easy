@@ -26,7 +26,10 @@ export type MaterializedPlanLoadResult =
  * runtime stateの更新はこのPortの責務に含めない。
  */
 export interface MaterializedPlanRepository {
-  save(plan: MaterializedApprovalPlan): Promise<MaterializedPlanSaveResult>;
+  save(
+    plan: MaterializedApprovalPlan,
+    metadata?: { correlation?: Readonly<Record<string, string>> },
+  ): Promise<MaterializedPlanSaveResult>;
 
   load(input: {
     organizationId: OrganizationId;

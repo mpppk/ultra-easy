@@ -1,0 +1,103 @@
+/v1/organizations/{organizationId}/workflow-runs:
+  get:
+    tags: [WorkflowRuns]
+    operationId: listWorkflowRuns
+    summary: Readable Workflow Runsをcorrelationで検索する
+    description: 関連ActionRequestを閲覧できるrunのみ返す。read:action-requests scopeが必要。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: correlationKey
+      in: query
+      schema:
+        type: string
+        pattern: ^[A-Za-z][A-Za-z0-9_]{0,63}$
+      description: correlationValueと同時に指定する。
+    - name: correlationValue
+      in: query
+      style: form
+      explode: true
+      schema:
+        type: array
+        maxItems: 100
+        items:
+          type: string
+          minLength: 1
+          maxLength: 255
+      description: 複数値はquery parameterを繰り返す。
+    - name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    responses:
+      '200':
+        description: 閲覧可能なrun一覧。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-08.yaml#/PublicWorkflowRunPage
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+/v1/organizations/{organizationId}/workflow-runs/{runId}:
+  get:
+    tags: [WorkflowRuns]
+    operationId: getWorkflowRun
+    summary: Workflow Runの公開projectionをIDで取得する
+    description: 親ActionRequestの閲覧権限とscopeを確認する。存在しないrunと閲覧不可のrunは同じ404。
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: 公開run view。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-08.yaml#/PublicWorkflowRun
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
+/v1/organizations/{organizationId}/action-requests/{actionRequestId}/workflow-run:
+  get:
+    tags: [WorkflowRuns]
+    operationId: findWorkflowRunByActionRequest
+    summary: ActionRequestから開始されたWorkflow Runを取得する
+    parameters:
+    - $ref: ../components/common.yaml#/parameters/OrganizationId
+    - $ref: ../components/common.yaml#/parameters/ActionRequestId
+    responses:
+      '200':
+        description: 公開run view。
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas-08.yaml#/PublicWorkflowRun
+      '400':
+        $ref: ../components/common.yaml#/responses/BadRequest
+      '401':
+        $ref: ../components/common.yaml#/responses/Unauthorized
+      '403':
+        $ref: ../components/common.yaml#/responses/Forbidden
+      '404':
+        $ref: ../components/common.yaml#/responses/NotFound
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable

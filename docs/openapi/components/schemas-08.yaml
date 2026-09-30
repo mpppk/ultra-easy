@@ -1,0 +1,174 @@
+PublicWorkflowRun:
+  type: object
+  description: Allowlisted Workflow Run projection. Internal state, input, outputs and provider errors are excluded.
+  required:
+  - id
+  - actionRequestId
+  - actionType
+  - organizationId
+  - status
+  - correlation
+  - requestedBy
+  - startedAt
+  - updatedAt
+  - nodes
+  - childActions
+  - approvals
+  - humanInputs
+  - failure
+  - audit
+  properties:
+    id:
+      type: string
+    actionRequestId:
+      type: string
+    actionType:
+      type: string
+    organizationId:
+      type: string
+    status:
+      type: string
+      enum: [running, waiting_approval, waiting_input, succeeded, failed, cancelled, rejected]
+    correlation:
+      $ref: ./schemas-01.yaml#/ActionCorrelation
+    requestedBy:
+      type: object
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+      additionalProperties: false
+    startedAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+    nodes:
+      type: array
+      items:
+        $ref: ./schemas-08.yaml#/PublicWorkflowNode
+    childActions:
+      type: array
+      items:
+        $ref: ./schemas-08.yaml#/PublicWorkflowChildAction
+    approvals:
+      type: array
+      items:
+        $ref: ./schemas-08.yaml#/PublicWorkflowApproval
+    humanInputs:
+      type: array
+      description: Key and status only until the governed Human Input API is available.
+      items:
+        $ref: ./schemas-08.yaml#/PublicWorkflowHumanInput
+    failure:
+      oneOf:
+      - $ref: ./schemas-08.yaml#/PublicWorkflowFailure
+      - type: 'null'
+    audit:
+      type: array
+      items:
+        $ref: ./schemas-08.yaml#/PublicWorkflowAudit
+  additionalProperties: false
+PublicWorkflowRunPage:
+  type: object
+  required: [items]
+  properties:
+    items:
+      type: array
+      items:
+        $ref: ./schemas-08.yaml#/PublicWorkflowRun
+  additionalProperties: false
+PublicWorkflowNode:
+  type: object
+  required: [key, label, status]
+  properties:
+    key:
+      type: string
+    label:
+      type: string
+    status:
+      type: string
+      enum: [pending, running, waiting, succeeded, failed, skipped, cancelled]
+    childActionRequestId:
+      type: string
+    errorCode:
+      type: string
+  additionalProperties: false
+PublicWorkflowChildAction:
+  type: object
+  required: [actionRequestId, actionType, status, subjectResourceId]
+  properties:
+    actionRequestId:
+      type: string
+    actionType:
+      type: string
+    status:
+      type: string
+      enum: [pending, waiting_approval, succeeded, failed, rejected, cancelled]
+    subjectResourceId:
+      type: string
+    approvalTaskId:
+      type: string
+    errorCode:
+      type: string
+  additionalProperties: false
+PublicWorkflowApproval:
+  type: object
+  required: [taskId, actionRequestId, actionType, status, candidateIds, url]
+  properties:
+    taskId:
+      type: string
+    actionRequestId:
+      type: string
+    actionType:
+      type: string
+    status:
+      type: string
+      enum: [pending, approved, rejected, cancelled]
+    candidateIds:
+      type: array
+      items:
+        type: string
+    url:
+      type: string
+  additionalProperties: false
+PublicWorkflowHumanInput:
+  type: object
+  required: [key, status]
+  properties:
+    key:
+      type: string
+    status:
+      type: string
+      enum: [waiting, answered, failed, cancelled]
+  additionalProperties: false
+PublicWorkflowFailure:
+  type: object
+  required: [code, message, nodeKey]
+  properties:
+    code:
+      type: string
+    message:
+      type: string
+      description: Safe generic message; provider errors are redacted.
+    nodeKey:
+      type: string
+  additionalProperties: false
+PublicWorkflowAudit:
+  type: object
+  required: [at, type, actionRequestId, detail]
+  properties:
+    at:
+      type: string
+      format: date-time
+    type:
+      type: string
+    actionRequestId:
+      type: string
+    detail:
+      type: string
+      description: Fixed event type only; raw event data is never returned.
+  additionalProperties: false

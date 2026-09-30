@@ -33,6 +33,7 @@ type StoredPlanRow = {
   materialized_plan: string;
   approval_plan_checksum: string;
   approval_binding_fingerprint: string;
+  correlation_json: string | null;
 };
 
 class D1RepositoryError extends Error {
@@ -59,6 +60,11 @@ const parsePlan = Result.fn({
   catch: (error): D1RepositoryError => repositoryError(error, "保存済みPlan JSONをparseできません"),
 });
 
+const parseCorrelation = Result.fn({
+  try: (value: string): Record<string, string> => JSON.parse(value) as Record<string, string>,
+  catch: (error): D1RepositoryError => repositoryError(error, "保存済み相関JSONをparseできません"),
+});
+
 function serialize(value: unknown) {
   return canonicalizeJson(value as JsonValue);
 }
@@ -72,7 +78,10 @@ function storedPlanChecksum(value: string): ApprovalPlanChecksum | null {
 export class D1MaterializedPlanRepository implements MaterializedPlanRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
-  async save(plan: MaterializedApprovalPlan): Promise<MaterializedPlanSaveResult> {
+  async save(
+    plan: MaterializedApprovalPlan,
+    metadata?: { correlation?: Readonly<Record<string, string>> },
+  ): Promise<MaterializedPlanSaveResult> {
     const verification = await verifyMaterializedApprovalPlan(plan);
     if (verification.type === "invalid") {
       return { type: "invalid_plan", message: verification.message };
@@ -81,6 +90,8 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     const evaluationSnapshot = serialize(plan.evaluationSnapshot);
     const policyBindingSnapshots = serialize(plan.policyBindingSnapshots);
     const materializedPlan = serialize(plan);
+    const correlation =
+      metadata?.correlation !== undefined ? serialize(metadata.correlation) : Result.succeed(null);
     if (Result.isFailure(evaluationSnapshot)) {
       return { type: "invalid_plan", message: evaluationSnapshot.error.message };
     }
@@ -89,6 +100,9 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     }
     if (Result.isFailure(materializedPlan)) {
       return { type: "invalid_plan", message: materializedPlan.error.message };
+    }
+    if (Result.isFailure(correlation)) {
+      return { type: "invalid_plan", message: correlation.error.message };
     }
 
     const insert = await runStatement(
@@ -105,8 +119,9 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
             approval_plan_checksum,
             approval_binding_fingerprint,
             interpreter_semantics_version,
-            created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            created_at,
+            correlation_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           plan.actionRequestId,
@@ -120,6 +135,7 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
           plan.approvalBindingFingerprint,
           plan.interpreterSemanticsVersion,
           plan.evaluationSnapshot.evaluatedAt,
+          correlation.value,
         ),
     );
     if (Result.isFailure(insert)) {
@@ -143,9 +159,11 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
         message: "INSERT OR IGNORE後に既存Planを取得できませんでした",
       };
     }
-    if (existing.value.approval_binding_fingerprint === String(plan.approvalBindingFingerprint)) {
+    if (
+      existing.value.approval_binding_fingerprint === String(plan.approvalBindingFingerprint) &&
+      existing.value.correlation_json === correlation.value
+    )
       return { type: "existing" };
-    }
     const existingChecksum = storedPlanChecksum(existing.value.approval_plan_checksum);
     if (!existingChecksum) {
       return { type: "repository_error", message: "保存済みPlanのchecksumが不正です" };
@@ -233,11 +251,30 @@ export class D1MaterializedPlanRepository implements MaterializedPlanRepository 
     return firstStoredPlanRow(
       this.db
         .prepare(
-          `SELECT materialized_plan, approval_plan_checksum, approval_binding_fingerprint
+          `SELECT materialized_plan, approval_plan_checksum, approval_binding_fingerprint,
+                  correlation_json
            FROM action_requests
            WHERE organization_id = ? AND id = ?`,
         )
         .bind(organizationId, actionRequestId),
     );
+  }
+
+  async loadCorrelation(input: {
+    organizationId: OrganizationId;
+    actionRequestId: ActionRequestId;
+  }): Result.ResultAsync<Record<string, string> | null, D1RepositoryError> {
+    const row = await firstStoredPlanRow(
+      this.db
+        .prepare(
+          `SELECT materialized_plan, approval_plan_checksum, approval_binding_fingerprint,
+                  correlation_json
+             FROM action_requests WHERE organization_id = ? AND id = ?`,
+        )
+        .bind(String(input.organizationId), String(input.actionRequestId)),
+    );
+    if (Result.isFailure(row)) return row;
+    if (!row.value?.correlation_json) return Result.succeed(null);
+    return parseCorrelation(row.value.correlation_json);
   }
 }

@@ -66,6 +66,7 @@ import {
   createProductionWorkflowStudioApi,
   PRODUCTION_WORKFLOW_STUDIO_PREFIX,
 } from "./workflow-studio.ts";
+import { createPublicWorkflowRunApi, PUBLIC_WORKFLOW_RUN_ROUTES } from "@app/workflow-platform";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 export class WorkflowRunner extends WorkflowEntrypoint<ApprovalApiEnv, WorkflowRunnerParams> {
@@ -192,30 +193,38 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
     access: adminAccess,
     organizationId,
   });
+  const operatorAccess = {
+    // 関係者以外の閲覧はauthorization_admin viewer（運用者）に限る。userのみ・FGA障害はfail closed。
+    async canReadAll({ principal }: { principal: import("@app/approval-core").PrincipalRef }) {
+      if (principal.type !== "user") return Result.succeed(false);
+      const checked = await adminAccess.check({
+        caller: { organizationId, principal },
+        permission: "viewer",
+      });
+      return Result.isFailure(checked)
+        ? Result.fail(
+            new PublicApiRepositoryError(
+              "operator_access_check_failed",
+              checked.error.retriable,
+              "operator権限を確認できません",
+            ),
+          )
+        : checked;
+    },
+  };
+  const publicWorkflowRuns = createPublicWorkflowRunApi({
+    db: env.DB,
+    platform: productionWorkflowPlatform(env, organizationId),
+    readRepository,
+    identityProvider: identity,
+    operatorAccess,
+  });
   const publicApi = createPublicHttpApi({
     actionRequestApi,
     readRepository,
     decisionService,
     identityProvider: identity,
-    operatorAccess: {
-      // 関係者以外の閲覧はauthorization_admin viewer（運用者）に限る。userのみ・FGA障害はfail closed。
-      async canReadAll({ principal }) {
-        if (principal.type !== "user") return Result.succeed(false);
-        const checked = await adminAccess.check({
-          caller: { organizationId, principal },
-          permission: "viewer",
-        });
-        return Result.isFailure(checked)
-          ? Result.fail(
-              new PublicApiRepositoryError(
-                "operator_access_check_failed",
-                checked.error.retriable,
-                "operator権限を確認できません",
-              ),
-            )
-          : checked;
-      },
-    },
+    operatorAccess,
     idempotencyRepository: readRepository,
     clock: { now: () => new Date().toISOString() },
     rateLimiter,
@@ -271,6 +280,7 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
         });
       }
       if (workflowStudio.handles(request)) return workflowStudio.fetch(request);
+      if (publicWorkflowRuns.handles(request)) return publicWorkflowRuns.fetch(request);
       return adminApi.handles(request) ? adminApi.fetch(request) : publicApi.fetch(request);
     },
   };
@@ -296,6 +306,7 @@ async function reconcileRelationships(
 /** access log（#110）の対象route。一致しないpathは`unmatched`として記録する。 */
 const APPROVAL_API_ROUTES = [
   ...PUBLIC_HTTP_ROUTES,
+  ...PUBLIC_WORKFLOW_RUN_ROUTES,
   ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
   `${PRODUCTION_WORKFLOW_STUDIO_PREFIX}/*`,
   "/operator/dashboard",

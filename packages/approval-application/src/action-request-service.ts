@@ -75,6 +75,7 @@ export type ActionRequestView = {
   authorityPrincipal: PrincipalRef;
   caller?: PrincipalRef;
   clientId?: ActionRequest["origin"]["clientId"];
+  correlation?: Record<string, string>;
   action: Action;
   origin: ActionRequest["origin"]["type"];
   status: ActionRequestPublicStatus;
@@ -154,6 +155,8 @@ export type PreparedActionRequest = {
   preparedAt: string;
   /** 呼び出し元の参照値。`action.received`の監査イベントに残す（#103）。 */
   clientReference?: string;
+  /** Application-supplied lookup keys, persisted with the ActionRequest. */
+  correlation?: Record<string, string>;
 };
 
 export type ActionRequestPreparation =
@@ -348,6 +351,7 @@ function requestView(input: {
   events: readonly ActionEventRecord[];
   now: string;
   result?: ActionRequestView["result"];
+  correlation?: Record<string, string>;
 }): ActionRequestView {
   const approvalRequired = input.plan.flow.type !== "none";
   const status = foldActionRequestStatus(
@@ -361,6 +365,7 @@ function requestView(input: {
     authorityPrincipal: input.request.authority.principal,
     ...(input.request.origin.caller ? { caller: input.request.origin.caller } : {}),
     ...(input.request.origin.clientId ? { clientId: input.request.origin.clientId } : {}),
+    ...(input.correlation !== undefined ? { correlation: input.correlation } : {}),
     action: input.request.action,
     origin: input.request.origin.type,
     status,
@@ -557,6 +562,7 @@ export class ActionRequestApplicationService {
     action: Action;
     trustedContext: TrustedActionRequestContext;
     clientReference?: string;
+    correlation?: Record<string, string>;
     actionRequestId?: ActionRequestId;
   }): Result.ResultAsync<ActionRequestPreparation, ActionRequestApplicationError> {
     const evaluated = await this.evaluate(input);
@@ -580,6 +586,7 @@ export class ActionRequestApplicationService {
         approvalRequired: plan.flow.type !== "none",
         preparedAt: input.trustedContext.now,
         ...(input.clientReference !== undefined ? { clientReference: input.clientReference } : {}),
+        ...(input.correlation !== undefined ? { correlation: input.correlation } : {}),
       },
     });
   }
@@ -624,7 +631,12 @@ export class ActionRequestApplicationService {
     const integrity = await verifyPreparedActionRequest(preparation.prepared);
     if (Result.isFailure(integrity)) return integrity;
 
-    const saved = await this.dependencies.planRepository.save(plan);
+    const saved = await this.dependencies.planRepository.save(
+      plan,
+      preparation.prepared.correlation !== undefined
+        ? { correlation: preparation.prepared.correlation }
+        : {},
+    );
     if (saved.type !== "created" && !(saved.type === "existing" && input.resume === true)) {
       return Result.fail(planPersistenceError(saved));
     }
@@ -654,11 +666,28 @@ export class ActionRequestApplicationService {
         request,
         plan,
         workflowInstanceId: started.value.workflowInstanceId,
-        view: requestView({ request, plan, events: initialEvents, now }),
+        view: requestView({
+          request,
+          plan,
+          events: initialEvents,
+          now,
+          ...(preparation.prepared.correlation !== undefined
+            ? { correlation: preparation.prepared.correlation }
+            : {}),
+        }),
       });
     }
 
-    return this.executeImmediately({ actionRequestId, request, plan, now, initialEvents });
+    return this.executeImmediately({
+      actionRequestId,
+      request,
+      plan,
+      now,
+      initialEvents,
+      ...(preparation.prepared.correlation !== undefined
+        ? { correlation: preparation.prepared.correlation }
+        : {}),
+    });
   }
 
   /**
@@ -669,11 +698,13 @@ export class ActionRequestApplicationService {
     action: Action;
     trustedContext: TrustedActionRequestContext;
     clientReference?: string;
+    correlation?: Record<string, string>;
   }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
     const prepared = await this.prepare({
       action: input.action,
       trustedContext: input.trustedContext,
       ...(input.clientReference !== undefined ? { clientReference: input.clientReference } : {}),
+      ...(input.correlation !== undefined ? { correlation: input.correlation } : {}),
     });
     if (Result.isFailure(prepared)) return prepared;
     return this.commit({ preparation: prepared.value, now: input.trustedContext.now });
@@ -689,6 +720,7 @@ export class ActionRequestApplicationService {
     plan: MaterializedApprovalPlan;
     now: string;
     initialEvents: readonly ActionEventRecord[];
+    correlation?: Record<string, string>;
   }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
     const { actionRequestId, request, plan, now, initialEvents } = input;
     const base = { organizationId: plan.organizationId, actionRequestId, completedAt: now };
@@ -734,6 +766,7 @@ export class ActionRequestApplicationService {
           events: [...initialEvents, ...recorded.value],
           now,
           result: { status: "authorization_revoked", code, message: reason },
+          ...(input.correlation !== undefined ? { correlation: input.correlation } : {}),
         }),
       });
     }
@@ -794,6 +827,7 @@ export class ActionRequestApplicationService {
         idempotencyKey,
         guaranteeLevel: executed.value.guaranteeLevel,
         executionRef: executed.value.executionRef,
+        ...(input.correlation !== undefined ? { correlation: input.correlation } : {}),
       });
     }
 
@@ -822,6 +856,7 @@ export class ActionRequestApplicationService {
             ? { output: executed.value.result.output }
             : {}),
         },
+        ...(input.correlation !== undefined ? { correlation: input.correlation } : {}),
       }),
     });
   }
@@ -841,6 +876,7 @@ export class ActionRequestApplicationService {
     idempotencyKey: string;
     guaranteeLevel: ActionExecutionGuaranteeLevel;
     executionRef: string;
+    correlation?: Record<string, string>;
   }): Result.ResultAsync<ActionRequestSubmitResult, ActionRequestApplicationError> {
     const { plan, request, now } = input;
     const actionRequestId = plan.actionRequestId;
@@ -905,7 +941,13 @@ export class ActionRequestApplicationService {
       actionRequestId,
       request,
       plan,
-      view: requestView({ request, plan, events: [...input.initialEvents, ...events], now }),
+      view: requestView({
+        request,
+        plan,
+        events: [...input.initialEvents, ...events],
+        now,
+        ...(input.correlation !== undefined ? { correlation: input.correlation } : {}),
+      }),
     });
   }
 
