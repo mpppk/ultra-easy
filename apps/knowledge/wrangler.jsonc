@@ -28,7 +28,14 @@
     // is still being built, #154-#165). Replace with a Service Binding later.
     "ULTRA_EASY_MODE": "mock",
     "KNOWLEDGE_ORGANIZATION_ID": "org_acme",
+    "APPROVAL_UI_BASE_URL": "https://ultra-easy.niboshi.workers.dev",
   },
+  "services": [
+    {
+      "binding": "APPROVAL_API",
+      "service": "ultra-easy-approval-api",
+    },
+  ],
   // Secrets (wrangler secret put, 1Password `ultra-easy`): SESSION_SECRET,
   // KNOWLEDGE_MCP_TOKEN, AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET (Auth0 Regular Web
   // Application; callback https://<host>/api/auth/callback, logout https://<host>/login).

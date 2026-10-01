@@ -21,6 +21,7 @@ type WorkflowMethods = Pick<
 
 export type RemoteWorkflowOptions = {
   baseUrl: string;
+  approvalUiBaseUrl?: string;
   organizationId: string;
   /** Principal verified alongside this access token by Knowledge's auth boundary. */
   principalId: string;
@@ -104,6 +105,7 @@ function parseRun(
   value: unknown,
   organizationId: string,
   principalId: string,
+  approvalUiBaseUrl?: string,
 ): WorkflowRunView | null {
   if (!record(value) || !string(value.id) || !string(value.actionRequestId)) return null;
   if (value.organizationId !== organizationId || !actionType(value.actionType)) return null;
@@ -188,7 +190,12 @@ function parseRun(
       actionType: task.actionType,
       status: task.status as WorkflowRunView["approvals"][number]["status"],
       candidateIds: task.candidateIds,
-      url: task.url,
+      url: approvalUiBaseUrl
+        ? new URL(
+            `/approval-tasks/${encodeURIComponent(task.taskId)}`,
+            approvalUiBaseUrl,
+          ).toString()
+        : task.url,
     });
   }
   const humanInputs: WorkflowRunView["humanInputs"] = [];
@@ -318,7 +325,12 @@ export class RemoteWorkflowClient implements WorkflowMethods {
     const loaded = await this.json(path);
     if (Result.isFailure(loaded))
       return loaded.error.code === "not_found" ? Result.succeed(null) : loaded;
-    const run = parseRun(loaded.value, this.options.organizationId, this.options.principalId);
+    const run = parseRun(
+      loaded.value,
+      this.options.organizationId,
+      this.options.principalId,
+      this.options.approvalUiBaseUrl,
+    );
     return run ? Result.succeed(run) : Result.fail(error("platform_unavailable"));
   }
 
@@ -381,10 +393,15 @@ export class RemoteWorkflowClient implements WorkflowMethods {
         (item) => record(item) && item.status === "pending" && string(item.id),
       );
       if (record(pending) && string(pending.id))
-        approvalUrl = new URL(
-          `${base.value}/approval-tasks/${encodeURIComponent(pending.id)}`,
-          this.options.baseUrl,
-        ).toString();
+        approvalUrl = this.options.approvalUiBaseUrl
+          ? new URL(
+              `/approval-tasks/${encodeURIComponent(pending.id)}`,
+              this.options.approvalUiBaseUrl,
+            ).toString()
+          : new URL(
+              `${base.value}/approval-tasks/${encodeURIComponent(pending.id)}`,
+              this.options.baseUrl,
+            ).toString();
     }
     return Result.succeed({
       actionRequestId,
@@ -477,7 +494,12 @@ export class RemoteWorkflowClient implements WorkflowMethods {
         return Result.fail(error("platform_unavailable"));
       for (const item of loaded.value.items) {
         if (record(item) && !actionType(item.actionType)) continue;
-        const run = parseRun(item, input.organizationId, this.options.principalId);
+        const run = parseRun(
+          item,
+          input.organizationId,
+          this.options.principalId,
+          this.options.approvalUiBaseUrl,
+        );
         if (!run || !unique.includes(run.correlation.spaceId))
           return Result.fail(error("platform_unavailable"));
         runs.push(run);

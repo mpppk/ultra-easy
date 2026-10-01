@@ -69,7 +69,8 @@ async function resolveCaller(
     (runtime.auth.mode === "auth0" && !session.accessToken)
   )
     return Result.succeed(null);
-  const principals = await runtime.ultraEasy.listPrincipals(runtime.organizationId);
+  const ultraEasy = runtime.ultraEasyForPrincipal(session.principalId, session.accessToken ?? "");
+  const principals = await ultraEasy.listPrincipals(runtime.organizationId);
   if (Result.isFailure(principals)) {
     return Result.fail(
       new KnowledgeServiceError("platform_unavailable", "ultra-easy is unavailable"),
@@ -78,7 +79,7 @@ async function resolveCaller(
   const directory = new Map(principals.value.map((principal) => [principal.id, principal]));
   const principal = directory.get(session.principalId);
   if (!principal) return Result.succeed(null);
-  const roles = await runtime.ultraEasy.spaceRoles({
+  const roles = await ultraEasy.spaceRoles({
     organizationId: runtime.organizationId,
     principalId: principal.id,
   });
@@ -95,7 +96,7 @@ async function resolveCaller(
   return Result.succeed({
     principal,
     directory,
-    service: new KnowledgeService(runtime, context, directory),
+    service: new KnowledgeService({ ...runtime, ultraEasy }, context, directory),
   });
 }
 
@@ -453,10 +454,12 @@ async function handleAuth(
       nonce: transaction.nonce,
     });
     if (Result.isFailure(signedIn)) return failed(signedIn.error.code);
-    const registered = await runtime.ultraEasy.ensurePrincipal({
-      organizationId: runtime.organizationId,
-      principal: signedIn.value.principal,
-    });
+    const registered = await runtime
+      .ultraEasyForPrincipal(signedIn.value.principal.id, signedIn.value.accessToken)
+      .ensurePrincipal({
+        organizationId: runtime.organizationId,
+        principal: signedIn.value.principal,
+      });
     if (Result.isFailure(registered)) return failed("platform_unavailable");
     const session = await sealSession(
       {
@@ -498,6 +501,9 @@ export async function handleKnowledgeApi(
 
   const auth = await handleAuth(request, url, runtime);
   if (auth) return auth;
+
+  if (runtime.ultraEasyMode === "remote" && url.pathname.startsWith("/api/mock-ultra-easy/"))
+    return new Response("Not Found", { status: 404 });
 
   // Demo sign-in: choose a fixture principal (local / demo mode only).
   if (url.pathname === "/api/demo/session") {

@@ -169,6 +169,59 @@ export async function proxyGetActionRequest(
   );
 }
 
+/** Public approval task API, bound to the console's authenticated user session. */
+export async function proxyApprovalTask(
+  request: Request,
+  env: ConsoleWebEnv,
+  taskId: string,
+  decision = false,
+): Promise<Response> {
+  if (decision && request.method !== "POST")
+    return problem(405, "method_not_allowed", "Method Not Allowed");
+  if (!decision && request.method !== "GET")
+    return problem(405, "method_not_allowed", "Method Not Allowed");
+  if (decision && !csrfOk(request))
+    return problem(403, "csrf_header_required", "Console header required");
+  const key = request.headers.get("idempotency-key");
+  if (decision && !key) return problem(400, "invalid_idempotency_key", "Idempotency-Key required");
+  const token = await accessToken(request, env);
+  if (!token) return problem(401, "session_required", "Sign in required");
+  const org = await organizationId(env, token);
+  if (org instanceof Response) return org;
+  const path = `/v1/organizations/${encodeURIComponent(org)}/approval-tasks/${encodeURIComponent(taskId)}${decision ? "/decisions" : ""}`;
+  return passthrough(
+    await upstream(env, path, token, {
+      method: request.method,
+      ...(decision
+        ? {
+            body: await request.text(),
+            headers: { "content-type": "application/json", "idempotency-key": key ?? "" },
+          }
+        : {}),
+    }),
+  );
+}
+
+/** GET tasks for a public ActionRequest, used by approval deep links. */
+export async function proxyActionRequestTasks(
+  request: Request,
+  env: ConsoleWebEnv,
+  actionRequestId: string,
+): Promise<Response> {
+  if (request.method !== "GET") return problem(405, "method_not_allowed", "Method Not Allowed");
+  const token = await accessToken(request, env);
+  if (!token) return problem(401, "session_required", "Sign in required");
+  const org = await organizationId(env, token);
+  if (org instanceof Response) return org;
+  return passthrough(
+    await upstream(
+      env,
+      `/v1/organizations/${encodeURIComponent(org)}/action-requests/${encodeURIComponent(actionRequestId)}/tasks?limit=100`,
+      token,
+    ),
+  );
+}
+
 /** Staging password login. Disabled unless STAGING_PASSWORD_LOGIN=true. */
 export async function login(
   request: Request,

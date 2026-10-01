@@ -423,6 +423,56 @@ describe("Auth0 sign-in (#182)", () => {
 });
 
 describe("runtime configuration fails closed (#182)", () => {
+  it("uses the session token for remote directory and role reads (#183)", async () => {
+    const seen: Request[] = [];
+    const created = runtimeWith({
+      ...AUTH0_ENV,
+      ULTRA_EASY_MODE: "remote",
+      KNOWLEDGE_ORGANIZATION_ID: "organization:staging",
+      APPROVAL_UI_BASE_URL: "https://ultra-easy.example",
+      APPROVAL_API: {
+        fetch: async (request) => {
+          seen.push(request);
+          const path = new URL(request.url).pathname;
+          if (request.method === "PUT" && path.endsWith("/me/principal"))
+            return Response.json({ id: "user:auth0|alice", displayName: "Alice Auth0" });
+          if (path.endsWith("/principals"))
+            return Response.json({
+              items: [{ id: "user:auth0|alice", displayName: "Alice Auth0" }],
+            });
+          if (path.endsWith("/me/space-roles")) return Response.json({ items: [] });
+          return new Response(null, { status: 404 });
+        },
+      },
+    });
+    assert(Result.isSuccess(created));
+    runtime = created.value;
+    const signedIn = await completeLogin();
+    expect(signedIn.status).toBe(302);
+    const session = cookies(signedIn).get("ue_knowledge_session") ?? "";
+    const me = await call("/api/me", { cookie: `ue_knowledge_session=${session}` });
+    expect(me.status).toBe(200);
+    expect((await me.json()) as MeView).toMatchObject({
+      principal: { id: "user:auth0|alice" },
+      organizationId: "organization:staging",
+    });
+    expect(seen.map((request) => new URL(request.url).pathname)).toEqual([
+      "/v1/organizations/organization%3Astaging/me/principal",
+      "/v1/organizations/organization%3Astaging/principals",
+      "/v1/organizations/organization%3Astaging/me/space-roles",
+    ]);
+    expect(
+      seen.every((request) => request.headers.get("authorization")?.startsWith("Bearer ")),
+    ).toBe(true);
+    expect(
+      (
+        await call("/api/mock-ultra-easy/approvals/task:one", {
+          cookie: `ue_knowledge_session=${session}`,
+        })
+      ).status,
+    ).toBe(404);
+  });
+
   it.each([
     [{ KNOWLEDGE_AUTH_MODE: undefined }, "KNOWLEDGE_AUTH_MODE"],
     [{ KNOWLEDGE_AUTH_MODE: "oidc" }, "KNOWLEDGE_AUTH_MODE"],

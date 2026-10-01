@@ -56,6 +56,7 @@ function run(overrides: Record<string, unknown> = {}) {
 function client(send: (request: Request) => Promise<Response>) {
   return new RemoteWorkflowClient({
     baseUrl,
+    approvalUiBaseUrl: "https://ultra-easy.example",
     organizationId,
     principalId: "user:alice",
     accessToken: "verified-user-token",
@@ -129,7 +130,7 @@ describe("Knowledge remote workflow client (#216)", () => {
         actionRequestId: "ar:one",
         run: null,
         status: "waiting_approval",
-        approvalUrl: `${baseUrl}/v1/organizations/organization%3Astaging/approval-tasks/task%3Aone`,
+        approvalUrl: "https://ultra-easy.example/approval-tasks/task%3Aone",
       }),
     );
   });
@@ -178,6 +179,29 @@ describe("Knowledge remote workflow client (#216)", () => {
       },
     ]);
     expect(loaded.value?.childActions[0]?.subjectPageId).toBe("page:one");
+  });
+
+  it("links approval tasks to the real console rather than the API", async () => {
+    const remote = client(async () =>
+      Response.json(
+        run({
+          approvals: [
+            {
+              taskId: "task:one",
+              actionRequestId: "ar:child",
+              actionType: "knowledge.page.archive",
+              status: "pending",
+              candidateIds: ["user:alice"],
+              url: "/v1/organizations/organization%3Astaging/approval-tasks/task%3Aone",
+            },
+          ],
+        }),
+      ),
+    );
+    const loaded = await remote.getRun({ organizationId, runId: "run:one" });
+    expect(Result.isSuccess(loaded) && loaded.value?.approvals[0]?.url).toBe(
+      "https://ultra-easy.example/approval-tasks/task%3Aone",
+    );
   });
 
   it("reads missing runs as null and rejects malformed or wrong-tenant projections", async () => {
