@@ -132,6 +132,23 @@ CancelActionRequestInput:
       type: string
       maxLength: 10000
   additionalProperties: false
+CancelActionRequestResult:
+  type: object
+  required:
+  - actionRequestId
+  - status
+  properties:
+    actionRequestId:
+      type: string
+    runId:
+      type: string
+      description: 実行中のComposite Actionを取消した場合のWorkflow Run ID。
+    status:
+      type: string
+      enum:
+      - cancelled
+      - cancel_requested
+  additionalProperties: false
 ApprovalCommandStatus:
   type: string
   description: |-

@@ -11,7 +11,12 @@ import {
 
 type WorkflowMethods = Pick<
   UltraEasyClient,
-  "startAction" | "getRun" | "findRunByActionRequest" | "listRuns" | "submitHumanInput"
+  | "startAction"
+  | "cancelAction"
+  | "getRun"
+  | "findRunByActionRequest"
+  | "listRuns"
+  | "submitHumanInput"
 >;
 
 export type RemoteWorkflowOptions = {
@@ -399,6 +404,41 @@ export class RemoteWorkflowClient implements WorkflowMethods {
     return Result.isSuccess(loaded) && loaded.value && loaded.value.id !== input.runId
       ? Result.fail(error("platform_unavailable"))
       : loaded;
+  }
+
+  async cancelAction(input: {
+    organizationId: string;
+    actionRequestId: string;
+    actor: { id: string; displayName: string };
+  }) {
+    const base = this.scoped(input.organizationId);
+    if (Result.isFailure(base)) return base;
+    if (input.actor.id !== this.options.principalId) return Result.fail(error("forbidden"));
+    if (!string(input.actionRequestId)) return Result.fail(error("invalid_request"));
+    const cancelled = await this.json(
+      `${base.value}/action-requests/${encodeURIComponent(input.actionRequestId)}/cancel`,
+      {
+        method: "POST",
+        body: {},
+        idempotencyKey: input.actionRequestId.slice(0, 255),
+      },
+    );
+    if (Result.isFailure(cancelled)) return cancelled;
+    if (
+      cancelled.value.actionRequestId !== input.actionRequestId ||
+      (cancelled.value.status !== "cancelled" && cancelled.value.status !== "cancel_requested")
+    )
+      return Result.fail(error("platform_unavailable"));
+    const run = await this.findRunByActionRequest({
+      organizationId: input.organizationId,
+      actionRequestId: input.actionRequestId,
+    });
+    if (Result.isFailure(run)) return run;
+    return Result.succeed({
+      actionRequestId: input.actionRequestId,
+      status: run.value?.status ?? cancelled.value.status,
+      run: run.value,
+    });
   }
 
   async findRunByActionRequest(input: { organizationId: string; actionRequestId: string }) {

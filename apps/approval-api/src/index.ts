@@ -33,6 +33,7 @@ import {
 } from "@app/approval-d1";
 import {
   ActionWorkflow,
+  CloudflareWorkflowCancellationControl,
   createSlackNotificationSink,
   evaluateRecentOrganizationAlerts,
   handleNotificationQueueBatch,
@@ -84,10 +85,13 @@ import {
 } from "./workflow-studio.ts";
 import {
   createPublicHumanInputApi,
+  createPublicActionCancellationApi,
   createPublicWorkflowRunApi,
+  PUBLIC_ACTION_CANCELLATION_ROUTES,
   PUBLIC_HUMAN_INPUT_ROUTES,
   PUBLIC_WORKFLOW_RUN_ROUTES,
 } from "@app/workflow-platform";
+import { WORKFLOW_EXECUTOR_KEY } from "@app/workflow-application";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 export class WorkflowRunner extends WorkflowEntrypoint<ApprovalApiEnv, WorkflowRunnerParams> {
@@ -249,6 +253,55 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
     clock: { now: () => new Date().toISOString() },
     onAnswerAccepted: (key) => new CloudflareWorkflowRunnerControl(env.WORKFLOW_RUNNER).resume(key),
   });
+  const cancellationPlatform = productionWorkflowPlatform(env, organizationId);
+  const pendingCancellation = new CloudflareWorkflowCancellationControl(
+    env.DB,
+    env.ACTION_WORKFLOW,
+    telemetry,
+  );
+  const publicActionCancellation = createPublicActionCancellationApi({
+    readRepository,
+    identityProvider: identity,
+    idempotencyRepository: readRepository,
+    clock: { now: () => new Date().toISOString() },
+    control: {
+      cancelPending: (key) =>
+        pendingCancellation.cancel({
+          organizationId: key.organizationId,
+          actionRequestId: key.actionRequestId,
+          cancelledAt: key.now,
+        }),
+      async cancelRunning(key) {
+        const execution = await cancellationPlatform.repositories.asyncExecutions.load(key);
+        if (Result.isFailure(execution)) return Result.fail(execution.error);
+        if (!execution.value)
+          return Result.fail({ code: "workflow_run_not_ready", retriable: true });
+        if (String(execution.value.executorKey) !== String(WORKFLOW_EXECUTOR_KEY))
+          return Result.fail({ code: "non_workflow_action", retriable: false });
+        const loaded = await cancellationPlatform.repositories.runs.findByParentAction(key);
+        if (Result.isFailure(loaded)) return Result.fail(loaded.error);
+        if (!loaded.value) return Result.fail({ code: "workflow_run_not_ready", retriable: true });
+        if (loaded.value.state.status !== "running" && loaded.value.state.status !== "waiting")
+          return Result.fail({ code: "already_settled", retriable: false });
+        const requested = await cancellationPlatform.completion.requestCancel({
+          organizationId: key.organizationId,
+          actionRequestId: key.actionRequestId,
+          reason: key.reason,
+          requestedAt: key.now,
+        });
+        if (Result.isFailure(requested)) return Result.fail(requested.error);
+        if (requested.value.type !== "cancel_requested")
+          return Result.fail({ code: "already_settled", retriable: false });
+        const cancelled = await cancellationPlatform.runtime.cancel({
+          organizationId: key.organizationId,
+          runId: loaded.value.state.runId,
+          reason: key.reason,
+        });
+        if (Result.isFailure(cancelled)) return Result.fail(cancelled.error);
+        return Result.succeed({ runId: String(loaded.value.state.runId) });
+      },
+    },
+  });
   const publicPrincipalDirectory = createPublicPrincipalDirectoryApi({
     repository: new D1PrincipalDirectoryRepository(env.DB),
     identityProvider: identity,
@@ -354,6 +407,7 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
         });
       }
       if (workflowStudio.handles(request)) return workflowStudio.fetch(request);
+      if (publicActionCancellation.handles(request)) return publicActionCancellation.fetch(request);
       if (publicWorkflowRuns.handles(request)) return publicWorkflowRuns.fetch(request);
       if (publicHumanInputs.handles(request)) return publicHumanInputs.fetch(request);
       if (publicPrincipalDirectory.handles(request)) return publicPrincipalDirectory.fetch(request);
@@ -388,6 +442,7 @@ const APPROVAL_API_ROUTES = [
   ...PUBLIC_HTTP_ROUTES,
   ...PUBLIC_WORKFLOW_RUN_ROUTES,
   ...PUBLIC_HUMAN_INPUT_ROUTES,
+  ...PUBLIC_ACTION_CANCELLATION_ROUTES,
   ...PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
   ...PUBLIC_APPLICATION_RELATIONSHIP_ROUTES,
   ...PUBLIC_APPLICATION_APPROVAL_POLICY_ROUTES,

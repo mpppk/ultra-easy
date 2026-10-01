@@ -1375,7 +1375,11 @@ export class MockUltraEasy implements UltraEasyClient {
         `by ${input.actor.id}`,
       );
       await this.saveRun(run);
-      return Result.succeed(await this.view(run));
+      return Result.succeed({
+        actionRequestId: input.actionRequestId,
+        status: "cancelled" as const,
+        run: await this.view(run),
+      });
     });
   }
 

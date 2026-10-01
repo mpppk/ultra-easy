@@ -29,6 +29,7 @@ export type WorkflowInstanceStatus =
   | "complete"
   | "waiting"
   | "waitingForPause"
+  | "rollingBack"
   | "unknown";
 
 export interface WorkflowInstanceControl {
