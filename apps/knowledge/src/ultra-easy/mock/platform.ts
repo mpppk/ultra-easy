@@ -527,9 +527,12 @@ export class MockUltraEasy implements UltraEasyClient {
           existing.id,
         );
         if (!run) return Result.fail(new UltraEasyError("invalid_state", "request has no run"));
+        const view = await this.view(this.toRecord(run));
         return Result.succeed({
           actionRequestId: existing.id,
-          run: await this.view(this.toRecord(run)),
+          run: view,
+          status: view.status,
+          approvalUrl: view.approvals.find((task) => task.status === "pending")?.url ?? null,
         });
       }
       const allowed = await this.authorized(
@@ -606,7 +609,13 @@ export class MockUltraEasy implements UltraEasyClient {
         input.actor.id,
       );
       await this.advance(run);
-      return Result.succeed({ actionRequestId, run: await this.view(run) });
+      const view = await this.view(run);
+      return Result.succeed({
+        actionRequestId,
+        run: view,
+        status: view.status,
+        approvalUrl: view.approvals.find((task) => task.status === "pending")?.url ?? null,
+      });
     });
   }
 

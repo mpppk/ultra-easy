@@ -1081,7 +1081,7 @@ export class KnowledgeService {
       this.repos.revisions.attachRequest({
         publicationSnapshotId: snapshot.id,
         actionRequestId: started.value.actionRequestId,
-        workflowRunId: started.value.run.id,
+        workflowRunId: started.value.run?.id ?? null,
         createdAt: now,
       }),
     );
@@ -1089,7 +1089,7 @@ export class KnowledgeService {
     return Result.succeed({
       snapshotId: snapshot.id,
       revisionNumber: snapshot.revisionNumber,
-      runStatus: started.value.run.status,
+      runStatus: started.value.status,
     });
   }
 
@@ -1171,7 +1171,7 @@ export class KnowledgeService {
       }),
     );
     if (Result.isFailure(started)) return started;
-    return Result.succeed({ status: started.value.run.status });
+    return Result.succeed({ status: started.value.status });
   }
 
   async archive(
@@ -1195,9 +1195,8 @@ export class KnowledgeService {
     );
     if (Result.isFailure(started)) return started;
     return Result.succeed({
-      status: started.value.run.status,
-      approvalUrl:
-        started.value.run.approvals.find((task) => task.status === "pending")?.url ?? null,
+      status: started.value.status,
+      approvalUrl: started.value.approvalUrl,
     });
   }
 
@@ -1645,7 +1644,7 @@ export class KnowledgeService {
   }
 
   /** Manual trigger of `knowledge.maintain_space` (the weekly Cron Trigger shares the start path, #184). */
-  async runMaintenance(spaceKey: string): ServiceResult<{ runId: string; status: string }> {
+  async runMaintenance(spaceKey: string): ServiceResult<{ runId: string | null; status: string }> {
     const loaded = await this.loadSpace(spaceKey);
     if (Result.isFailure(loaded)) return loaded;
     const { space } = loaded.value;

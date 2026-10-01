@@ -11,8 +11,7 @@ import type { SpaceRole } from "@app/knowledge-core";
  * projections, Human Input and governed policy updates.
  *
  * `MockUltraEasy` (./mock) remains the runtime implementation until #183 is
- * complete. The request-scoped principal and relationship HTTP adapter lives
- * in ./remote/authorization.ts; run and policy adapters are subsequent slices.
+ * complete. Request-scoped HTTP adapters live in ./remote/.
  */
 
 export type PrincipalRef = { id: string; displayName: string };
@@ -154,7 +153,10 @@ export type WorkflowRunView = {
 
 export type StartActionResult = {
   actionRequestId: string;
-  run: WorkflowRunView;
+  /** Primitive actions and ActionRequests awaiting approval have no run. */
+  run: WorkflowRunView | null;
+  status: RunStatus;
+  approvalUrl: string | null;
 };
 
 /** Approval rule presets Knowledge compiles into an ultra-easy policy binding. */
