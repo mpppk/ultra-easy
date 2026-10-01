@@ -159,6 +159,12 @@ export type StartActionResult = {
   approvalUrl: string | null;
 };
 
+export type CancelActionResult = {
+  actionRequestId: string;
+  status: RunStatus | "cancel_requested";
+  run: WorkflowRunView | null;
+};
+
 /** Approval rule presets Knowledge compiles into an ultra-easy policy binding. */
 export type ApprovalApprover = "space_owners" | "page_owner";
 
@@ -212,7 +218,7 @@ export interface UltraEasyClient {
     organizationId: string;
     actionRequestId: string;
     actor: PrincipalRef;
-  }): Result.ResultAsync<WorkflowRunView, UltraEasyError>;
+  }): Result.ResultAsync<CancelActionResult, UltraEasyError>;
   getRun(input: {
     organizationId: string;
     runId: string;

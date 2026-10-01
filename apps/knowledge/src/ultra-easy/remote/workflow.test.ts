@@ -250,6 +250,34 @@ describe("Knowledge remote workflow client (#216)", () => {
     expect(seen[1]?.method).toBe("GET");
   });
 
+  it("cancels as the bound actor and handles a pending request without a run", async () => {
+    const seen: Request[] = [];
+    const remote = client(async (request) => {
+      seen.push(request);
+      return request.method === "POST"
+        ? Response.json({ actionRequestId: "ar:one", status: "cancelled" }, { status: 202 })
+        : Response.json({ code: "workflow_run_not_found" }, { status: 404 });
+    });
+    const cancelled = await remote.cancelAction({
+      organizationId,
+      actionRequestId: "ar:one",
+      actor: { id: "user:alice", displayName: "Alice" },
+    });
+    expect(cancelled).toEqual(
+      Result.succeed({ actionRequestId: "ar:one", status: "cancelled", run: null }),
+    );
+    expect(seen[0]?.headers.get("authorization")).toBe("Bearer verified-user-token");
+    expect(seen[0]?.headers.get("idempotency-key")).toBe("ar:one");
+    expect(seen[1]?.url).toContain("/action-requests/ar%3Aone/workflow-run");
+    const denied = await remote.cancelAction({
+      organizationId,
+      actionRequestId: "ar:one",
+      actor: { id: "user:bob", displayName: "Bob" },
+    });
+    expect(Result.isFailure(denied) && denied.error.code).toBe("forbidden");
+    expect(seen).toHaveLength(2);
+  });
+
   it("refuses foreign actors and tenants before sending a request", async () => {
     const seen: Request[] = [];
     const remote = client(async (request) => {

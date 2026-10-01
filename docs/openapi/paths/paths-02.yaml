@@ -25,7 +25,8 @@
     tags:
     - ActionRequests
     operationId: cancelActionRequest
-    summary: pending の ActionRequest の取消を要求する
+    summary: 承認待ち、または実行中のComposite ActionRequestの取消を要求する
+    description: 元のActionRequestのactorのみ実行できる。終端済み、primitiveの実行中は409。承認済みから実行中への遷移中は503を返し、同じIdempotency-Keyで再試行できる。
     parameters:
     - $ref: ../components/common.yaml#/parameters/OrganizationId
     - $ref: ../components/common.yaml#/parameters/ActionRequestId
@@ -38,11 +39,11 @@
             $ref: ../components/schemas-02.yaml#/CancelActionRequestInput
     responses:
       '202':
-        description: Cancel command を受理した。
+        description: 取消を受理した。実行中のComposite ActionはActionRequestの終端反映までcancel_requestedとなる。
         content:
           application/json:
             schema:
-              $ref: ../components/schemas-02.yaml#/ApprovalCommand
+              $ref: ../components/schemas-02.yaml#/CancelActionRequestResult
       '401':
         $ref: ../components/common.yaml#/responses/Unauthorized
       '403':
@@ -51,6 +52,8 @@
         $ref: ../components/common.yaml#/responses/NotFound
       '409':
         $ref: ../components/common.yaml#/responses/Conflict
+      '503':
+        $ref: ../components/common.yaml#/responses/ServiceUnavailable
 /v1/organizations/{organizationId}/action-requests/{actionRequestId}/tasks:
   get:
     tags:
