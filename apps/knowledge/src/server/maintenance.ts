@@ -10,7 +10,7 @@ import {
 } from "../ultra-easy/client.ts";
 import type { KnowledgeRuntime } from "./runtime.ts";
 
-export type MaintenanceStart = { runId: string; status: string; started: boolean };
+export type MaintenanceStart = { runId: string | null; status: string; started: boolean };
 
 /**
  * Starts `knowledge.maintain_space` for one space unless a run is already
@@ -50,8 +50,8 @@ export async function startSpaceMaintenance(input: {
   });
   if (Result.isFailure(started)) return started;
   return Result.succeed({
-    runId: started.value.run.id,
-    status: started.value.run.status,
+    runId: started.value.run?.id ?? null,
+    status: started.value.status,
     started: true,
   });
 }
@@ -121,7 +121,7 @@ export async function runScheduledMaintenance(
             spaceId: space.id,
             spaceKey: space.key,
             outcome: started.value.started ? "started" : "skipped_active",
-            runId: started.value.runId,
+            ...(started.value.runId ? { runId: started.value.runId } : {}),
           },
     );
   }

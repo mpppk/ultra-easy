@@ -85,8 +85,17 @@ The first remote slice (#213) is `src/ultra-easy/remote/authorization.ts`: const
 per verified user session with that session's API access token and principal ID.
 Pass a Knowledge M2M agent token provider for the governed initial space owner grant.
 It reads every cursor page and requires confirmed FGA effect for a grant. Runtime
-`ULTRA_EASY_MODE=remote` remains gated until the run, Human Input and policy methods
-are implemented.
+`ULTRA_EASY_MODE=remote` remains gated until the remaining policy and cancellation
+methods are implemented (#183, #217).
+
+The second remote slice (#216) is `src/ultra-easy/remote/workflow.ts`. Construct it
+per verified user or agent token with the matching principal ID. It submits
+Catalog actions against `knowledge_space`, reads run projections, and answers
+Human Input as the bound user. A primitive ActionRequest or one awaiting approval
+can have no run; `startAction` returns `run: null` with the ActionRequest status,
+and Knowledge stores the ActionRequest ID for later lookup. Run list filters can
+include at most 100 spaces per request; the adapter chunks larger space sets and
+returns up to 100 recent visible runs. The public run list has no cursor yet.
 
 ## MCP endpoint
 
