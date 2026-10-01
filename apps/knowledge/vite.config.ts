@@ -28,6 +28,7 @@ export default defineConfig(({ command }) => ({
                     vars: {
                       ...worker.vars,
                       KNOWLEDGE_AUTH_MODE: process.env.KNOWLEDGE_AUTH_MODE ?? "demo",
+                      ULTRA_EASY_MODE: process.env.ULTRA_EASY_MODE ?? "mock",
                     },
                   }),
                 }
