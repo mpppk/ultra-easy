@@ -333,6 +333,9 @@ export class RemoteWorkflowClient implements WorkflowMethods {
       input.resource.id !== input.correlation.pageId
     )
       return Result.fail(error("invalid_request"));
+    const composite =
+      input.actionType === "knowledge.publish_document" ||
+      input.actionType === "knowledge.maintain_space";
     const submitted = await this.json(`${base.value}/action-requests`, {
       method: "POST",
       idempotencyKey: input.idempotencyKey,
@@ -341,7 +344,7 @@ export class RemoteWorkflowClient implements WorkflowMethods {
           type: input.actionType,
           // Catalog authorization is scoped to the Knowledge space.
           resource: { type: "knowledge_space", id: input.correlation.spaceId },
-          input: { ...input.input, spaceId: input.correlation.spaceId },
+          input: composite ? { ...input.input, spaceId: input.correlation.spaceId } : input.input,
         },
         correlation: input.correlation,
       },
@@ -357,9 +360,6 @@ export class RemoteWorkflowClient implements WorkflowMethods {
     const status = actionStatus(submitted.value.status);
     if (!status) return Result.fail(error("platform_unavailable"));
     const actionRequestId = submitted.value.id;
-    const composite =
-      input.actionType === "knowledge.publish_document" ||
-      input.actionType === "knowledge.maintain_space";
     const run = composite
       ? await this.findRunByActionRequest({ organizationId: input.organizationId, actionRequestId })
       : Result.succeed(null);

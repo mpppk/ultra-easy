@@ -136,14 +136,16 @@ describe("Knowledge remote workflow client (#216)", () => {
 
   it("accepts a primitive action without inventing a workflow run", async () => {
     const paths: string[] = [];
+    let body: unknown;
     const remote = client(async (request) => {
       paths.push(new URL(request.url).pathname);
+      body = await request.json();
       return Response.json(
         { id: "ar:one", organizationId, actor: { id: "user:alice" }, status: "executed" },
         { status: 201 },
       );
     });
-    const started = await remote.startAction(action("knowledge.page.archive"));
+    const started = await remote.startAction(action("knowledge.search.reindex"));
     expect(started).toEqual(
       Result.succeed({
         actionRequestId: "ar:one",
@@ -153,6 +155,10 @@ describe("Knowledge remote workflow client (#216)", () => {
       }),
     );
     expect(paths).toHaveLength(1);
+    expect(body).toMatchObject({ action: { input: { publicationSnapshotId: "pub:one" } } });
+    expect(
+      (body as { action: { input: Record<string, unknown> } }).action.input,
+    ).not.toHaveProperty("spaceId");
   });
 
   it("maps public runs and drops redacted or foreign Human Inputs", async () => {
