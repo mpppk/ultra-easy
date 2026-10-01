@@ -11,9 +11,10 @@ apps/knowledge/           TanStack Start + Cloudflare Worker (UI, HTTP API, /mcp
   src/server/             KnowledgeService (authorized projections), API router, session, seed
   src/mcp/                Streamable HTTP MCP endpoint + primitive Knowledge Actions
   src/ultra-easy/         the ONLY integration point with ultra-easy (client.ts)
-    mock/                 in-app stand-in for ultra-easy (see "ultra-easy mock" below)
+    remote/               public API client used by the deployed Worker
+    mock/                 local demo stand-in (see "ultra-easy mock" below)
   ultra-easy-mock/        D1 migrations of the mock platform (separate database)
-  e2e/                    Playwright scenario
+  e2e/                    local demo and live staging Playwright scenarios
 packages/knowledge-core/  domain: capabilities, projections, snapshot validation, lifecycle CAS
 packages/knowledge-d1/    D1 migrations (incl. FTS5) + repositories
 ```
@@ -66,8 +67,13 @@ with `curl "http://localhost:3001/cdn-cgi/handler/scheduled?cron=0+0+*+*+1"` whi
 ## ultra-easy integration and the mock
 
 `src/ultra-easy/client.ts` is the public surface Knowledge needs: authorization relationships, ActionRequests /
-Composite Actions, run projections, Human Input and governed policy bindings. The Workflow Engine public API is
-still being built (#154–#165), so `ULTRA_EASY_MODE=mock` uses `src/ultra-easy/mock`:
+Composite Actions, run projections, Human Input and governed policy bindings. The deployed Worker uses
+`ULTRA_EASY_MODE=remote` and calls the public approval API through its `APPROVAL_API` Service Binding.
+Request-scoped user tokens and the Knowledge agent token keep the actor identity at this boundary.
+Approval links open the web Worker's real ActionRequest and task pages. The mock API and page paths
+return 404 in remote mode.
+
+Local demo mode uses `src/ultra-easy/mock`:
 
 - keeps its own D1 database (`ULTRA_EASY_MOCK_DB`) — no workflow state is stored in Knowledge tables;
 - runs `knowledge.publish_document` (analysis → child `knowledge.revision.publish` with Authorization →
@@ -80,15 +86,12 @@ still being built (#154–#165), so `ULTRA_EASY_MODE=mock` uses `src/ultra-easy/
 - uses a deterministic LLM stand-in whose output is only a suggestion (never skips approval);
 - serves a minimal Approval UI at `/mock/ultra-easy/approvals/:taskId`, outside the Knowledge shell.
 
-Replacing the mock with a Service Binding / HTTP client only means implementing `UltraEasyClient`.
-The first remote slice (#213) is `src/ultra-easy/remote/authorization.ts`: construct it
+The authorization adapter (#213) is `src/ultra-easy/remote/authorization.ts`: construct it
 per verified user session with that session's API access token and principal ID.
 Pass a Knowledge M2M agent token provider for the governed initial space owner grant.
-It reads every cursor page and requires confirmed FGA effect for a grant. Runtime
-`ULTRA_EASY_MODE=remote` remains gated until the remaining policy methods and
-request-scoped runtime wiring are implemented (#183).
+It reads every cursor page and requires confirmed FGA effect for a grant.
 
-The second remote slice (#216) is `src/ultra-easy/remote/workflow.ts`. Construct it
+The workflow adapter (#216) is `src/ultra-easy/remote/workflow.ts`. Construct it
 per verified user or agent token with the matching principal ID. It submits
 Catalog actions against `knowledge_space`, reads run projections, and answers
 Human Input as the bound user. A primitive ActionRequest or one awaiting approval
@@ -97,6 +100,9 @@ and Knowledge stores the ActionRequest ID for later lookup. Run list filters can
 include at most 100 spaces per request; the adapter chunks larger space sets and
 returns up to 100 recent visible runs. The public run list has no cursor yet.
 Cancellation (#217) uses the same client and accepts the original actor's token.
+`src/ultra-easy/remote/policy.ts` reads the application policy binding and submits
+governed policy changes as ActionRequests (#199). A second owner or organization
+admin must approve a change; self-approval is denied.
 
 ## MCP endpoint
 
@@ -159,6 +165,11 @@ with public signup disabled. To try Auth0 locally, put the secrets in `apps/know
 
 Tests: `vp -C apps/knowledge test` (API scenario + UI foundation), `vp -C apps/knowledge run test:e2e`
 (Playwright on a fresh local D1; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to reuse an installed Chromium).
+The live remote acceptance scenario is `bun --env-file=../../.env.codex.local run test:e2e:remote`
+from `apps/knowledge`. It uses the staging Auth0 users and Knowledge agent credentials from the
+gitignored local secret file, creates a new staging Space, and checks a governed policy change and
+publication through the public API and Approval UI. It is separate from CI because PR jobs do not
+receive the staging credentials.
 
 ## Configuration
 
@@ -170,15 +181,16 @@ Tests: `vp -C apps/knowledge test` (API scenario + UI foundation), `vp -C apps/k
 | `AUTH0_API_AUDIENCE`                                              | approval API audience (`https://ultra-easy/approval-api`).                      |
 | `AUTH0_AGENT_CLIENT_ID` / `AUTH0_AGENT_CLIENT_SECRET`             | Knowledge M2M Application credentials for weekly maintenance (secrets).         |
 | `AUTH0_ORGANIZATION_CLAIM_VALUE` / `AUTH0_TENANT_IS_ORGANIZATION` | organization membership check (one is required in `auth0` mode).                |
-| `ULTRA_EASY_MODE`                                                 | `mock` (only implementation today).                                             |
-| `KNOWLEDGE_ORGANIZATION_ID`                                       | organization of the workspace (`org_acme`).                                     |
+| `ULTRA_EASY_MODE`                                                 | `remote` when deployed; `mock` in the local demo.                               |
+| `APPROVAL_API` / `APPROVAL_UI_BASE_URL`                           | Service Binding and Approval UI origin in remote mode.                          |
+| `KNOWLEDGE_ORGANIZATION_ID`                                       | organization of the workspace (`organization:staging` when deployed).           |
 | `SESSION_SECRET` (32+ chars) / `KNOWLEDGE_MCP_TOKEN`              | secrets; required in `auth0` mode (demo falls back to well-known local values). |
 
 ## Deployment
 
 Deployed at <https://ultra-easy-knowledge.niboshi.workers.dev> (Worker `ultra-easy-knowledge`, first deployed for
-#185). It always runs `KNOWLEDGE_AUTH_MODE=auth0`; until the Auth0 client secrets exist every endpoint answers
-`503 misconfigured` (fail closed), and the demo endpoints never exist there.
+#185). It runs `KNOWLEDGE_AUTH_MODE=auth0` and `ULTRA_EASY_MODE=remote`; demo and mock API endpoints
+are unavailable there.
 
 - First deploy (done once): `vp -C apps/knowledge run bootstrap` auto-provisions `KNOWLEDGE_DB` /
   `ULTRA_EASY_MOCK_DB` on `wrangler deploy`, then applies both migration sets.
@@ -198,4 +210,5 @@ Deployed at <https://ultra-easy-knowledge.niboshi.workers.dev> (Worker `ultra-ea
 
 ## Not in this MVP
 
-The real ultra-easy public API / Service Binding, rich-text / collaborative editing, semantic search.
+Rich-text / collaborative editing and semantic search. The Workflow scheduler (#200) and real
+LLM analysis (#201) are separate follow-ups.

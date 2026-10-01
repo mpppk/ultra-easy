@@ -9,7 +9,7 @@ const port = Number(process.env.KNOWLEDGE_E2E_PORT ?? 3101);
  */
 export default defineConfig({
   testDir: ".",
-  testMatch: "*.e2e.ts",
+  testMatch: "knowledge.e2e.ts",
   workers: 1,
   timeout: 60_000,
   use: {
