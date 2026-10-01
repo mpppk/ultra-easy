@@ -24,10 +24,9 @@
     // Single-organization staging tenant with public signup disabled (same as
     // approval-api). With Auth0 Organizations use AUTH0_ORGANIZATION_CLAIM_VALUE.
     "AUTH0_TENANT_IS_ORGANIZATION": "true",
-    // "mock": the in-app stand-in for the ultra-easy public API (Workflow Engine
-    // is still being built, #154-#165). Replace with a Service Binding later.
-    "ULTRA_EASY_MODE": "mock",
-    "KNOWLEDGE_ORGANIZATION_ID": "org_acme",
+    // Public ultra-easy API through the APPROVAL_API service binding (#183).
+    "ULTRA_EASY_MODE": "remote",
+    "KNOWLEDGE_ORGANIZATION_ID": "organization:staging",
     "APPROVAL_UI_BASE_URL": "https://ultra-easy.niboshi.workers.dev",
   },
   "services": [
