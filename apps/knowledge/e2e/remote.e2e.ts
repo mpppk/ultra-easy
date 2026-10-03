@@ -244,13 +244,21 @@ test("remote Knowledge runs governed policy and publication through public APIs"
       item.kind === "publish_document" && item.space.key === key && item.page?.id === pageId,
   );
   expect(publicationRun).toBeDefined();
-  const detail = await knowledgeJson(
-    alice,
-    "GET",
-    `/api/automation/${encodeURIComponent(publicationRun?.runId ?? "")}`,
-  );
-  expect(detail.status).toBe(200);
-  expect(detail.body).toMatchObject({ runId: publicationRun?.runId, status: "succeeded" });
+  await expect
+    .poll(
+      async () => {
+        const detail = await knowledgeJson(
+          alice,
+          "GET",
+          `/api/automation/${encodeURIComponent(publicationRun?.runId ?? "")}`,
+        );
+        expect(detail.status).toBe(200);
+        expect(detail.body).toMatchObject({ runId: publicationRun?.runId });
+        return (detail.body as { status: string }).status;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe("succeeded");
   await alice.close();
   await bob.close();
   await approver.close();
