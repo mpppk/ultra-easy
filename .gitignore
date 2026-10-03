@@ -16,3 +16,4 @@ todos.json
 tests/staging/.last-*.json
 test-results
 playwright-report
+.vitest/
