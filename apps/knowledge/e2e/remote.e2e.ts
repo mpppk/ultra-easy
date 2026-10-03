@@ -120,6 +120,12 @@ test("remote Knowledge runs governed policy and publication through public APIs"
   const secondOwner = await signIn(bobPage, "BOB");
   expect(owner.id).not.toBe(secondOwner.id);
   await approvalSignIn(approver);
+  const oldPage = await alice.request.get(`${KNOWLEDGE}/mock/ultra-easy/approvals/task%3Asample`);
+  const oldApi = await alice.request.get(
+    `${KNOWLEDGE}/api/mock-ultra-easy/approvals/task%3Asample`,
+  );
+  expect(oldPage.status()).toBe(404);
+  expect(oldApi.status()).toBe(404);
 
   const key = `remote-e2e-${Date.now()}`;
   const created = await knowledgeJson(alice, "POST", "/api/spaces", {
