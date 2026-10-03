@@ -1,5 +1,5 @@
 /**
- * Deterministic stand-in for the ultra-easy LLM Effect / LLM Gateway.
+ * Deterministic local demo fixtures. Remote mode uses the governed LLM Gateway.
  *
  * Output is an *untrusted suggestion*: it never decides authorization, never
  * skips a mandatory approval and never archives on its own (archive always goes

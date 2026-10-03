@@ -68,6 +68,13 @@ Request-scoped user tokens and the Knowledge agent token keep the actor identity
 Approval links open the web Worker's real ActionRequest and task pages. The mock API and page paths
 return 404 in remote mode.
 
+Remote publication uses `knowledge.publish_document` v3: a governed Workers AI LLM node suggests
+metadata from the pinned revision before publication. The suggestion is stored in the Workflow Run
+output; visibility, sensitivity, and approval still come from the trusted snapshot. Remote maintenance
+uses `knowledge.maintain_space` v2: a governed LLM node analyzes each published page, and its reason is
+shown to the page owner in Human Input before a review or archive decision. Provider failure stops the
+affected run; the organization has a durable daily LLM call limit.
+
 Local demo mode uses `src/ultra-easy/mock`:
 
 - keeps its own D1 database (`ULTRA_EASY_MOCK_DB`) — no workflow state is stored in Knowledge tables;
@@ -78,7 +85,7 @@ Local demo mode uses `src/ultra-easy/mock`:
   `dev.ultra-easy/idempotencyKey`), exactly like the MCP Gateway's downstream executor;
 - evaluates the seeded approval policy (confidential or organization-wide publication → space owners;
   archive requested by someone other than the page owner → page owner). Self-approval is not allowed;
-- uses a deterministic LLM stand-in whose output is only a suggestion (never skips approval);
+- uses deterministic local analysis fixtures whose output is only a suggestion (never skips approval);
 - serves a minimal Approval UI at `/mock/ultra-easy/approvals/:taskId`, outside the Knowledge shell.
 
 The authorization adapter (#213) is `src/ultra-easy/remote/authorization.ts`: construct it
@@ -206,4 +213,4 @@ are unavailable there.
 
 ## Not in this MVP
 
-Rich-text / collaborative editing and semantic search. Real LLM analysis (#201) is a separate follow-up.
+Rich-text / collaborative editing and semantic search.

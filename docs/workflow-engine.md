@@ -345,6 +345,9 @@ function main(input, context) {
 - NodeRunごとのbudget（calls / input・output tokens / cost）を `workflow_llm_usage` ledgerで強制し、
   超過は `budget_exhausted` としてdurableに記録する（promptは保存しない）。ledgerは
   `(organization, run, effect)` で冪等で、再配送時はproviderを呼び直さず記録済みの結果を返す。
+- 本番のKnowledge LLM nodeはWorkers AI `@cf/qwen/qwen2.5-coder-32b-instruct` を許可モデルとして固定し、
+  組織ごとにUTC日次の呼び出し上限（`WORKFLOW_LLM_TENANT_DAILY_CALLS`）をD1で原子的に強制する。
+  上限超過は `quota_exceeded` で停止し、同じeffectの再試行は追加計上しない。
 - toolの要求はdata（`toolRequests`）として返すだけで、Gatewayはexecutorを持たない。
   実行は必ずAction / Program作用 → ActionRequestで行う。
 

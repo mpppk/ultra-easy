@@ -13,6 +13,7 @@ import type {
 } from "../ports.ts";
 import type { ProgramCodeGenerator } from "../program.ts";
 import type { CapabilityBroker } from "./capability.ts";
+import type { QuotaLedger } from "./resources.ts";
 
 /**
  * LLM provider（Workers AI / 外部API等）。API key / bindingはhost側のproviderだけが持ち、
@@ -172,6 +173,7 @@ export class LlmGatewayHandler implements EffectHandler {
       provider: LlmProvider;
       ledger: LlmUsageLedger;
       broker: CapabilityBroker;
+      tenantQuota?: { ledger: QuotaLedger; maxCallsPerUtcDay: number };
       pricing?: LlmPricing;
       clock: { now(): string };
     },
@@ -287,6 +289,34 @@ export class LlmGatewayHandler implements EffectHandler {
             `LLM budget（${exceeded}）を超えます`,
           ),
         );
+      }
+      if (this.deps.tenantQuota) {
+        const reserved = await this.deps.tenantQuota.ledger.increment({
+          scopeKey: `tenant:${String(organizationId)}:llm:calls:${context.effect.requestedAt.slice(0, 10)}`,
+          idempotencyKey: `${String(context.run.state.runId)}:${String(context.effect.id)}`,
+          amount: 1,
+          limit: this.deps.tenantQuota.maxCallsPerUtcDay,
+          now: this.deps.clock.now(),
+        });
+        if (Result.isFailure(reserved)) {
+          return Result.fail(
+            new EffectHandlerError(
+              reserved.error.code,
+              reserved.error.retriable,
+              reserved.error.message,
+            ),
+          );
+        }
+        if (reserved.value.type === "exhausted") {
+          return Result.succeed(
+            await this.deny(
+              context,
+              request.model,
+              "quota_exceeded",
+              "組織のLLM日次呼び出し上限に達しました",
+            ),
+          );
+        }
       }
       const reserved = await this.deps.ledger.record({
         organizationId,

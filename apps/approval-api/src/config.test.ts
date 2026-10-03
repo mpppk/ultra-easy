@@ -29,6 +29,7 @@ const validEnv = {
   OPENFGA_AUTHORIZATION_MODEL_ID: "model",
   FGA_CLIENT_ID: "client",
   FGA_CLIENT_SECRET: "super-secret-value",
+  WORKFLOW_LLM_TENANT_DAILY_CALLS: "200",
 };
 
 describe("#84 validateApprovalApiConfig", () => {
@@ -69,6 +70,17 @@ describe("#84 validateApprovalApiConfig", () => {
     });
     assert(Result.isFailure(result));
     expect(result.error.keys).toContain("AUTH0_*_CLIENT_ID (must be distinct)");
+  });
+
+  it("LLMの日次利用枠は正の整数だけを許可する", () => {
+    for (const value of ["0", "-1", "1.5", "NaN", "9007199254740992"]) {
+      const result = validateApprovalApiConfig({
+        ...validEnv,
+        WORKFLOW_LLM_TENANT_DAILY_CALLS: value,
+      });
+      assert(Result.isFailure(result));
+      expect(result.error.keys).toContain("WORKFLOW_LLM_TENANT_DAILY_CALLS");
+    }
   });
 });
 

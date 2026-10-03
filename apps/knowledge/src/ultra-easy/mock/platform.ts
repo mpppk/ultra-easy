@@ -23,7 +23,7 @@ import {
   type WorkflowRunView,
 } from "../client.ts";
 import type { DownstreamOutcome, McpDownstream } from "./downstream.ts";
-import { analyzeMetadata, assessFreshness, type FreshnessVerdict } from "./llm.ts";
+import { analyzeMetadata, assessFreshness, type FreshnessVerdict } from "./analysis-fixtures.ts";
 import { DEFAULT_KNOWLEDGE_POLICY, matchRule } from "./policy.ts";
 
 /**

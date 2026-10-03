@@ -28,6 +28,7 @@
         "@app/expression-core": "workspace:*",
         "@app/workflow-application": "workspace:*",
         "@app/workflow-core": "workspace:*",
+        "@app/workflow-d1": "workspace:*",
         "@app/workflow-platform": "workspace:*",
         "@app/workflow-runtime-cloudflare": "workspace:*",
         "@app/workflow-sandbox": "workspace:*",
@@ -36,7 +37,6 @@
         "jose": "^6.1.0",
       },
       "devDependencies": {
-        "@app/workflow-d1": "workspace:*",
         "@cloudflare/workers-types": "^5.20260911.1",
         "wrangler": "^4.70.0",
       },
@@ -273,6 +273,7 @@
       "name": "@app/workflow-d1",
       "version": "0.0.0",
       "dependencies": {
+        "@app/approval-application": "workspace:*",
         "@app/approval-core": "workspace:*",
         "@app/workflow-application": "workspace:*",
         "@app/workflow-core": "workspace:*",

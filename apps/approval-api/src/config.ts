@@ -28,6 +28,7 @@ export const REQUIRED_SETTINGS = [
   "OPENFGA_AUTHORIZATION_MODEL_ID",
   "FGA_CLIENT_ID",
   "FGA_CLIENT_SECRET",
+  "WORKFLOW_LLM_TENANT_DAILY_CALLS",
 ] as const;
 
 export class ApprovalApiConfigError extends Error {
@@ -67,6 +68,13 @@ export function validateApprovalApiConfig(
   }
   if (present(env.OPENFGA_API_URL) && !URL.canParse(String(env.OPENFGA_API_URL))) {
     keys.push("OPENFGA_API_URL");
+  }
+  if (
+    present(env.WORKFLOW_LLM_TENANT_DAILY_CALLS) &&
+    (!Number.isSafeInteger(Number(env.WORKFLOW_LLM_TENANT_DAILY_CALLS)) ||
+      Number(env.WORKFLOW_LLM_TENANT_DAILY_CALLS) < 1)
+  ) {
+    keys.push("WORKFLOW_LLM_TENANT_DAILY_CALLS");
   }
   const clientKeys = [
     "AUTH0_WEB_CLIENT_ID",
