@@ -803,7 +803,14 @@ export class KnowledgeService {
     // the Knowledge-domain publication result.
     const runView = Result.isSuccess(run) ? run.value : null;
     return Result.succeed(
-      this.panel({ snapshot, outcome, effects: effects.value, run: runView, access }),
+      this.panel({
+        snapshot,
+        outcome,
+        effects: effects.value,
+        run: runView,
+        runPending: request.value !== null,
+        access,
+      }),
     );
   }
 
@@ -812,9 +819,10 @@ export class KnowledgeService {
     outcome: PublicationOutcome | null;
     effects: PublicationEffect[];
     run: WorkflowRunView | null;
+    runPending: boolean;
     access: PageAccess;
   }): PublicationPanelView {
-    const { snapshot, outcome, effects, run, access } = input;
+    const { snapshot, outcome, effects, run, runPending, access } = input;
     const effectFailed = effects.some(
       (effect) => effect.status === "failed" || effect.status === "unknown",
     );
@@ -826,6 +834,7 @@ export class KnowledgeService {
     else if (run?.status === "rejected") state = "rejected";
     else if (run?.status === "cancelled") state = "cancelled";
     else if (run?.status === "running") state = "analyzing";
+    else if (runPending && !run) state = "analyzing";
     else state = "failed_before_publish";
 
     const effectByKind = new Map(effects.map((effect) => [effect.effect, effect]));
@@ -1567,6 +1576,7 @@ export class KnowledgeService {
             outcome: outcome.value,
             effects: effects.value,
             run: run.value,
+            runPending: false,
             access,
           }).steps;
         }

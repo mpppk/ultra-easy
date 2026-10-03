@@ -87,7 +87,10 @@ export type ScheduledMaintenanceOutcome = {
  * never stops the sweep.
  */
 export async function runScheduledMaintenance(
-  runtime: Pick<KnowledgeRuntime, "repos" | "ultraEasy" | "organizationId" | "auth">,
+  runtime: Pick<
+    KnowledgeRuntime,
+    "repos" | "ultraEasy" | "ultraEasyMode" | "ultraEasyForPrincipal" | "organizationId" | "auth"
+  >,
   scheduledAt: Date,
 ): Result.ResultAsync<
   ScheduledMaintenanceOutcome[],
@@ -98,12 +101,23 @@ export async function runScheduledMaintenance(
       ? await runtime.auth.auth0.agentAccess()
       : Result.succeed({ principal: MAINTENANCE_SCHEDULE_TRIGGER });
   if (Result.isFailure(actor)) return Result.fail({ code: "agent_auth_failed" });
+  if (
+    runtime.ultraEasyMode === "remote" &&
+    (!("accessToken" in actor.value) || typeof actor.value.accessToken !== "string")
+  )
+    return Result.fail({ code: "agent_auth_failed" });
+  const ultraEasy =
+    runtime.ultraEasyMode === "remote" &&
+    "accessToken" in actor.value &&
+    typeof actor.value.accessToken === "string"
+      ? runtime.ultraEasyForPrincipal(actor.value.principal.id, actor.value.accessToken)
+      : runtime.ultraEasy;
   const spaces = await runtime.repos.spaces.listAll(runtime.organizationId);
   if (Result.isFailure(spaces)) return Result.fail({ code: "store_unavailable" });
   const outcomes: ScheduledMaintenanceOutcome[] = [];
   for (const space of spaces.value) {
     const started = await startSpaceMaintenance({
-      ultraEasy: runtime.ultraEasy,
+      ultraEasy,
       organizationId: runtime.organizationId,
       spaceId: space.id,
       actor: actor.value.principal,

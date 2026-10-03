@@ -13,6 +13,7 @@
     "dev": "vp dev --port 3001",
     "test": "vp test",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "test:e2e:remote": "playwright test -c e2e/remote.playwright.config.ts",
     "build": "vp build",
     "preview": "vp preview",
     "generate-routes": "tsr generate",

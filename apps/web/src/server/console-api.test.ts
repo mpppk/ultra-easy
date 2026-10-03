@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   login,
   logout,
+  proxyActionRequestTasks,
   proxyAdminRequest,
+  proxyApprovalTask,
   proxyCreateActionRequest,
   proxyWorkflowStudioRequest,
   type ConsoleWebEnv,
@@ -12,7 +14,13 @@ import { openSession, SESSION_COOKIE, sealSession } from "./session.ts";
 
 const secret = "test-session-secret";
 
-type Seen = { url: string; method: string; authorization: string | null; body: string };
+type Seen = {
+  url: string;
+  method: string;
+  authorization: string | null;
+  idempotencyKey: string | null;
+  body: string;
+};
 
 function env(seen: Seen[], overrides: Partial<ConsoleWebEnv> = {}): ConsoleWebEnv {
   return {
@@ -23,6 +31,7 @@ function env(seen: Seen[], overrides: Partial<ConsoleWebEnv> = {}): ConsoleWebEn
           url: request.url,
           method: request.method,
           authorization: request.headers.get("authorization"),
+          idempotencyKey: request.headers.get("idempotency-key"),
           body: request.method === "GET" ? "" : await request.text(),
         });
         if (new URL(request.url).pathname === "/v1/admin/authorization/session") {
@@ -133,6 +142,57 @@ describe("console proxy (AC-M9-001 / credential boundary)", () => {
       "https://approval-api.internal/v1/admin/authorization/session",
       "https://approval-api.internal/v1/organizations/organization%3Astaging/action-requests",
     ]);
+  });
+});
+
+describe("public approval deep-link proxy (#183)", () => {
+  it("uses the session organization and token for task reads and decisions", async () => {
+    const seen: Seen[] = [];
+    const cookie = await sessionCookieHeader();
+    const read = await proxyApprovalTask(
+      new Request("https://web.example/api/approval-tasks/task:one", { headers: { cookie } }),
+      env(seen),
+      "task:one",
+    );
+    expect(read.status).toBe(201);
+    const forged = await proxyApprovalTask(
+      new Request("https://web.example/api/approval-tasks/task:one/decisions", {
+        method: "POST",
+        headers: { cookie, "idempotency-key": "decision:one" },
+        body: '{"decision":"approve"}',
+      }),
+      env(seen),
+      "task:one",
+      true,
+    );
+    expect(forged.status).toBe(403);
+    const decision = await proxyApprovalTask(
+      new Request("https://web.example/api/approval-tasks/task:one/decisions", {
+        method: "POST",
+        headers: { cookie, "x-ue-console": "1", "idempotency-key": "decision:one" },
+        body: '{"decision":"approve"}',
+      }),
+      env(seen),
+      "task:one",
+      true,
+    );
+    expect(decision.status).toBe(201);
+    expect(seen.at(-1)).toMatchObject({
+      url: "https://approval-api.internal/v1/organizations/organization%3Astaging/approval-tasks/task%3Aone/decisions",
+      method: "POST",
+      authorization: "Bearer access-token-1",
+      idempotencyKey: "decision:one",
+      body: '{"decision":"approve"}',
+    });
+    const tasks = await proxyActionRequestTasks(
+      new Request("https://web.example/api/action-requests/ar:one/tasks", { headers: { cookie } }),
+      env(seen),
+      "ar:one",
+    );
+    expect(tasks.status).toBe(201);
+    expect(seen.at(-1)?.url).toBe(
+      "https://approval-api.internal/v1/organizations/organization%3Astaging/action-requests/ar%3Aone/tasks?limit=100",
+    );
   });
 });
 

@@ -18,7 +18,9 @@ export const Route = createFileRoute("/login")({
         (target.startsWith("/admin/") ||
           target === "/workflows" ||
           target.startsWith("/workflows/") ||
-          target.startsWith("/workflow-runs/"))
+          target.startsWith("/workflow-runs/") ||
+          target.startsWith("/approval-tasks/") ||
+          target.startsWith("/action-requests/"))
           ? target
           : "/admin/authorization",
     };
