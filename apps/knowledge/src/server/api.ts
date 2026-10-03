@@ -557,7 +557,15 @@ export async function handleKnowledgeApi(
   const caller = await resolveCaller(request, runtime);
   if (Result.isFailure(caller)) return problem(caller.error);
   if (!caller.value) return unauthenticated();
-  // Keys / IDs are URL-safe ([a-z0-9_-]); encoded input simply matches nothing.
-  const params = found.match.slice(1).map((value) => value ?? "");
+  // Route matching uses encoded path segments. Workflow Run and effect IDs contain
+  // colons (and nested effect IDs may contain slashes), so decode after matching.
+  const encoded = found.match.slice(1).map((value) => value ?? "");
+  if (encoded.some((value) => /%(?![0-9a-fA-F]{2})/.test(value)))
+    return problem(new KnowledgeServiceError("not_found", "Unknown endpoint"));
+  const params = encoded.map(
+    (value) => new URLSearchParams(`value=${value.replaceAll("+", "%2B")}`).get("value") ?? "",
+  );
+  if (params.some((value) => value.includes("\uFFFD")))
+    return problem(new KnowledgeServiceError("not_found", "Unknown endpoint"));
   return found.entry.handler({ params, request, url, caller: caller.value, runtime });
 }

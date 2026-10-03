@@ -344,7 +344,9 @@ describe("Knowledge Workspace demo scenario (#167 Definition of Done)", () => {
       "/api/spaces/engineering/maintenance",
     );
     expect(started.body.status).toBe("waiting_input");
-    const detail = await yuki.get<AutomationDetailView>(`/api/automation/${started.body.runId}`);
+    const detail = await yuki.get<AutomationDetailView>(
+      `/api/automation/${encodeURIComponent(started.body.runId)}`,
+    );
     expect(detail.body.humanInputs.map((input) => [input.pageId, input.canRespond])).toEqual([
       ["pg_api_auth_guide", true],
     ]);
@@ -363,7 +365,7 @@ describe("Knowledge Workspace demo scenario (#167 Definition of Done)", () => {
     ).toBe(403);
     const answered = await yuki.send<{ status: string }>(
       "POST",
-      `/api/automation/${started.body.runId}/inputs/review:pg_api_auth_guide`,
+      `/api/automation/${encodeURIComponent(started.body.runId)}/inputs/${encodeURIComponent("review:pg_api_auth_guide")}`,
       { answer: "update_needed" },
     );
     expect(answered.body.status).toBe("waiting_approval");
