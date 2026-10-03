@@ -6,7 +6,7 @@ publishing, archiving, post-publish side effects and document maintenance.
 
 ```text
 apps/knowledge/           TanStack Start + Cloudflare Worker (UI, HTTP API, /mcp)
-  src/server.ts           Worker entry: TanStack Start fetch + weekly maintenance Cron Trigger
+  src/server.ts           Worker entry: TanStack Start fetch
   src/routes/             7 MVP screens + Space Settings (post-MVP screen 8) + /mcp + /api/*
   src/server/             KnowledgeService (authorized projections), API router, session, seed
   src/mcp/                Streamable HTTP MCP endpoint + primitive Knowledge Actions
@@ -51,18 +51,13 @@ in Automation. There is no approval inbox: "View approval" deep-links to the ult
 
 ## Scheduled maintenance
 
-`knowledge.maintain_space` runs weekly for every space (Cron Trigger `0 0 * * 1`, Mondays 00:00 UTC, in
-`wrangler.jsonc`) as well as from the manual "Run maintenance" button. Both go through
-`startSpaceMaintenance` (`src/server/maintenance.ts`), so they start the same Workflow Definition:
-
-- a space whose maintenance run is still running / waiting for input or approval is skipped;
-- the idempotency key is scoped to the space and week, so a redelivered Cron event starts nothing new;
-- scheduled runs are requested by the trigger principal `trigger:knowledge-maintenance-weekly`, which ultra-easy
-  authorizes for `knowledge.maintain_space` and its child actions only. It is never a space member or an
-  approval candidate; owner review and archive approval stay with the page owners.
-
-The Cron Trigger is interim until the ultra-easy Workflow scheduler / Timer Trigger is public. Try it locally
-with `curl "http://localhost:3001/cdn-cgi/handler/scheduled?cron=0+0+*+*+1"` while `vp dev` runs.
+When an owner creates a space, Knowledge registers `knowledge.maintain_space` with the ultra-easy
+Schedule API using `0 0 * * 1` (Mondays 00:00 UTC). The registration grants the scheduler a standing,
+resource-scoped delegation from that owner. Each slot is an ActionRequest with a stable ID and is
+re-authorized against the owner's current FGA relationship. Stop prevents future starts. The manual
+"Run maintenance" button starts the same Composite Action directly. Owner review and archive approval
+remain with page owners. A failed registration can be retried by submitting the same space key, name,
+and description; Knowledge completes the existing space's schedule registration.
 
 ## ultra-easy integration and the mock
 
@@ -179,7 +174,7 @@ receive the staging credentials.
 | `AUTH0_DOMAIN`                                                    | Auth0 tenant domain (var).                                                      |
 | `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET`                         | Regular Web Application credentials (secrets).                                  |
 | `AUTH0_API_AUDIENCE`                                              | approval API audience (`https://ultra-easy/approval-api`).                      |
-| `AUTH0_AGENT_CLIENT_ID` / `AUTH0_AGENT_CLIENT_SECRET`             | Knowledge M2M Application credentials for weekly maintenance (secrets).         |
+| `AUTH0_AGENT_CLIENT_ID` / `AUTH0_AGENT_CLIENT_SECRET`             | Knowledge M2M Application credentials for governed relationship changes.        |
 | `AUTH0_ORGANIZATION_CLAIM_VALUE` / `AUTH0_TENANT_IS_ORGANIZATION` | organization membership check (one is required in `auth0` mode).                |
 | `ULTRA_EASY_MODE`                                                 | `remote` when deployed; `mock` in the local demo.                               |
 | `APPROVAL_API` / `APPROVAL_UI_BASE_URL`                           | Service Binding and Approval UI origin in remote mode.                          |
@@ -202,7 +197,8 @@ are unavailable there.
   `AUTH0_AGENT_CLIENT_ID` / `AUTH0_AGENT_CLIENT_SECRET` come from a separate M2M Application with
   client credentials access to the same API and scopes. The API registry must include both client IDs.
   Login stores the verified API access token in the encrypted session cookie. The cookie expires with
-  that token; no refresh token is requested. Weekly maintenance uses the verified M2M agent principal.
+  that token; no refresh token is requested. Weekly maintenance uses the owner's registered
+  delegation and current FGA authority through the ultra-easy scheduler.
 - CD: run the **deploy-knowledge** workflow (Actions tab, `main` only). It reruns `check.yml` on the commit, then
   `vp -C apps/knowledge run deploy` (migrate → deploy) with the `staging` GitHub environment's
   `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`. Migrations must stay backward compatible with the running
@@ -210,5 +206,4 @@ are unavailable there.
 
 ## Not in this MVP
 
-Rich-text / collaborative editing and semantic search. The Workflow scheduler (#200) and real
-LLM analysis (#201) are separate follow-ups.
+Rich-text / collaborative editing and semantic search. Real LLM analysis (#201) is a separate follow-up.

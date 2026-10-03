@@ -3,3 +3,4 @@ export * from "./repositories.ts";
 export * from "./composite.ts";
 export * from "./programs.ts";
 export * from "./governance.ts";
+export * from "./schedules.ts";

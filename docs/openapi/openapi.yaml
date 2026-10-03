@@ -24,11 +24,22 @@ tags:
 - name: Delegations
 - name: AuthorizationAdmin
 - name: WorkflowRuns
+- name: Schedules
 - name: HumanInputs
 - name: Principals
 - name: ApplicationRelationships
 - name: ApplicationPolicies
 paths:
+  /v1/organizations/{organizationId}/schedules:
+    $ref: ./paths/paths-16.yaml#/~1v1~1organizations~1{organizationId}~1schedules
+  /v1/organizations/{organizationId}/schedules/{scheduleId}:
+    $ref: ./paths/paths-16.yaml#/~1v1~1organizations~1{organizationId}~1schedules~1{scheduleId}
+  /v1/organizations/{organizationId}/schedules/{scheduleId}/stop:
+    $ref: ./paths/paths-16.yaml#/~1v1~1organizations~1{organizationId}~1schedules~1{scheduleId}~1stop
+  /v1/organizations/{organizationId}/schedules/{scheduleId}/resume:
+    $ref: ./paths/paths-16.yaml#/~1v1~1organizations~1{organizationId}~1schedules~1{scheduleId}~1resume
+  /v1/organizations/{organizationId}/schedules/{scheduleId}/slots:
+    $ref: ./paths/paths-16.yaml#/~1v1~1organizations~1{organizationId}~1schedules~1{scheduleId}~1slots
   /v1/organizations/{organizationId}/application-policies/{scopeType}/{scopeId}:
     $ref: ./paths/paths-15.yaml#/~1v1~1organizations~1{organizationId}~1application-policies~1{scopeType}~1{scopeId}
   /v1/organizations/{organizationId}/me/space-roles:

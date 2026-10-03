@@ -15,6 +15,7 @@
     "@app/expression-core": "workspace:*",
     "@app/workflow-core": "workspace:*",
     "@praha/byethrow": "^0.12.0",
-    "@standard-schema/spec": "^1.1.0"
+    "@standard-schema/spec": "^1.1.0",
+    "cron-parser": "^5.10.0"
   }
 }

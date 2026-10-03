@@ -60,7 +60,7 @@ import {
 import { Auth0IdentityProvider, readAuth0OrganizationMembership } from "./auth0-identity.ts";
 import { APPLICATION_CATALOGS } from "./catalog/knowledge.ts";
 import { catalogApprovalSchemes } from "./catalog/manifest.ts";
-import { readClientRegistry } from "./client-registry.ts";
+import { clientAllows, readClientRegistry } from "./client-registry.ts";
 import { handleOperatorDashboard } from "./operator-dashboard.ts";
 import { StagingTrustedContextProvider } from "./trusted-context.ts";
 import { approvalApiConfig, type ApprovalApiConfigError } from "./config.ts";
@@ -92,6 +92,11 @@ import {
   PUBLIC_WORKFLOW_RUN_ROUTES,
 } from "@app/workflow-platform";
 import { WORKFLOW_EXECUTOR_KEY } from "@app/workflow-application";
+import {
+  createPublicScheduleApi,
+  PUBLIC_SCHEDULE_ROUTES,
+  sweepWorkflowSchedules,
+} from "./schedule-api.ts";
 
 export { ActionWorkflow, StagingActionAuthorizer, StagingActionExecutor };
 export class WorkflowRunner extends WorkflowEntrypoint<ApprovalApiEnv, WorkflowRunnerParams> {
@@ -200,6 +205,12 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
     next: () => `command:${crypto.randomUUID()}`,
   });
   const service = productionWorkflowPlatform(env, organizationId).service;
+  const publicSchedules = createPublicScheduleApi({
+    db: env.DB,
+    organizationId,
+    identity,
+    service,
+  });
   const rateLimiter = new D1FixedWindowRateLimiter(env.DB);
   const actionRequestApi = createActionRequestHttpApi({
     service,
@@ -407,6 +418,7 @@ function buildApi(input: { env: ApprovalApiEnv; organizationId: OrganizationId }
         });
       }
       if (workflowStudio.handles(request)) return workflowStudio.fetch(request);
+      if (publicSchedules.handles(request)) return publicSchedules.fetch(request);
       if (publicActionCancellation.handles(request)) return publicActionCancellation.fetch(request);
       if (publicWorkflowRuns.handles(request)) return publicWorkflowRuns.fetch(request);
       if (publicHumanInputs.handles(request)) return publicHumanInputs.fetch(request);
@@ -446,6 +458,7 @@ const APPROVAL_API_ROUTES = [
   ...PUBLIC_PRINCIPAL_DIRECTORY_ROUTES,
   ...PUBLIC_APPLICATION_RELATIONSHIP_ROUTES,
   ...PUBLIC_APPLICATION_APPROVAL_POLICY_ROUTES,
+  ...PUBLIC_SCHEDULE_ROUTES,
   ...AUTHORIZATION_ADMIN_HTTP_ROUTES,
   `${PRODUCTION_WORKFLOW_STUDIO_PREFIX}/*`,
   "/operator/dashboard",
@@ -551,6 +564,31 @@ export default {
             }),
         },
         { name: "sweep_pending_decisions", run: (now) => sweepPendingDecisions(env, now) },
+        {
+          name: "sweep_workflow_schedules",
+          run: (now) => {
+            const organizationId = deploymentOrganizationId(env);
+            if (!organizationId)
+              return Promise.resolve(Result.fail({ code: "invalid_organization_id" }));
+            return sweepWorkflowSchedules({
+              db: env.DB,
+              organizationId,
+              service: productionWorkflowPlatform(env, organizationId).service,
+              clientAllowed: (schedule) => {
+                const grant = readClientRegistry(env).get(schedule.clientId);
+                return (
+                  !!grant &&
+                  clientAllows(grant, {
+                    operation: "action_request.submit",
+                    actionType: String(schedule.action.type),
+                    resourceType: String(schedule.action.resource.type),
+                  })
+                );
+              },
+              now,
+            });
+          },
+        },
         {
           name: "sweep_workflow_runs",
           run: async (now) => {

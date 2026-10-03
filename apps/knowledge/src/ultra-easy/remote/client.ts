@@ -28,6 +28,7 @@ export function remoteUltraEasy(options: RemoteUltraEasyOptions): UltraEasyClien
     spaceMembers: (input) => authorization.spaceMembers(input),
     grantSpaceRole: (input) => authorization.grantSpaceRole(input),
     startAction: (input) => workflow.startAction(input),
+    registerMaintenanceSchedule: (input) => workflow.registerMaintenanceSchedule(input),
     cancelAction: (input) => workflow.cancelAction(input),
     getRun: (input) => workflow.getRun(input),
     findRunByActionRequest: (input) => workflow.findRunByActionRequest(input),

@@ -501,7 +501,7 @@ export class KnowledgeService {
   async createSpace(body: unknown): ServiceResult<{ key: string }> {
     const input = createSpaceInputSchema.safeParse(body);
     if (!input.success) return Result.fail(validation(input.error));
-    const space: Space = {
+    let space: Space = {
       id: newId("spc"),
       organizationId: this.organizationId,
       key: input.data.key,
@@ -510,8 +510,21 @@ export class KnowledgeService {
       createdBy: this.me.id,
       createdAt: this.now(),
     };
-    const created = await fromStore(this.repos.spaces.create(space));
-    if (Result.isFailure(created)) return created;
+    const created = await this.repos.spaces.create(space);
+    if (Result.isFailure(created)) {
+      if (created.error.code !== "duplicate_key") return Result.fail(storeError(created.error));
+      const existing = await fromStore(this.repos.spaces.findByKey(this.organizationId, space.key));
+      if (Result.isFailure(existing)) return existing;
+      if (
+        !existing.value ||
+        existing.value.createdBy !== this.me.id ||
+        existing.value.name !== space.name ||
+        existing.value.description !== space.description
+      ) {
+        return Result.fail(storeError(created.error));
+      }
+      space = existing.value;
+    }
     const granted = await fromPlatform(
       this.ultraEasy.grantSpaceRole({
         organizationId: this.organizationId,
@@ -521,6 +534,14 @@ export class KnowledgeService {
       }),
     );
     if (Result.isFailure(granted)) return granted;
+    const scheduled = await fromPlatform(
+      this.ultraEasy.registerMaintenanceSchedule({
+        organizationId: this.organizationId,
+        spaceId: space.id,
+        ownerId: this.me.id,
+      }),
+    );
+    if (Result.isFailure(scheduled)) return scheduled;
     return Result.succeed({ key: space.key });
   }
 

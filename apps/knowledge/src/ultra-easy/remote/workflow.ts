@@ -12,6 +12,7 @@ import {
 type WorkflowMethods = Pick<
   UltraEasyClient,
   | "startAction"
+  | "registerMaintenanceSchedule"
   | "cancelAction"
   | "getRun"
   | "findRunByActionRequest"
@@ -332,6 +333,31 @@ export class RemoteWorkflowClient implements WorkflowMethods {
       this.options.approvalUiBaseUrl,
     );
     return run ? Result.succeed(run) : Result.fail(error("platform_unavailable"));
+  }
+
+  async registerMaintenanceSchedule(input: {
+    organizationId: string;
+    spaceId: string;
+    ownerId: string;
+  }): Result.ResultAsync<void, UltraEasyError> {
+    const base = this.scoped(input.organizationId);
+    if (Result.isFailure(base)) return base;
+    if (input.ownerId !== this.options.principalId || !string(input.spaceId))
+      return Result.fail(error("forbidden"));
+    const created = await this.json(`${base.value}/schedules`, {
+      method: "POST",
+      body: {
+        key: `knowledge:maintain:${input.spaceId}`,
+        cron: "0 0 * * 1",
+        action: {
+          type: "knowledge.maintain_space",
+          resource: { type: "knowledge_space", id: input.spaceId },
+          input: { spaceId: input.spaceId },
+        },
+        correlation: { spaceId: input.spaceId },
+      },
+    });
+    return Result.isFailure(created) ? created : Result.succeed(undefined);
   }
 
   async startAction(input: StartActionInput) {
