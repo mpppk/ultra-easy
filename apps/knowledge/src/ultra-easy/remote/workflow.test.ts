@@ -79,6 +79,40 @@ function action(
 }
 
 describe("Knowledge remote workflow client (#216)", () => {
+  it("registers weekly maintenance with the verified owner token", async () => {
+    const seen: Request[] = [];
+    const remote = client(async (request) => {
+      seen.push(request);
+      return Response.json({ id: "schedule:one" }, { status: 201 });
+    });
+    const registered = await remote.registerMaintenanceSchedule({
+      organizationId,
+      spaceId: "space:one",
+      ownerId: "user:alice",
+    });
+    expect(Result.isSuccess(registered)).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(new URL(seen[0]!.url).pathname).toBe(
+      "/v1/organizations/organization%3Astaging/schedules",
+    );
+    expect(seen[0]?.headers.get("authorization")).toBe("Bearer verified-user-token");
+    expect(await seen[0]?.json()).toMatchObject({
+      key: "knowledge:maintain:space:one",
+      cron: "0 0 * * 1",
+      action: {
+        type: "knowledge.maintain_space",
+        resource: { type: "knowledge_space", id: "space:one" },
+      },
+    });
+    const foreign = await remote.registerMaintenanceSchedule({
+      organizationId,
+      spaceId: "space:one",
+      ownerId: "user:bob",
+    });
+    expect(Result.isFailure(foreign)).toBe(true);
+    expect(seen).toHaveLength(1);
+  });
+
   it("submits the catalog's space resource and returns a linked run", async () => {
     const seen: Request[] = [];
     const remote = client(async (request) => {

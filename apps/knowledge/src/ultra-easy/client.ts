@@ -214,6 +214,12 @@ export interface UltraEasyClient {
 
   // ActionRequests / Workflow runs
   startAction(input: StartActionInput): Result.ResultAsync<StartActionResult, UltraEasyError>;
+  /** Registers the owner's standing delegation for weekly space maintenance. */
+  registerMaintenanceSchedule(input: {
+    organizationId: string;
+    spaceId: string;
+    ownerId: string;
+  }): Result.ResultAsync<void, UltraEasyError>;
   cancelAction(input: {
     organizationId: string;
     actionRequestId: string;

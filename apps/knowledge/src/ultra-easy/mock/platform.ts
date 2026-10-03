@@ -514,6 +514,15 @@ export class MockUltraEasy implements UltraEasyClient {
   // ActionRequests / workflow runs
   // ---------------------------------------------------------------------------
 
+  registerMaintenanceSchedule(input: { organizationId: string; spaceId: string; ownerId: string }) {
+    return this.guard(async () => {
+      const role = await this.roleOf(input.organizationId, input.ownerId, input.spaceId);
+      return role === "owner"
+        ? Result.succeed(undefined)
+        : Result.fail(new UltraEasyError("forbidden", "Space owner required"));
+    });
+  }
+
   startAction(input: StartActionInput): Result.ResultAsync<StartActionResult, UltraEasyError> {
     return this.guard(async () => {
       const existing = await this.first<{ id: string }>(

@@ -5,15 +5,14 @@
   "name": "ultra-easy-knowledge",
   "compatibility_date": "2026-09-08",
   "compatibility_flags": ["nodejs_compat"],
-  // TanStack Start fetch handler + the weekly maintenance Cron Trigger (#184).
+  // TanStack Start fetch handler. Weekly maintenance is registered with ultra-easy.
   "main": "./src/server.ts",
   "observability": {
     "enabled": true,
   },
-  // #184: weekly `knowledge.maintain_space` per space (Mondays 00:00 UTC). Interim
-  // Cron Trigger until the ultra-easy Workflow scheduler / Timer Trigger exists.
+  // Explicitly remove the interim weekly trigger from an already deployed Worker.
   "triggers": {
-    "crons": ["0 0 * * 1"],
+    "crons": [],
   },
   "vars": {
     // "auth0": trusted Auth0 session only (#182). "demo" (fixture principals) is

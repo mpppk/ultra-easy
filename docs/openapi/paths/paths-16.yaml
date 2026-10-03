@@ -1,0 +1,112 @@
+/v1/organizations/{organizationId}/schedules:
+  post:
+    tags: [Schedules]
+    operationId: createSchedule
+    summary: Register a UTC schedule for a published Composite Action
+    description: Requires a user token with write:action-requests and authority for the action. A matching key and body returns the existing schedule.
+    parameters:
+      - $ref: ../components/common.yaml#/parameters/OrganizationId
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [key, cron, action]
+            properties:
+              key:
+                type: string
+                pattern: '^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$'
+              cron:
+                type: string
+                description: Five-field UTC cron expression.
+              action:
+                type: object
+                required: [type, resource, input]
+                properties:
+                  type: { type: string }
+                  resource:
+                    type: object
+                    required: [type, id]
+                    properties:
+                      type: { type: string }
+                      id: { type: string }
+                  input: { type: object }
+              correlation:
+                type: object
+                additionalProperties: { type: string }
+    responses:
+      '200': { description: Matching schedule already exists. }
+      '201': { description: Schedule registered. }
+      '400': { $ref: ../components/common.yaml#/responses/BadRequest }
+      '401': { $ref: ../components/common.yaml#/responses/Unauthorized }
+      '403': { $ref: ../components/common.yaml#/responses/Forbidden }
+      '409': { description: Schedule key is already assigned to another definition or owner. }
+      '503': { $ref: ../components/common.yaml#/responses/ServiceUnavailable }
+  get:
+    tags: [Schedules]
+    operationId: listSchedules
+    summary: List schedules registered by the caller
+    parameters:
+      - $ref: ../components/common.yaml#/parameters/OrganizationId
+    responses:
+      '200': { description: Schedule list. }
+      '401': { $ref: ../components/common.yaml#/responses/Unauthorized }
+      '403': { $ref: ../components/common.yaml#/responses/Forbidden }
+/v1/organizations/{organizationId}/schedules/{scheduleId}:
+  get:
+    tags: [Schedules]
+    operationId: getSchedule
+    summary: Read an owned schedule
+    parameters:
+      - $ref: ../components/common.yaml#/parameters/OrganizationId
+      - name: scheduleId
+        in: path
+        required: true
+        schema: { type: string }
+    responses:
+      '200': { description: Schedule definition and next slot. }
+      '404': { $ref: ../components/common.yaml#/responses/NotFound }
+/v1/organizations/{organizationId}/schedules/{scheduleId}/stop:
+  post:
+    tags: [Schedules]
+    operationId: stopSchedule
+    summary: Stop future starts and skip pending slots
+    parameters:
+      - $ref: ../components/common.yaml#/parameters/OrganizationId
+      - name: scheduleId
+        in: path
+        required: true
+        schema: { type: string }
+    responses:
+      '200': { description: Stopped schedule. }
+      '404': { $ref: ../components/common.yaml#/responses/NotFound }
+/v1/organizations/{organizationId}/schedules/{scheduleId}/resume:
+  post:
+    tags: [Schedules]
+    operationId: resumeSchedule
+    summary: Resume from the next future UTC slot
+    parameters:
+      - $ref: ../components/common.yaml#/parameters/OrganizationId
+      - name: scheduleId
+        in: path
+        required: true
+        schema: { type: string }
+    responses:
+      '200': { description: Active schedule with new next slot. }
+      '404': { $ref: ../components/common.yaml#/responses/NotFound }
+/v1/organizations/{organizationId}/schedules/{scheduleId}/slots:
+  get:
+    tags: [Schedules]
+    operationId: listScheduleSlots
+    summary: Read the last 200 slots and ActionRequest IDs
+    parameters:
+      - $ref: ../components/common.yaml#/parameters/OrganizationId
+      - name: scheduleId
+        in: path
+        required: true
+        schema: { type: string }
+    responses:
+      '200': { description: Slot history with status and error codes. }
+      '404': { $ref: ../components/common.yaml#/responses/NotFound }
