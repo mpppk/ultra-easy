@@ -93,7 +93,7 @@ MCP Gatewayの `tools/call` 経路（route snapshot、`McpActionExecutor`）は�
 - catalogの検証は、primitive / Composite / Program capabilityのaction typeが名前空間の中にあること、
   Workflowが参照するActionとProgramがcatalogに存在することを要求する。
 
-## Knowledge catalog（v1）
+## Knowledge catalog（current versions）
 
 | Action                         | 種別      | resource          | relation     | 実行                                  |
 | ------------------------------ | --------- | ----------------- | ------------ | ------------------------------------- |
