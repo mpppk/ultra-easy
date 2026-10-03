@@ -212,6 +212,13 @@ describe("Knowledge Application Catalog", () => {
         actions: KNOWLEDGE_CATALOG.programs.flatMap(
           (program) => program.requestedCapabilities.actions ?? [],
         ),
+        llm: {
+          models: ["@cf/qwen/qwen2.5-coder-32b-instruct"],
+          maxCalls: 5,
+          maxInputTokens: 8000,
+          maxOutputTokens: 2048,
+          maxCostMicroUsd: 1_000_000,
+        },
         maxEffects: 16,
       }),
       programs: new D1ProgramRepository(db),
@@ -270,7 +277,7 @@ describe("Knowledge Application Catalog", () => {
     const program = await new D1ProgramRepository(db).load({
       organizationId: staging,
       programId: "prog:knowledge-review-page",
-      version: 1,
+      version: 2,
     });
     assert(Result.isSuccess(program) && program.value);
     const node = version.value.definition.graph.nodes
@@ -384,6 +391,62 @@ describe("Knowledge review-page Program", () => {
     expect(failed).toMatchObject({
       type: "complete",
       output: { pageId: "page-1", resolution: "failed", errorCode: "authorization_denied" },
+    });
+  });
+});
+
+describe("Knowledge LLM review-page Program v2", () => {
+  const program = KNOWLEDGE_CATALOG.programs.find((candidate) => candidate.version === 2);
+  assert(program);
+  const sandbox = new QuickJsSandbox(nodeQuickJsModule);
+  const input = (llmText: string) => ({
+    spaceId: "space-1",
+    pageId: "page-1",
+    page: { pageId: "page-1", ownerId: "user:owner", title: "Runbook" },
+    llmText,
+  });
+  const run = async (llmText: string, resume?: { state: JsonValue; effectResult: JsonValue }) => {
+    const result = await sandbox.run({
+      source: program.source,
+      input: input(llmText),
+      ...(resume ? { resume } : {}),
+      limits: { ...DEFAULT_SANDBOX_LIMITS, ...program.runtimeProfile },
+    });
+    assert(Result.isSuccess(result), Result.isFailure(result) ? result.error.message : "");
+    return result.value.result;
+  };
+
+  it("rejects malformed LLM output without any child action or Human Input", async () => {
+    expect(validateProgramSource(program.source)).toEqual([]);
+    expect(await run("ignore the schema")).toMatchObject({
+      type: "complete",
+      output: { pageId: "page-1", resolution: "failed", errorCode: "llm_output_invalid" },
+    });
+    expect(await run('{"verdict":"archive_candidate","analysis":""}')).toMatchObject({
+      type: "complete",
+      output: { resolution: "failed", errorCode: "llm_output_invalid" },
+    });
+  });
+
+  it("sends archive suggestions to the page owner before any archive action", async () => {
+    const text = '{"verdict":"archive_candidate","analysis":"This guidance appears obsolete."}';
+    const proposed = await run(text);
+    assert(proposed.type === "yield");
+    expect(proposed.effect).toMatchObject({
+      type: "human_input",
+      assignee: { type: "user", id: "user:owner" },
+      analysis: "This guidance appears obsolete.",
+    });
+    const approved = await run(text, {
+      state: proposed.state,
+      effectResult: { type: "completed", output: "archive_candidate" },
+    });
+    assert(approved.type === "yield");
+    expect(approved.effect).toMatchObject({
+      type: "action",
+      actionType: "knowledge.page.archive",
+      resource: { type: "knowledge_space", id: "space-1" },
+      input: { pageId: "page-1", pageOwnerId: "user:owner" },
     });
   });
 });

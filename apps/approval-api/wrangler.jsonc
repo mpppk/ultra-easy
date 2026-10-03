@@ -19,6 +19,7 @@
   ],
   "vars": {
     "WORKFLOW_LLM_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
+    "WORKFLOW_LLM_TENANT_DAILY_CALLS": "200",
     "WORKFLOW_CODE_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
     "AUTH0_DOMAIN": "dev-67c6cfj2y51bmeyf.us.auth0.com",
     "AUTH0_API_AUDIENCE": "https://ultra-easy/approval-api",
@@ -114,6 +115,7 @@
     "production": {
       "vars": {
         "WORKFLOW_LLM_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
+        "WORKFLOW_LLM_TENANT_DAILY_CALLS": "200",
         "WORKFLOW_CODE_MODEL": "@cf/qwen/qwen2.5-coder-32b-instruct",
         "AUTH0_ORGANIZATION_ID": "organization:production",
         // 本番はAuth0 Organizationsのorg_id claim一致を必須にする（tenant全体は信頼しない）。

@@ -93,7 +93,7 @@ MCP Gatewayの `tools/call` 経路（route snapshot、`McpActionExecutor`）は�
 - catalogの検証は、primitive / Composite / Program capabilityのaction typeが名前空間の中にあること、
   Workflowが参照するActionとProgramがcatalogに存在することを要求する。
 
-## Knowledge catalog（v1）
+## Knowledge catalog（current versions）
 
 | Action                         | 種別      | resource          | relation     | 実行                                  |
 | ------------------------------ | --------- | ----------------- | ------------ | ------------------------------------- |
@@ -105,17 +105,18 @@ MCP Gatewayの `tools/call` 経路（route snapshot、`McpActionExecutor`）は�
 | `knowledge.page.get_published` | primitive | `knowledge_space` | `can_view`   | `/mcp` `knowledge.page.get_published` |
 | `knowledge.page.mark_reviewed` | primitive | `knowledge_space` | `can_manage` | `/mcp` `knowledge.page.mark_reviewed` |
 | `knowledge.page.archive`       | primitive | `knowledge_space` | `can_manage` | `/mcp` `knowledge.page.archive`       |
-| `knowledge.publish_document`   | composite | `knowledge_space` | `can_edit`   | `wf:knowledge-publish-document` v1    |
-| `knowledge.maintain_space`     | composite | `knowledge_space` | `can_manage` | `wf:knowledge-maintain-space` v1      |
+| `knowledge.publish_document`   | composite | `knowledge_space` | `can_edit`   | `wf:knowledge-publish-document` v3    |
+| `knowledge.maintain_space`     | composite | `knowledge_space` | `can_manage` | `wf:knowledge-maintain-space` v2      |
 
 - `knowledge.publish_document`（input `spaceId`, `publicationSnapshotId`）: snapshotを読み、
   policyが参照するvisibility / sensitivityをsnapshotから子Actionへ渡す → publish（通常の
-  Approval Policy）→ reindex / notify（独立した子Action）。LLMのmetadata分析は#201で追加する。
+  Approval Policy）→ reindex / notify（独立した子Action）。v3は公開前にLLM nodeでmetadataを提案し、
+  Workflow Run outputへ保存する。承認に使う値はtrusted snapshotから取る。
 - `knowledge.maintain_space`（input `spaceId`）: stale pageを列挙し、pageごとに
-  `prog:knowledge-review-page` を実行する。Programは、published revisionを読んでfreshnessを判定し、
-  要確認ならpage ownerへHuman Inputを出す（担当者・選択肢・対象・分析付き。#197）。その後
-  `mark_reviewed` / `archive`（archiveは通常の承認を通る）を子Actionとして要求する。判定は、#201で
-  LLM Gatewayへ置き換えるまでの決定的なheuristic（`mock/llm.ts` と同じ）である。
+  published revisionを読み、LLM nodeでfreshnessを提案し、`prog:knowledge-review-page` v2で
+  結果を検証する。要確認またはarchive候補ならpage ownerへLLMの分析付きHuman Inputを出す。
+  `mark_reviewed` / `archive`は子Actionとして要求し、archiveは通常の承認を通る。
+  旧versionは進行中のRunを再開するため保持する。
 - Knowledge側（#183）が `RemoteUltraEasy` で使う入力形は、このcatalogのinput schemaが正である。
 
 ## Governed approval rules（#199）

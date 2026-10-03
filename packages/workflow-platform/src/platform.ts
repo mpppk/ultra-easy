@@ -112,6 +112,7 @@ export type WorkflowPlatformOptions = {
   governance?: {
     capabilityPolicy?: CapabilityPolicyProvider;
     llmProvider?: LlmProvider;
+    llmTenantMaxCallsPerUtcDay?: number;
     llmPricing?: LlmPricing;
     resourceLimits?: ResourceLimits;
   };
@@ -243,6 +244,14 @@ export function createWorkflowPlatform(options: WorkflowPlatformOptions) {
                 provider: options.governance.llmProvider,
                 ledger: llmUsage,
                 broker,
+                ...(options.governance.llmTenantMaxCallsPerUtcDay !== undefined
+                  ? {
+                      tenantQuota: {
+                        ledger: quotas,
+                        maxCallsPerUtcDay: options.governance.llmTenantMaxCallsPerUtcDay,
+                      },
+                    }
+                  : {}),
                 ...(options.governance.llmPricing
                   ? { pricing: options.governance.llmPricing }
                   : {}),

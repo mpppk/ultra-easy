@@ -385,9 +385,6 @@ export function validateCatalog(catalog: ApplicationCatalog): CatalogManifestErr
           issue("catalog_program_unknown", `${id}: Program ${reference}が未定義です`);
         }
       }
-      if (node.type === "llm") {
-        issue("catalog_llm_not_supported", `${id}: LLM Nodeはcatalog経由では未対応です（#201）`);
-      }
     }
   }
   for (const node of catalog.composites.flatMap((composite) => {

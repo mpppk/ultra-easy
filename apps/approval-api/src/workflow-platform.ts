@@ -40,6 +40,7 @@ export type ProductionWorkflowEnv = ActionExecutorRegistryEnv &
     AI?: WorkersAiBinding;
     AUTH0_ORGANIZATION_ID: string;
     WORKFLOW_LLM_MODEL?: string;
+    WORKFLOW_LLM_TENANT_DAILY_CALLS?: string;
     WORKFLOW_CODE_MODEL?: string;
   };
 
@@ -98,6 +99,7 @@ export function productionWorkflowPlatform(
     governance: {
       capabilityPolicy: staticCapabilityPolicy(productionCapabilityPolicy(env)),
       ...(ai ? { llmProvider: ai } : {}),
+      llmTenantMaxCallsPerUtcDay: Number(env.WORKFLOW_LLM_TENANT_DAILY_CALLS) || 0,
       resourceLimits: DEFAULT_RESOURCE_LIMITS,
     },
     onEffectRetry: (input) => {

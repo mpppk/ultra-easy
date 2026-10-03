@@ -16,6 +16,7 @@ import {
 } from "@app/approval-core";
 import { migratedSqliteD1 } from "@app/approval-d1/testing";
 import { staticCapabilityPolicy } from "@app/workflow-application";
+import { EffectHandlerError, type LlmProvider } from "@app/workflow-application";
 import type { EffectId } from "@app/workflow-core";
 import { createWorkflowPlatform } from "@app/workflow-platform";
 import { QuickJsSandbox } from "@app/workflow-sandbox";
@@ -111,6 +112,45 @@ class FakeKnowledgeMcp {
   }
 }
 
+class FakeLlm implements LlmProvider {
+  readonly name = "knowledge-test-llm";
+  readonly calls: string[] = [];
+  failure: "temporary_once" | "permanent" | null = null;
+
+  async complete(
+    input: Parameters<LlmProvider["complete"]>[0],
+  ): ReturnType<LlmProvider["complete"]> {
+    this.calls.push(input.prompt);
+    if (this.failure) {
+      const failure = this.failure;
+      if (failure === "temporary_once") this.failure = null;
+      return Result.fail(
+        new EffectHandlerError(
+          failure === "temporary_once" ? "provider_unavailable" : "model_invalid",
+          failure === "temporary_once",
+          "provider error",
+        ),
+      );
+    }
+    if (input.prompt.includes("Assess whether this published page")) {
+      return Result.succeed({
+        text: JSON.stringify(
+          input.prompt.includes("TODO: update")
+            ? { verdict: "needs_review", analysis: "Published guidance needs an update." }
+            : { verdict: "likely_current", analysis: "Published guidance appears current." },
+        ),
+        inputTokens: 50,
+        outputTokens: 25,
+      });
+    }
+    return Result.succeed({
+      text: JSON.stringify({ summary: "Runbook", suggestedTags: ["runbook"], riskSignals: [] }),
+      inputTokens: 50,
+      outputTokens: 25,
+    });
+  }
+}
+
 class AllowAuthorizer implements ActionAuthorizer {
   readonly denied = new Set<string>();
 
@@ -138,9 +178,10 @@ const noApprovals: ActionWorkflowStarter = {
     Result.succeed({ workflowInstanceId: `approval:${String(input.plan.actionRequestId)}` }),
 };
 
-function harness() {
+function harness(options: { llmDailyCalls?: number } = {}) {
   const db = migratedSqliteD1();
   const knowledge = new FakeKnowledgeMcp();
+  const llm = new FakeLlm();
   const authorizer = new AllowAuthorizer();
   const platform = createWorkflowPlatform({
     db,
@@ -159,8 +200,17 @@ function harness() {
     governance: {
       capabilityPolicy: staticCapabilityPolicy({
         actions: catalogCapabilityActions(APPLICATION_CATALOGS),
+        llm: {
+          models: ["@cf/qwen/qwen2.5-coder-32b-instruct"],
+          maxCalls: 5,
+          maxInputTokens: 8000,
+          maxOutputTokens: 2048,
+          maxCostMicroUsd: 1_000_000,
+        },
         maxEffects: 16,
       }),
+      llmProvider: llm,
+      llmTenantMaxCallsPerUtcDay: options.llmDailyCalls ?? 200,
     },
   });
 
@@ -219,7 +269,7 @@ function harness() {
     return loaded.value?.status ?? null;
   }
 
-  return { platform, knowledge, authorizer, submit, settle, run, status };
+  return { db, platform, knowledge, llm, authorizer, submit, settle, run, status };
 }
 
 describe("Knowledge Application Catalog end to end (#198)", () => {
@@ -235,6 +285,10 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
 
     const run = await h.run(submitted.value.actionRequestId);
     expect(run.state.status).toBe("succeeded");
+    expect(h.llm.calls).toHaveLength(1);
+    expect(run.state.output).toMatchObject({
+      metadataAnalysis: expect.stringContaining("suggestedTags"),
+    });
     expect(await h.status(submitted.value.actionRequestId)).toBe("executed");
     expect(h.knowledge.calls.map((call) => call.name).sort()).toEqual([
       "knowledge.publication.get",
@@ -273,6 +327,65 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
     expect(h.knowledge.calls.map((call) => call.name)).not.toContain("knowledge.search.reindex");
   });
 
+  it("retries a temporary provider failure under one durable LLM quota reservation", async () => {
+    const h = harness({ llmDailyCalls: 1 });
+    h.llm.failure = "temporary_once";
+    const submitted = await h.submit(
+      "knowledge.publish_document",
+      { type: "knowledge_space", id: "space-1" },
+      { spaceId: "space-1", publicationSnapshotId: "snap-1" },
+    );
+    assert(Result.isSuccess(submitted) && submitted.value.type === "accepted");
+    await h.settle();
+    expect((await h.run(submitted.value.actionRequestId)).state.status).toBe("succeeded");
+    expect(h.llm.calls).toHaveLength(2);
+    expect(
+      h.db.db
+        .prepare("SELECT SUM(amount) AS calls FROM workflow_quota_counters WHERE scope_key = ?")
+        .get("tenant:organization:staging:llm:calls:2026-09-30"),
+    ).toEqual({ calls: 1 });
+  });
+
+  it("stops before publication when the provider fails permanently or the tenant quota is exhausted", async () => {
+    const failing = harness();
+    failing.llm.failure = "permanent";
+    const rejected = await failing.submit(
+      "knowledge.publish_document",
+      { type: "knowledge_space", id: "space-1" },
+      { spaceId: "space-1", publicationSnapshotId: "snap-failure" },
+    );
+    assert(Result.isSuccess(rejected) && rejected.value.type === "accepted");
+    await failing.settle();
+    expect((await failing.run(rejected.value.actionRequestId)).state.status).toBe("failed");
+    expect(failing.knowledge.calls.map((call) => call.name)).not.toContain(
+      "knowledge.revision.publish",
+    );
+
+    const h = harness({ llmDailyCalls: 1 });
+    const first = await h.submit(
+      "knowledge.publish_document",
+      { type: "knowledge_space", id: "space-1" },
+      { spaceId: "space-1", publicationSnapshotId: "snap-first" },
+    );
+    assert(Result.isSuccess(first) && first.value.type === "accepted");
+    await h.settle();
+    const second = await h.submit(
+      "knowledge.publish_document",
+      { type: "knowledge_space", id: "space-1" },
+      { spaceId: "space-1", publicationSnapshotId: "snap-second" },
+    );
+    assert(Result.isSuccess(second) && second.value.type === "accepted");
+    await h.settle();
+    expect((await h.run(second.value.actionRequestId)).state.status).toBe("failed");
+    expect(h.llm.calls).toHaveLength(1);
+    expect(
+      h.knowledge.calls.filter((call) => call.name === "knowledge.revision.publish"),
+    ).toHaveLength(1);
+    expect(
+      h.db.db.prepare("SELECT code FROM workflow_llm_usage WHERE status = 'denied'").all(),
+    ).toEqual([{ code: "quota_exceeded" }]);
+  });
+
   it("asks the page owner through Human Input during knowledge.maintain_space and applies the answer", async () => {
     const h = harness();
     const submitted = await h.submit(
@@ -286,6 +399,7 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
 
     const waiting = await h.run(submitted.value.actionRequestId);
     expect(waiting.state.status).toBe("waiting");
+    expect(h.llm.calls).toHaveLength(2);
     const inputs = Object.values(waiting.state.effects).filter(
       (effect) => effect.request.kind === "human_input" && effect.status === "in_flight",
     );
@@ -296,6 +410,7 @@ describe("Knowledge Application Catalog end to end (#198)", () => {
       assignee: OWNER,
       options: ["still_valid", "update_needed", "archive_candidate"],
       subject: { type: "knowledge_page", id: "page-stale" },
+      analysis: "Published guidance needs an update.",
     });
     // The current page was reviewed without asking anyone.
     expect(
