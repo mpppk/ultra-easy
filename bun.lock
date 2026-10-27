@@ -6,7 +6,7 @@
       "name": "ultra-easy",
       "devDependencies": {
         "@praha/byethrow-docs": "^0.12.0",
-        "@praha/byethrow-oxlint": "^0.12.0",
+        "@praha/byethrow-oxlint": "^0.13.0",
         "@types/node": "^22.10.2",
         "oxlint-plugin-eslint": "^1.82.0",
         "typescript": "^7.0.0",
@@ -754,7 +754,7 @@
 
     "@praha/byethrow-docs": ["@praha/byethrow-docs@0.12.0", "", { "dependencies": { "citty": "^0.2.0", "find-up": "8.0.0", "flexsearch": "^0.8.212", "mdast-util-from-markdown": "^2.0.2", "mdast-util-to-string": "^4.0.0", "sqlite3": "^6.0.0" }, "peerDependencies": { "@praha/byethrow": "0.12.0" }, "bin": { "byethrow-docs": "./bin/cli.js" } }, "sha512-jJRL9C/8ADirLybh2ACZ50Kp9nQwAjgc8oskUaL8h7lxhh0ff2+KRbVpl8UyyTk3UeKf+MiP9pG2Oj41+hq/Sg=="],
 
-    "@praha/byethrow-oxlint": ["@praha/byethrow-oxlint@0.12.0", "", { "dependencies": { "@oxlint/plugins": "^1.68.0" }, "peerDependencies": { "@praha/byethrow": "0.12.0", "oxlint": "^1.0.0" } }, "sha512-zdg/oa50/N+a62FsCVHz/J+9RnuaIWZVzwo9frIXZdyPuNNHRYBCee9AwCnfYinOQ6dLOzFmOS9lATnw/MDGdQ=="],
+    "@praha/byethrow-oxlint": ["@praha/byethrow-oxlint@0.13.0", "", { "dependencies": { "@oxlint/plugins": "^1.77.0" }, "peerDependencies": { "@praha/byethrow": "0.13.0", "oxlint": "^1.0.0" } }, "sha512-cXbTuQsrC/DVRn6mj7xYTXpIQCCdCBTKabBGU2vPMle2fe+WV1z+GcBKZorJSS3T8h6Q82or4D96JvPYRH0faw=="],
 
     "@praha/error-factory": ["@praha/error-factory@1.4.1", "", {}, "sha512-HA+y+xwmQIl9EPvZonRk1/hsSAvAlpDjlpruyW8kTAQ++Oq5Fi7hFV0Y84TLHXJ6SciYHlKGqrekrS5wzkD5+Q=="],
 
